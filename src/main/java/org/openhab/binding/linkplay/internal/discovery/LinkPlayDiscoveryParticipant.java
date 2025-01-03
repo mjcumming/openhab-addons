@@ -46,9 +46,11 @@ public class LinkPlayDiscoveryParticipant implements MDNSDiscoveryParticipant {
 
     private final Logger logger = LoggerFactory.getLogger(LinkPlayDiscoveryParticipant.class);
     private static final String SERVICE_TYPE = "_linkplay._tcp.local.";
-    private static final int DISCOVERY_TIMEOUT_SEC = 30;
+    private static final String CONFIG_DISCOVERY_TIMEOUT = "discoveryTimeout";
+    private static final int DEFAULT_DISCOVERY_TIMEOUT_SEC = 30;
     private static final String[] PROTOCOLS = { "https", "http" };
     private static final int[] PORTS = { 443, 4443, 80 };
+    private int discoveryTimeoutSec = DEFAULT_DISCOVERY_TIMEOUT_SEC;
 
     @Override
     public Set<ThingTypeUID> getSupportedThingTypeUIDs() {
@@ -184,8 +186,13 @@ public class LinkPlayDiscoveryParticipant implements MDNSDiscoveryParticipant {
             for (int port : PORTS) {
                 try {
                     logger.trace("Testing connectivity to {}:{} using {}", ipAddress, port, protocol);
-                    // Implementation will test device connectivity via HTTP/HTTPS
-                    return true;
+                    URL url = new URL(protocol + "://" + ipAddress + ":" + port + "/status");
+                    HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                    conn.setConnectTimeout(2000);
+                    conn.setReadTimeout(2000);
+                    conn.setRequestMethod("GET");
+                    int responseCode = conn.getResponseCode();
+                    return responseCode == HttpURLConnection.HTTP_OK;
                 } catch (Exception e) {
                     logger.trace("Failed to connect to {}:{} using {}: {}", ipAddress, port, protocol, e.getMessage());
                 }
