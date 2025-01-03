@@ -1,0 +1,51 @@
+modules = ["java-17"]
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "LinkPlay Binding"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "LinkPlay Binding Build"
+
+[[workflows.workflow]]
+name = "LinkPlay Binding"
+author = "agent"
+
+[workflows.workflow.metadata]
+agentRequireRestartOnSave = false
+
+[[workflows.workflow.tasks]]
+task = "packager.installForAll"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "mvn clean install && mvn exec:java -Dexec.mainClass=\"org.openhab.binding.linkplay.internal.LinkPlayHandlerFactory\" -Dorg.slf4j.simpleLogger.defaultLogLevel=DEBUG"
+waitForPort = 8080
+
+[[workflows.workflow]]
+name = "LinkPlay Binding Build"
+author = "agent"
+
+[workflows.workflow.metadata]
+agentRequireRestartOnSave = false
+
+[[workflows.workflow.tasks]]
+task = "packager.installForAll"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "mvn clean install -DskipTests"
+
+[deployment]
+run = ["sh", "-c", "mvn clean install && mvn exec:java -Dexec.mainClass=\"org.openhab.binding.linkplay.internal.LinkPlayHandlerFactory\" -Dorg.slf4j.simpleLogger.defaultLogLevel=DEBUG"]
+
+[nix]
+channel = "stable-24_05"

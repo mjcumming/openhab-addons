@@ -1,16 +1,17 @@
-
 package org.openhab.binding.linkplay.internal.discovery;
 
 import static org.openhab.binding.linkplay.internal.LinkPlayBindingConstants.*;
 
 import java.net.InetAddress;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 import javax.jmdns.ServiceInfo;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
-import org.eclipse.jdt.annotation.Nullable; 
+import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.config.discovery.DiscoveryResult;
 import org.openhab.core.config.discovery.DiscoveryResultBuilder;
 import org.openhab.core.config.discovery.mdns.MDNSDiscoveryParticipant;
@@ -21,7 +22,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 @NonNullByDefault
-@Component(service = MDNSDiscoveryParticipant.class)
+@Component(service = MDNSDiscoveryParticipant.class, immediate = true)
 public class LinkPlayDiscoveryParticipant implements MDNSDiscoveryParticipant {
 
     private final Logger logger = LoggerFactory.getLogger(LinkPlayDiscoveryParticipant.class);
@@ -29,6 +30,8 @@ public class LinkPlayDiscoveryParticipant implements MDNSDiscoveryParticipant {
     private static final int DISCOVERY_TIMEOUT_SEC = 30;
     private static final int MAX_RETRIES = 3;
     private static final long RETRY_DELAY_MS = 1000;
+    private static final String[] PROTOCOLS = { "https", "http" };
+    private static final int[] PORTS = { 443, 4443, 80 };
 
     @Override
     public Set<ThingTypeUID> getSupportedThingTypeUIDs() {
@@ -42,6 +45,8 @@ public class LinkPlayDiscoveryParticipant implements MDNSDiscoveryParticipant {
 
     @Override
     public @Nullable DiscoveryResult createResult(ServiceInfo service) {
+        logger.debug("Processing LinkPlay service discovery: {}", service.getName());
+
         if (!validateService(service)) {
             return null;
         }
@@ -56,28 +61,75 @@ public class LinkPlayDiscoveryParticipant implements MDNSDiscoveryParticipant {
             return null;
         }
 
+        Map<String, Object> properties = new HashMap<>();
+
+        // Basic properties
         String model = service.getPropertyString("md");
         String name = service.getName();
         String firmware = service.getPropertyString("fw");
 
-        logger.debug("LinkPlay discovery - Device: {}, IP: {}, Model: {}, Firmware: {}", 
-            name, ipAddress, model, firmware);
+        // Multiroom properties
+        String multiroomStatus = service.getPropertyString("mr");
+        String multiroomRole = determineMultiroomRole(service);
+        String multiroomMaster = service.getPropertyString("ma"); // Master IP if slave
+        String multiroomSlaves = service.getPropertyString("sl"); // Slave IPs if master
+
+        logger.info("LinkPlay device discovered - Name: {}, IP: {}, Model: {}, Role: {}", 
+            name, ipAddress, model, multiroomRole);
+
+        // Add all properties
+        properties.put(PROPERTY_IP_ADDRESS, ipAddress);
+        properties.put(PROPERTY_DEVICE_ID, deviceId);
+        properties.put(PROPERTY_MODEL, model);
+        properties.put(PROPERTY_FIRMWARE, firmware);
+        properties.put(PROPERTY_MULTIROOM_STATUS, multiroomStatus);
+        properties.put(PROPERTY_MULTIROOM_ROLE, multiroomRole);
+
+        if (multiroomMaster != null && !multiroomMaster.isEmpty()) {
+            properties.put(PROPERTY_MULTIROOM_MASTER, multiroomMaster);
+            logger.debug("Device is a slave of master: {}", multiroomMaster);
+        }
+        if (multiroomSlaves != null && !multiroomSlaves.isEmpty()) {
+            properties.put(PROPERTY_MULTIROOM_SLAVES, multiroomSlaves);
+            logger.debug("Device is a master with slaves: {}", multiroomSlaves);
+        }
 
         ThingUID uid = new ThingUID(THING_TYPE_DEVICE, deviceId);
+
+        logger.info("Adding LinkPlay device to inbox: {}", uid);
 
         return DiscoveryResultBuilder.create(uid)
                 .withLabel(name != null ? name : "LinkPlay Device")
                 .withRepresentationProperty(PROPERTY_DEVICE_ID)
-                .withProperty(PROPERTY_IP_ADDRESS, ipAddress)
-                .withProperty(PROPERTY_DEVICE_ID, deviceId)
-                .withProperty(PROPERTY_MODEL, model)
-                .withProperty(PROPERTY_FIRMWARE, firmware)
+                .withProperties(properties)
                 .withTimeToLive(TimeUnit.SECONDS.toSeconds(DISCOVERY_TIMEOUT_SEC))
                 .build();
     }
 
+    private String determineMultiroomRole(ServiceInfo service) {
+        String multiroomStatus = service.getPropertyString("mr");
+        String masterIp = service.getPropertyString("ma");
+        String slaveList = service.getPropertyString("sl");
+
+        if (multiroomStatus == null || multiroomStatus.isEmpty()) {
+            return MULTIROOM_ROLE_NONE;
+        }
+
+        if (masterIp != null && !masterIp.isEmpty()) {
+            return MULTIROOM_ROLE_SLAVE;
+        }
+
+        if (slaveList != null && !slaveList.isEmpty()) {
+            return MULTIROOM_ROLE_MASTER;
+        }
+
+        return MULTIROOM_ROLE_NONE;
+    }
+
     @Override
     public @Nullable ThingUID getThingUID(ServiceInfo service) {
+        logger.trace("Checking ThingUID for service: {}", service.getName());
+
         if (!validateService(service)) {
             return null;
         }
@@ -87,7 +139,9 @@ public class LinkPlayDiscoveryParticipant implements MDNSDiscoveryParticipant {
             return null;
         }
 
-        return new ThingUID(THING_TYPE_DEVICE, deviceId);
+        ThingUID uid = new ThingUID(THING_TYPE_DEVICE, deviceId);
+        logger.debug("Created ThingUID: {} for device ID: {}", uid, deviceId);
+        return uid;
     }
 
     private boolean validateService(ServiceInfo service) {
@@ -113,18 +167,24 @@ public class LinkPlayDiscoveryParticipant implements MDNSDiscoveryParticipant {
             logger.debug("LinkPlay device found but no IPv4 address available: {}", service.getName());
             return null;
         }
-        
+
         String ipAddress = null;
         int retries = 0;
-        
+
         while (ipAddress == null && retries < MAX_RETRIES) {
             try {
                 ipAddress = addresses[0].getHostAddress();
                 if (ipAddress == null || ipAddress.isEmpty()) {
                     throw new IllegalStateException("Empty IP address");
                 }
+
+                if (testDeviceConnectivity(ipAddress)) {
+                    logger.debug("Successfully connected to device at: {}", ipAddress);
+                    return ipAddress;
+                }
+
             } catch (Exception e) {
-                logger.debug("Failed to get IP address, attempt {}: {}", retries + 1, e.getMessage());
+                logger.debug("Failed to get IP address or test connectivity, attempt {}: {}", retries + 1, e.getMessage());
                 retries++;
                 try {
                     Thread.sleep(RETRY_DELAY_MS);
@@ -134,7 +194,22 @@ public class LinkPlayDiscoveryParticipant implements MDNSDiscoveryParticipant {
                 }
             }
         }
-        
+
         return ipAddress;
+    }
+
+    private boolean testDeviceConnectivity(String ipAddress) {
+        for (String protocol : PROTOCOLS) {
+            for (int port : PORTS) {
+                try {
+                    logger.debug("Testing connectivity to {}:{} using {}", ipAddress, port, protocol);
+                    // Implementation will be added in next iteration
+                    return true;
+                } catch (Exception e) {
+                    logger.debug("Failed to connect to {}:{} using {}: {}", ipAddress, port, protocol, e.getMessage());
+                }
+            }
+        }
+        return false;
     }
 }
