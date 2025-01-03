@@ -1,0 +1,66 @@
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD FAILURE
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  7.852 s
+[INFO] Finished at: 2025-01-03T16:35:06Z
+[INFO] ------------------------------------------------------------------------
+[ERROR] Failed to execute goal com.diffplug.spotless:spotless-maven-plugin:2.43.0:check (codestyle_check) on project org.openhab.addons.reactor: The following files had format violations:
+[ERROR]     src/main/java/org/openhab/binding/linkplay/internal/discovery/LinkPlayDiscoveryParticipant.java
+[ERROR]         @@ -74,8 +74,8 @@
+[ERROR]          ········String·multiroomMaster·=·service.getPropertyString("ma");·//·Master·IP·if·slave
+[ERROR]          ········String·multiroomSlaves·=·service.getPropertyString("sl");·//·Slave·IPs·if·master
+[ERROR]          
+[ERROR]         -········logger.info("LinkPlay·device·discovered·-·Name:·{},·IP:·{},·Model:·{},·Role:·{}",·
+[ERROR]         -············name,·ipAddress,·model,·multiroomRole);
+[ERROR]         +········logger.info("LinkPlay·device·discovered·-·Name:·{},·IP:·{},·Model:·{},·Role:·{}",·name,·ipAddress,·model,
+[ERROR]         +················multiroomRole);
+[ERROR]          
+[ERROR]          ········//·Add·all·properties
+[ERROR]          ········properties.put(PROPERTY_IP_ADDRESS,·ipAddress);
+[ERROR]         @@ -98,12 +98,9 @@
+[ERROR]          
+[ERROR]          ········logger.info("Adding·LinkPlay·device·to·inbox:·{}",·uid);
+[ERROR]          
+[ERROR]         -········return·DiscoveryResultBuilder.create(uid)
+[ERROR]         -················.withLabel(name·!=·null·?·name·:·"LinkPlay·Device")
+[ERROR]         -················.withRepresentationProperty(PROPERTY_DEVICE_ID)
+[ERROR]         -················.withProperties(properties)
+[ERROR]         -················.withTimeToLive(TimeUnit.SECONDS.toSeconds(DISCOVERY_TIMEOUT_SEC))
+[ERROR]         -················.build();
+[ERROR]         +········return·DiscoveryResultBuilder.create(uid).withLabel(name·!=·null·?·name·:·"LinkPlay·Device")
+[ERROR]         +················.withRepresentationProperty(PROPERTY_DEVICE_ID).withProperties(properties)
+[ERROR]         +················.withTimeToLive(TimeUnit.SECONDS.toSeconds(DISCOVERY_TIMEOUT_SEC)).build();
+[ERROR]          ····}
+[ERROR]          
+[ERROR]          ····private·String·determineMultiroomRole(ServiceInfo·service)·{
+[ERROR]         @@ -184,7 +181,8 @@
+[ERROR]          ················}
+[ERROR]          
+[ERROR]          ············}·catch·(Exception·e)·{
+[ERROR]         -················logger.debug("Failed·to·get·IP·address·or·test·connectivity,·attempt·{}:·{}",·retries·+·1,·e.getMessage());
+[ERROR]         +················logger.debug("Failed·to·get·IP·address·or·test·connectivity,·attempt·{}:·{}",·retries·+·1,
+[ERROR]         +························e.getMessage());
+[ERROR]          ················retries++;
+[ERROR]          ················try·{
+[ERROR]          ····················Thread.sleep(RETRY_DELAY_MS);
+[ERROR]         @@ -212,4 +210,4 @@
+[ERROR]          ········}
+[ERROR]          ········return·false;
+[ERROR]          ····}
+[ERROR]         -}
+[ERROR]         +}
+[ERROR]     src/main/java/org/openhab/binding/linkplay/internal/LinkPlayBindingConstants.java
+[ERROR]         @@ -2,13 +2,13 @@
+[ERROR]          
+[ERROR]          public·class·LinkPlayBindingConstants·{
+[ERROR]          ····//·Existing·constants·remain·unchanged
+[ERROR]         -····
+[ERROR]     ... (11 more lines that didn't fit)
+[ERROR] Run 'mvn spotless:apply' to fix these violations.
+[ERROR] -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoExecutionException
