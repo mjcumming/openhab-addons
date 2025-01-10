@@ -64,21 +64,21 @@ public class LinkPlayThingHandler extends BaseThingHandler {
     @Override
     public void initialize() {
         LinkPlayConfiguration config = getConfigAs(LinkPlayConfiguration.class);
-        String ipAddress = config.ipAddress;
 
-        if (ipAddress == null || ipAddress.isEmpty()) {
-            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR, "IP address not configured");
+        if (!config.isValid()) {
+            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR,
+                    "Invalid configuration: IP address must be in format xxx.xxx.xxx.xxx");
             return;
         }
 
         this.deviceName = config.deviceName;
-        this.pollingInterval = Math.max(config.pollingInterval, 10); // Minimum 10 seconds
+        this.pollingInterval = config.pollingInterval;
 
         // Initialize the HTTP client with the IP address
-        httpClient.setIpAddress(ipAddress);
+        httpClient.setIpAddress(config.ipAddress);
 
-        logger.debug("Initializing LinkPlay device: IP = {}, Name = {}, Polling Interval = {}", ipAddress, deviceName,
-                pollingInterval);
+        logger.debug("Initializing LinkPlay device: IP = {}, Name = {}, Polling Interval = {}", config.ipAddress,
+                deviceName, pollingInterval);
 
         updateStatus(ThingStatus.UNKNOWN);
         startPolling();
@@ -93,9 +93,27 @@ public class LinkPlayThingHandler extends BaseThingHandler {
     private void startPolling() {
         stopPolling();
         pollingJob = scheduler.scheduleWithFixedDelay(() -> {
-            metadataManager.fetchAndUpdateMetadata(getThing());
-            groupManager.updateGroupState(getThing());
-        }, 0, 10, TimeUnit.SECONDS);
+            try {
+                boolean metadataSuccess = metadataManager.fetchAndUpdateMetadata(getThing());
+                boolean groupSuccess = groupManager.updateGroupState(getThing());
+
+                if (metadataSuccess || groupSuccess) {
+                    if (thing.getStatus() != ThingStatus.ONLINE) {
+                        updateStatus(ThingStatus.ONLINE);
+                    }
+                } else {
+                    if (thing.getStatus() == ThingStatus.ONLINE) {
+                        updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
+                                "Failed to communicate with device");
+                    }
+                }
+            } catch (Exception e) {
+                logger.debug("Error during polling: {}", e.getMessage());
+                if (thing.getStatus() == ThingStatus.ONLINE) {
+                    updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR, e.getMessage());
+                }
+            }
+        }, 0, pollingInterval, TimeUnit.SECONDS);
     }
 
     private void stopPolling() {

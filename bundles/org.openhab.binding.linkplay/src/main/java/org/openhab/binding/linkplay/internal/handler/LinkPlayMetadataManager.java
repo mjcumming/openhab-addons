@@ -47,16 +47,23 @@ public class LinkPlayMetadataManager {
      *
      * @param thing The Thing instance to update.
      */
-    public void fetchAndUpdateMetadata(Thing thing) {
-        CompletableFuture<String> metadataFuture = httpClient.sendCommand("getStatusEx");
+    public boolean fetchAndUpdateMetadata(Thing thing) {
+        try {
+            CompletableFuture<String> metadataFuture = httpClient.sendCommand("getStatusEx");
 
-        metadataFuture.whenComplete((response, error) -> {
-            if (error != null) {
-                logger.warn("Failed to fetch metadata: {}", error.getMessage());
-                return;
-            }
-            parseAndApplyMetadata(response, thing);
-        });
+            metadataFuture.whenComplete((response, error) -> {
+                if (error != null) {
+                    logger.warn("Failed to fetch metadata: {}", error.getMessage());
+                    return;
+                }
+                parseAndApplyMetadata(response, thing);
+            });
+
+            return true;
+        } catch (Exception e) {
+            logger.warn("Failed to fetch metadata: {}", e.getMessage());
+            return false;
+        }
     }
 
     private void parseAndApplyMetadata(String response, Thing thing) {

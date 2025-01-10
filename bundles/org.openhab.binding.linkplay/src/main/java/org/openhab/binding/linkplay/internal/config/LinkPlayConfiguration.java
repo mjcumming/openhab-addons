@@ -42,4 +42,32 @@ public class LinkPlayConfiguration {
      * Default value is 30 seconds.
      */
     public int pollingInterval = 30;
+
+    public static final int MIN_POLLING_INTERVAL = 10;
+    public static final int MAX_POLLING_INTERVAL = 60;
+
+    public boolean isValid() {
+        if (ipAddress.isEmpty()) {
+            return false;
+        }
+
+        String[] octets = ipAddress.split("\\.");
+        if (octets.length != 4) {
+            return false;
+        }
+
+        try {
+            for (String octet : octets) {
+                int value = Integer.parseInt(octet);
+                if (value < 0 || value > 255) {
+                    return false;
+                }
+            }
+        } catch (NumberFormatException e) {
+            return false;
+        }
+
+        pollingInterval = Math.min(Math.max(pollingInterval, MIN_POLLING_INTERVAL), MAX_POLLING_INTERVAL);
+        return true;
+    }
 }

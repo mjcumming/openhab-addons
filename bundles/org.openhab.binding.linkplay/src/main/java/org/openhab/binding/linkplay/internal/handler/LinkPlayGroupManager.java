@@ -92,16 +92,22 @@ public class LinkPlayGroupManager {
      *
      * @param thing The Thing to update.
      */
-    public void updateGroupState(Thing thing) {
-        httpClient.sendCommand("multiroom:getSlaveList").whenComplete((response, error) -> {
-            if (error != null) {
-                logger.warn("Failed to fetch group state: {}", error.getMessage());
-                return;
-            }
+    public boolean updateGroupState(Thing thing) {
+        try {
+            httpClient.sendCommand("multiroom:getSlaveList").whenComplete((response, error) -> {
+                if (error != null) {
+                    logger.warn("Failed to fetch group state: {}", error.getMessage());
+                    return;
+                }
 
-            logger.debug("Group state response: {}", response);
-            // Parse and update group-related channels (e.g., group role, slave list).
-            // TODO: Implement response parsing and state updates based on parsed data.
-        });
+                logger.debug("Group state response: {}", response);
+                // Parse and update group-related channels (e.g., group role, slave list).
+                // TODO: Implement response parsing and state updates based on parsed data.
+            });
+            return true;
+        } catch (Exception e) {
+            logger.warn("Failed to fetch group state: {}", e.getMessage());
+            return false;
+        }
     }
 }

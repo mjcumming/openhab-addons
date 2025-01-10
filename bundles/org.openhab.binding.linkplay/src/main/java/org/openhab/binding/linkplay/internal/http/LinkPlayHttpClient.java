@@ -14,8 +14,11 @@ package org.openhab.binding.linkplay.internal.http;
 
 import static org.openhab.binding.linkplay.internal.LinkPlayBindingConstants.*;
 
+import java.io.IOException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
@@ -45,6 +48,9 @@ public class LinkPlayHttpClient {
     private final Logger logger = LoggerFactory.getLogger(LinkPlayHttpClient.class);
     private final HttpClient httpClient;
     private @Nullable String ipAddress;
+
+    private static final int CONNECT_TIMEOUT_MS = 5000;
+    private static final int READ_TIMEOUT_MS = 5000;
 
     @Activate
     public LinkPlayHttpClient(@Reference HttpClientFactory httpClientFactory) {
@@ -121,13 +127,22 @@ public class LinkPlayHttpClient {
 
         return CompletableFuture.supplyAsync(() -> {
             try {
-                ContentResponse response = httpClient.GET(url);
-                String content = response.getContentAsString();
-                logger.debug("Received response: {}", content);
-                return content;
+                ContentResponse response = httpClient.newRequest(url).timeout(CONNECT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                        .send();
+
+                int status = response.getStatus();
+                if (status == 200) {
+                    String content = response.getContentAsString();
+                    logger.debug("Received response: {}", content);
+                    return content;
+                } else {
+                    throw new IOException("HTTP error " + status);
+                }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new CompletionException("Request interrupted", e);
+            } catch (TimeoutException e) {
+                throw new CompletionException("Request timed out", e);
             } catch (Exception e) {
                 logger.debug("Request failed: {}", e.getMessage());
                 throw new CompletionException(e);

@@ -91,11 +91,17 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
             friendlyName = "LinkPlay Device";
         }
 
-        logger.debug("UPnP: Checking LinkPlay device '{}' at IP={} for final validation", friendlyName, ipAddress);
+        logger.debug("UPnP: Checking LinkPlay device '{}' at IP={} for validation", friendlyName, ipAddress);
 
+        // First validate IP address format
+        if (!isValidIpAddress(ipAddress)) {
+            logger.warn("UPnP: Invalid IP address {} for device {}. Skipping discovery.", ipAddress, friendlyName);
+            return null;
+        }
+
+        // Then validate it's actually a LinkPlay device by checking the API endpoint
         if (!testLinkPlayHttp(ipAddress)) {
-            logger.warn("UPnP: LinkPlay device at IP={} not responding to HTTP(S). Skipping discovery result.",
-                    ipAddress);
+            logger.warn("UPnP: Device at IP={} not responding to LinkPlay API. Skipping discovery.", ipAddress);
             return null;
         }
 
@@ -111,12 +117,37 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
                 .withRepresentationProperty(CONFIG_IP_ADDRESS).build();
     }
 
+    private boolean isValidIpAddress(String ipAddress) {
+        if (ipAddress == null || ipAddress.isEmpty()) {
+            return false;
+        }
+
+        String[] octets = ipAddress.split("\\.");
+        if (octets.length != 4) {
+            return false;
+        }
+
+        try {
+            for (String octet : octets) {
+                int value = Integer.parseInt(octet);
+                if (value < 0 || value > 255) {
+                    return false;
+                }
+            }
+            return true;
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
     private boolean testLinkPlayHttp(String ipAddress) {
+        // Try HTTPS ports first
         for (int port : HTTPS_PORTS) {
             if (httpCheck("https", ipAddress, port, true)) {
                 return true;
             }
         }
+        // Fall back to HTTP if HTTPS fails
         return httpCheck("http", ipAddress, HTTP_PORT, false);
     }
 
