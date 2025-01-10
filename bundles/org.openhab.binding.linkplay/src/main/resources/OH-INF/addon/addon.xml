@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<addon:addon id="linkplay" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:addon="https://openhab.org/schemas/addon/v1.0.0"
+	xsi:schemaLocation="https://openhab.org/schemas/addon/v1.0.0 https://openhab.org/schemas/addon-1.0.0.xsd">
+
+	<type>binding</type>
+	<name>LinkPlay Binding</name>
+	<description>This binding integrates LinkPlay-based audio devices with openHAB, allowing device control and state
+		monitoring.</description>
+	<author>Michael Cumming</author>
+
+	<config-description-ref uri="thing-types.xml"/>
+	<category>multimedia</category>
+	<label>LinkPlay Binding</label>
+
+	<required-osgi-service>
+		<id>org.openhab.core.io.transport.upnp.UpnpIOService</id>
+		<description>Required for UPnP discovery of LinkPlay devices.</description>
+	</required-osgi-service>
+
+	<feature>openhab-binding-linkplay</feature>
+</addon:addon>

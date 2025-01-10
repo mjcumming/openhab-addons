@@ -1,0 +1,180 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<thing:thing-descriptions bindingId="linkplay"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:thing="https://openhab.org/schemas/thing-description/v1.0.0"
+	xsi:schemaLocation="https://openhab.org/schemas/thing-description/v1.0.0 https://openhab.org/schemas/thing-description-1.0.0.xsd">
+
+	<!-- Thing Type -->
+	<thing-type id="device">
+		<label>LinkPlay Audio Device</label>
+		<description>A LinkPlay-based audio device.</description>
+
+		<channels>
+			<!-- Media Control -->
+			<channel id="control" typeId="system.media-control"/>
+			<channel id="title" typeId="system.media-title"/>
+			<channel id="artist" typeId="system.media-artist"/>
+			<channel id="album" typeId="system.media-album"/>
+			<channel id="volume" typeId="system.volume"/>
+			<channel id="mute" typeId="system.mute"/>
+
+			<!-- Playback Options -->
+			<channel id="repeat" typeId="repeat"/>
+			<channel id="shuffle" typeId="shuffle"/>
+			<channel id="source" typeId="source"/>
+
+			<!-- Device Metadata -->
+			<channel id="deviceName" typeId="deviceName"/>
+			<channel id="firmware" typeId="firmware"/>
+			<channel id="macAddress" typeId="macAddress"/>
+			<channel id="ipAddress" typeId="ipAddress"/>
+			<channel id="wifiSignal" typeId="wifiSignal"/>
+
+			<!-- Group Control -->
+			<channel id="groupRole" typeId="groupRole"/>
+			<channel id="groupMasterIP" typeId="groupMasterIP"/>
+			<channel id="groupSlaveIPs" typeId="groupSlaveIPs"/>
+			<channel id="groupJoin" typeId="groupJoin"/>
+			<channel id="groupLeave" typeId="groupLeave"/>
+			<channel id="groupUngroup" typeId="groupUngroup"/>
+			<channel id="groupSlaveKickout" typeId="groupSlaveKickout"/>
+			<channel id="groupVolume" typeId="system.volume"/>
+			<channel id="groupMute" typeId="system.mute"/>
+		</channels>
+
+		<config-description>
+			<parameter name="ipAddress" type="text" required="true">
+				<context>network-address</context>
+				<label>IP Address</label>
+				<description>IP address of the LinkPlay device.</description>
+			</parameter>
+			<parameter name="deviceName" type="text" required="false">
+				<label>Device Name</label>
+				<description>Friendly name for the LinkPlay device.</description>
+			</parameter>
+			<parameter name="pollingInterval" type="integer" required="false" min="1" max="60" unit="s">
+				<label>Polling Interval</label>
+				<description>Interval in seconds between device status updates. Advanced setting.</description>
+				<default>10</default>
+				<advanced>true</advanced>
+			</parameter>
+		</config-description>
+	</thing-type>
+
+	<!-- Channel Type Definitions -->
+	<channel-type id="repeat">
+		<item-type>String</item-type>
+		<label>Repeat</label>
+		<description>Repeat mode for playback.</description>
+		<state>
+			<options>
+				<option value="off">Off</option>
+				<option value="all">All</option>
+				<option value="single">Single</option>
+			</options>
+		</state>
+	</channel-type>
+
+	<channel-type id="shuffle">
+		<item-type>Switch</item-type>
+		<label>Shuffle</label>
+		<description>Shuffle mode for playback.</description>
+	</channel-type>
+
+	<channel-type id="source">
+		<item-type>String</item-type>
+		<label>Source</label>
+		<description>Playback source (e.g., Bluetooth).</description>
+		<state>
+			<options>
+				<option value="wifi">WiFi</option>
+				<option value="line-in">Line-In</option>
+				<option value="bluetooth">Bluetooth</option>
+				<option value="optical">Optical</option>
+			</options>
+		</state>
+	</channel-type>
+
+	<!-- Metadata Channel Types -->
+	<channel-type id="deviceName">
+		<item-type>String</item-type>
+		<label>Device Name</label>
+		<description>Friendly name of the device.</description>
+	</channel-type>
+
+	<channel-type id="firmware">
+		<item-type>String</item-type>
+		<label>Firmware Version</label>
+		<description>The firmware version of the device.</description>
+	</channel-type>
+
+	<channel-type id="macAddress">
+		<item-type>String</item-type>
+		<label>MAC Address</label>
+		<description>The MAC address of the device.</description>
+	</channel-type>
+
+	<channel-type id="ipAddress">
+		<item-type>String</item-type>
+		<label>IP Address</label>
+		<description>IP address of the device.</description>
+	</channel-type>
+
+	<channel-type id="wifiSignal">
+		<item-type>Percent</item-type>
+		<label>WiFi Signal Strength</label>
+		<description>WiFi signal strength as a percentage.</description>
+	</channel-type>
+
+	<!-- Group Channel Types -->
+	<channel-type id="groupRole">
+		<item-type>String</item-type>
+		<label>Group Role</label>
+		<description>Device role in group setup (standalone/master/slave).</description>
+		<state readOnly="true">
+			<options>
+				<option value="standalone">Standalone</option>
+				<option value="master">Master</option>
+				<option value="slave">Slave</option>
+			</options>
+		</state>
+	</channel-type>
+
+	<channel-type id="groupMasterIP">
+		<item-type>String</item-type>
+		<label>Group Master IP</label>
+		<description>IP address of the master device.</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="groupSlaveIPs">
+		<item-type>String</item-type>
+		<label>Slave Device IPs</label>
+		<description>List of slave device IPs.</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="groupJoin">
+		<item-type>String</item-type>
+		<label>Join Group</label>
+		<description>Joins a group (specify master IP).</description>
+	</channel-type>
+
+	<channel-type id="groupLeave">
+		<item-type>String</item-type>
+		<label>Leave Group</label>
+		<description>Leaves the current group.</description>
+	</channel-type>
+
+	<channel-type id="groupUngroup">
+		<item-type>String</item-type>
+		<label>Ungroup</label>
+		<description>Master command to ungroup all slaves.</description>
+	</channel-type>
+
+	<channel-type id="groupSlaveKickout">
+		<item-type>String</item-type>
+		<label>Slave Kickout</label>
+		<description>Removes a specific slave from the group.</description>
+	</channel-type>
+</thing:thing-descriptions>
