@@ -14,7 +14,6 @@
 			<channel id="control" typeId="system.media-control"/>
 			<channel id="title" typeId="system.media-title"/>
 			<channel id="artist" typeId="system.media-artist"/>
-			<channel id="album" typeId="system.media-album"/>
 			<channel id="volume" typeId="system.volume"/>
 			<channel id="mute" typeId="system.mute"/>
 
@@ -52,9 +51,9 @@
 				<label>Device Name</label>
 				<description>Friendly name for the LinkPlay device.</description>
 			</parameter>
-			<parameter name="pollingInterval" type="integer" required="false" min="1" max="60" unit="s">
+			<parameter name="pollingInterval" type="integer" required="false" min="10" max="60" unit="s">
 				<label>Polling Interval</label>
-				<description>Interval in seconds between device status updates. Advanced setting.</description>
+				<description>Interval in seconds between device status updates.</description>
 				<default>10</default>
 				<advanced>true</advanced>
 			</parameter>

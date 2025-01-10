@@ -19,9 +19,16 @@ import java.util.concurrent.TimeUnit;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
+import org.openhab.binding.linkplay.internal.config.LinkPlayConfiguration;
 import org.openhab.binding.linkplay.internal.http.LinkPlayHttpClient;
-import org.openhab.core.thing.*;
+import org.openhab.core.io.transport.upnp.UpnpIOService;
+import org.openhab.core.thing.ChannelUID;
+import org.openhab.core.thing.Thing;
+import org.openhab.core.thing.ThingStatus;
+import org.openhab.core.thing.ThingStatusDetail;
 import org.openhab.core.thing.binding.BaseThingHandler;
+import org.openhab.core.types.Command;
+import org.openhab.core.types.State;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -29,7 +36,7 @@ import org.slf4j.LoggerFactory;
  * The {@link LinkPlayThingHandler} is responsible for managing a LinkPlay device.
  * It uses sub-managers for metadata, group handling, and HTTP communication.
  *
- * @author Michael Cumming
+ * @author Michael Cumming - Initial contribution
  */
 @NonNullByDefault
 public class LinkPlayThingHandler extends BaseThingHandler {
@@ -39,33 +46,41 @@ public class LinkPlayThingHandler extends BaseThingHandler {
     private final LinkPlayHttpClient httpClient;
     private final LinkPlayGroupManager groupManager;
     private final LinkPlayMetadataManager metadataManager;
+    @SuppressWarnings("unused")
+    private final UpnpIOService upnpIOService;
 
     private @Nullable ScheduledFuture<?> pollingJob;
+    private String deviceName = "";
+    private int pollingInterval = 10; // Default 10 seconds
 
-    public LinkPlayThingHandler(Thing thing, LinkPlayHttpClient httpClient) {
+    public LinkPlayThingHandler(Thing thing, LinkPlayHttpClient httpClient, UpnpIOService upnpIOService) {
         super(thing);
         this.httpClient = httpClient;
+        this.upnpIOService = upnpIOService;
         this.groupManager = new LinkPlayGroupManager(httpClient);
         this.metadataManager = new LinkPlayMetadataManager(httpClient);
     }
 
     @Override
     public void initialize() {
-        updateStatus(ThingStatus.UNKNOWN);
-
         LinkPlayConfiguration config = getConfigAs(LinkPlayConfiguration.class);
+        String ipAddress = config.ipAddress;
 
-        if (config.ipAddress.isEmpty()) {
-            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR, "IP address is not configured.");
+        if (ipAddress == null || ipAddress.isEmpty()) {
+            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR, "IP address not configured");
             return;
         }
 
         this.deviceName = config.deviceName;
-        this.pollingInterval = Math.max(config.pollingInterval, LinkPlayConfiguration.MIN_REFRESH_INTERVAL);
+        this.pollingInterval = Math.max(config.pollingInterval, 10); // Minimum 10 seconds
 
-        logger.debug("Initializing LinkPlay device: IP = {}, Name = {}, Polling Interval = {}", config.ipAddress,
-                deviceName, pollingInterval);
+        // Initialize the HTTP client with the IP address
+        httpClient.setIpAddress(ipAddress);
 
+        logger.debug("Initializing LinkPlay device: IP = {}, Name = {}, Polling Interval = {}", ipAddress, deviceName,
+                pollingInterval);
+
+        updateStatus(ThingStatus.UNKNOWN);
         startPolling();
     }
 
@@ -84,8 +99,9 @@ public class LinkPlayThingHandler extends BaseThingHandler {
     }
 
     private void stopPolling() {
-        if (pollingJob != null) {
-            pollingJob.cancel(true);
+        ScheduledFuture<?> job = pollingJob;
+        if (job != null) {
+            job.cancel(true);
             pollingJob = null;
         }
     }
@@ -110,14 +126,30 @@ public class LinkPlayThingHandler extends BaseThingHandler {
         }
     }
 
-    private void handlePlaybackCommand(ChannelUID channelUID, org.openhab.core.types.Command command) {
-        // Delegate to HTTP client for basic commands like volume, mute, etc.
-        httpClient.sendCommand(channelUID.getId(), command).whenComplete((response, error) -> {
-            if (error != null) {
-                logger.warn("Failed to send playback command: {}", error.getMessage());
-            } else {
-                logger.debug("Playback command response: {}", response);
+    private void handlePlaybackCommand(ChannelUID channelUID, Command command) {
+        String channelId = channelUID.getId();
+        try {
+            switch (channelId) {
+                case CHANNEL_VOLUME:
+                case CHANNEL_MUTE:
+                case CHANNEL_CONTROL:
+                    httpClient.sendCommand(channelId, command).whenComplete((response, error) -> {
+                        if (error != null) {
+                            logger.warn("Failed to send playback command: {}", error.getMessage());
+                        } else {
+                            logger.debug("Playback command response: {}", response);
+                        }
+                    });
+                    break;
+                default:
+                    logger.warn("Unhandled playback channel: {}", channelId);
             }
-        });
+        } catch (Exception e) {
+            logger.warn("Error handling playback command for channel {}: {}", channelId, e.getMessage());
+        }
+    }
+
+    public void updateThingState(ChannelUID channelUID, State state) {
+        updateState(channelUID, state);
     }
 }

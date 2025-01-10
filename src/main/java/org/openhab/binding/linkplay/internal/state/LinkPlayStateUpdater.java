@@ -14,10 +14,12 @@ package org.openhab.binding.linkplay.internal.state;
 
 import java.util.Map;
 
+import org.openhab.binding.linkplay.internal.handler.LinkPlayHandler;
 import org.openhab.core.library.types.StringType;
 import org.openhab.core.thing.Thing;
 import org.openhab.core.thing.ThingStatus;
 import org.openhab.core.thing.ThingStatusDetail;
+import org.openhab.core.thing.ThingStatusInfo;
 import org.openhab.core.types.State;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,13 +41,13 @@ public class LinkPlayStateUpdater {
      */
     public void updateStates(Thing thing, Map<String, String> values) {
         values.forEach((channelId, value) -> {
-            State state = new StringType(value);
-            try {
-                thing.getChannel(channelId).getLink().setState(state);
-                logger.debug("Updated channel '{}' with value '{}'", channelId, value);
-            } catch (Exception e) {
-                logger.warn("Failed to update channel '{}': {}", channelId, e.getMessage(), e);
-            }
+            thing.getChannel(channelId).ifPresent(channel -> {
+                State state = new StringType(value);
+                if (thing.getHandler() instanceof LinkPlayHandler handler) {
+                    handler.updateState(channel.getUID(), state);
+                    logger.debug("Updated channel '{}' with value '{}'", channelId, value);
+                }
+            });
         });
     }
 
@@ -57,7 +59,8 @@ public class LinkPlayStateUpdater {
      * @param detail Additional details about the status.
      */
     public void updateStatus(Thing thing, ThingStatus status, ThingStatusDetail detail) {
-        thing.setStatusInfo(status, detail, null);
+        ThingStatusInfo statusInfo = new ThingStatusInfo(status, detail, null);
+        thing.setStatusInfo(statusInfo);
         logger.debug("Updated Thing status to '{}' with detail '{}'", status, detail);
     }
 }

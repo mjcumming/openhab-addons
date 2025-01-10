@@ -15,7 +15,6 @@ package org.openhab.binding.linkplay.internal.handler;
 import static org.openhab.binding.linkplay.internal.LinkPlayBindingConstants.*;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
-import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.binding.linkplay.internal.http.LinkPlayHttpClient;
 import org.openhab.core.library.types.StringType;
 import org.openhab.core.thing.ChannelUID;
@@ -27,7 +26,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Handles multiroom group commands and state updates for LinkPlay devices.
  *
- * @author Michael Cumming - Initial contribution
+ * @author Michael Cumming
  */
 @NonNullByDefault
 public class LinkPlayGroupManager {
@@ -82,9 +81,16 @@ public class LinkPlayGroupManager {
      * @param action The action to perform (e.g., join, leave, ungroup).
      * @param parameter Optional parameter for the action.
      */
-    private void executeGroupCommand(String action, @Nullable String parameter) {
+    private void executeGroupCommand(String action, String parameter) {
         String command = (parameter != null && !parameter.isEmpty()) ? action + ":" + parameter : action;
-        httpClient.sendCommand(command);
+
+        httpClient.sendCommand(command).whenComplete((response, error) -> {
+            if (error != null) {
+                logger.warn("Failed to execute group command: {}", error.getMessage());
+            } else {
+                logger.debug("Group command executed successfully: {}", response);
+            }
+        });
     }
 
     /**

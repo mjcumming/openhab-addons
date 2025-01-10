@@ -12,16 +12,14 @@
  */
 package org.openhab.binding.linkplay.internal.utils;
 
-import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
  * The {@link HexConverter} provides utility methods for hex-to-ASCII conversion.
  *
- * @author Michael Cumming - Initial contribution
+ * @author Michael Cumming
  */
-@NonNullByDefault
 public class HexConverter {
 
     private static final Logger logger = LoggerFactory.getLogger(HexConverter.class);
