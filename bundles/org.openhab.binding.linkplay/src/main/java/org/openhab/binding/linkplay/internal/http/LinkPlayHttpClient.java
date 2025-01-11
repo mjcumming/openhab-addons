@@ -57,12 +57,13 @@ public class LinkPlayHttpClient {
         this.httpClient = httpClientFactory.getCommonHttpClient();
     }
 
-    public void setIpAddress(String ipAddress) {
-        this.ipAddress = ipAddress;
+    public void setIpAddress(@Nullable String ipAddress) {
+        this.ipAddress = ipAddress != null && !ipAddress.trim().isEmpty() ? ipAddress.trim() : null;
     }
 
     private void validateIpAddress() throws IllegalStateException {
-        if (ipAddress == null || ipAddress.isEmpty()) {
+        String currentIp = ipAddress;
+        if (currentIp == null || currentIp.isEmpty()) {
             throw new IllegalStateException("IP address is not configured.");
         }
     }
@@ -74,6 +75,7 @@ public class LinkPlayHttpClient {
      * @return CompletableFuture containing the response
      */
     public CompletableFuture<String> sendCommand(String command) {
+        validateIpAddress();
         return sendRequest("command=" + command);
     }
 
@@ -116,19 +118,14 @@ public class LinkPlayHttpClient {
     }
 
     private CompletableFuture<String> sendRequest(String params) {
-        String ipAddr = ipAddress;
-        if (ipAddr == null || ipAddr.isEmpty()) {
-            logger.warn("IP address is not configured.");
-            return CompletableFuture.failedFuture(new IllegalStateException("IP address is not configured."));
-        }
-
-        String url = String.format("http://%s/httpapi.asp?%s", ipAddr, params);
+        // validateIpAddress() must be called before this method
+        String url = String.format("http://%s/httpapi.asp?%s", ipAddress, params);
         logger.debug("Sending request to LinkPlay device: {}", url);
 
         return CompletableFuture.supplyAsync(() -> {
             try {
-                ContentResponse response = httpClient.newRequest(url).timeout(CONNECT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-                        .send();
+                ContentResponse response = httpClient.newRequest(url)
+                        .timeout(CONNECT_TIMEOUT_MS + READ_TIMEOUT_MS, TimeUnit.MILLISECONDS).send();
 
                 int status = response.getStatus();
                 if (status == 200) {

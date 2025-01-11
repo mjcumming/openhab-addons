@@ -65,21 +65,18 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
 
     @Override
     public @Nullable ThingUID getThingUID(@Nullable RemoteDevice device) {
-        if (device != null) {
-            String manufacturer = device.getDetails().getManufacturerDetails().getManufacturer();
-            if (SUPPORTED_MANUFACTURER.equals(manufacturer)) {
-                return new ThingUID(THING_TYPE_DEVICE, device.getIdentity().getUdn().getIdentifierString());
-            }
+        if (device == null) {
+            return null;
+        }
+        String manufacturer = device.getDetails().getManufacturerDetails().getManufacturer();
+        if (SUPPORTED_MANUFACTURER.equals(manufacturer)) {
+            return new ThingUID(THING_TYPE_DEVICE, device.getIdentity().getUdn().getIdentifierString());
         }
         return null;
     }
 
     @Override
     public @Nullable DiscoveryResult createResult(RemoteDevice device) {
-        if (device == null) {
-            return null;
-        }
-
         ThingUID thingUID = getThingUID(device);
         if (thingUID == null) {
             return null;
@@ -118,7 +115,7 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
     }
 
     private boolean isValidIpAddress(String ipAddress) {
-        if (ipAddress == null || ipAddress.isEmpty()) {
+        if (ipAddress.isEmpty()) {
             return false;
         }
 
