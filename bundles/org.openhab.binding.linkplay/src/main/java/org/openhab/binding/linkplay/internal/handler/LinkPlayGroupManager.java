@@ -15,8 +15,10 @@ package org.openhab.binding.linkplay.internal.handler;
 import static org.openhab.binding.linkplay.internal.LinkPlayBindingConstants.*;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
-import org.eclipse.jdt.annotation.Nullable;
+import org.openhab.binding.linkplay.internal.http.LinkPlayCommunicationException;
 import org.openhab.binding.linkplay.internal.http.LinkPlayHttpClient;
+import org.openhab.core.library.types.OnOffType;
+import org.openhab.core.library.types.PercentType;
 import org.openhab.core.library.types.StringType;
 import org.openhab.core.thing.ChannelUID;
 import org.openhab.core.thing.Thing;
@@ -25,89 +27,130 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Handles multiroom group commands and state updates for LinkPlay devices.
+ * The {@link LinkPlayGroupManager} handles multiroom functionality for LinkPlay devices.
  *
  * @author Michael Cumming - Initial contribution
  */
 @NonNullByDefault
 public class LinkPlayGroupManager {
-
     private final Logger logger = LoggerFactory.getLogger(LinkPlayGroupManager.class);
+    private final Thing thing;
     private final LinkPlayHttpClient httpClient;
+    private String deviceIp = "";
 
-    public LinkPlayGroupManager(LinkPlayHttpClient httpClient) {
+    public LinkPlayGroupManager(Thing thing, LinkPlayHttpClient httpClient) {
+        this.thing = thing;
         this.httpClient = httpClient;
     }
 
-    /**
-     * Handles group-related commands like join, leave, and ungroup.
-     *
-     * @param channelUID The channel for the command.
-     * @param command The command to execute.
-     */
-    public void handleGroupCommand(ChannelUID channelUID, Command command) {
-        String action;
-        String parameter = null;
+    public void initialize(String ipAddress) {
+        this.deviceIp = ipAddress;
+        updateGroupState();
+    }
 
-        switch (channelUID.getId()) {
-            case CHANNEL_GROUP_JOIN:
-                if (command instanceof StringType) {
-                    action = "multiroom:JoinGroup";
-                    parameter = ((StringType) command).toString();
-                } else {
-                    logger.warn("Invalid command type for group join: {}", command.getClass().getName());
-                    return;
-                }
-                break;
-
-            case CHANNEL_GROUP_LEAVE:
-                action = "multiroom:LeaveGroup";
-                break;
-
-            case CHANNEL_GROUP_UNGROUP:
-                action = "multiroom:Ungroup";
-                break;
-
-            default:
-                logger.warn("Unhandled group channel: {}", channelUID.getId());
-                return;
+    public void updateGroupState() {
+        if (!(thing.getHandler() instanceof LinkPlayThingHandler handler)) {
+            return;
         }
 
-        executeGroupCommand(action, parameter);
+        httpClient.getMultiroomStatus(deviceIp).thenAccept(status -> {
+            String role = status.getRole();
+            String masterIP = status.getMasterIP();
+            String slaveIPs = String.join(",", status.getSlaveIPs());
+
+            handler.updateGroupChannels(role, masterIP, slaveIPs);
+        }).exceptionally(e -> {
+            handleGroupError("updating group state", e);
+            return null;
+        });
     }
 
-    /**
-     * Executes the group command via the HTTP client.
-     *
-     * @param action The action to perform (e.g., join, leave, ungroup).
-     * @param parameter Optional parameter for the action.
-     */
-    private void executeGroupCommand(String action, @Nullable String parameter) {
-        String command = (parameter != null && !parameter.isEmpty()) ? action + ":" + parameter : action;
-        httpClient.sendCommand(command);
-    }
+    public void handleCommand(ChannelUID channelUID, Command command) {
+        String channelId = channelUID.getIdWithoutGroup();
 
-    /**
-     * Periodically updates the group state of the device.
-     *
-     * @param thing The Thing to update.
-     */
-    public boolean updateGroupState(Thing thing) {
         try {
-            httpClient.sendCommand("multiroom:getSlaveList").whenComplete((response, error) -> {
-                if (error != null) {
-                    logger.warn("Failed to fetch group state: {}", error.getMessage());
-                    return;
-                }
+            switch (channelId) {
+                case CHANNEL_MASTER_IP:
+                    if (command instanceof StringType) {
+                        String masterIP = command.toString();
+                        joinGroup(deviceIp, masterIP);
+                    }
+                    break;
 
-                logger.debug("Group state response: {}", response);
-                // Parse and update group-related channels (e.g., group role, slave list).
-                // TODO: Implement response parsing and state updates based on parsed data.
-            });
-            return true;
+                case CHANNEL_SLAVE_IPS:
+                    if (command instanceof StringType) {
+                        String slaveIP = command.toString();
+                        kickoutSlave(deviceIp, slaveIP);
+                    }
+                    break;
+
+                case CHANNEL_GROUP_VOLUME:
+                    if (command instanceof PercentType && thing.getHandler() instanceof LinkPlayThingHandler handler) {
+                        handleGroupVolume(handler, ((PercentType) command).intValue());
+                    }
+                    break;
+
+                case CHANNEL_GROUP_MUTE:
+                    if (command instanceof OnOffType && thing.getHandler() instanceof LinkPlayThingHandler handler) {
+                        handleGroupMute(handler, OnOffType.ON.equals(command));
+                    }
+                    break;
+
+                default:
+                    logger.debug("Channel {} not handled in group manager", channelId);
+            }
         } catch (Exception e) {
-            logger.warn("Failed to fetch group state: {}", e.getMessage());
-            return false;
+            handleGroupError("executing group command", e);
+        }
+    }
+
+    private void handleGroupVolume(LinkPlayThingHandler handler, int volume) {
+        httpClient.getMultiroomStatus(deviceIp).thenAccept(status -> {
+            if ("master".equals(status.getRole())) {
+                httpClient.setGroupVolume(deviceIp, status.getSlaveIPs(), volume).thenRun(this::updateGroupState);
+            } else {
+                logger.debug("Group volume command ignored - device is not a master");
+            }
+        }).exceptionally(e -> {
+            handleGroupError("setting group volume", e);
+            return null;
+        });
+    }
+
+    private void handleGroupMute(LinkPlayThingHandler handler, boolean mute) {
+        httpClient.getMultiroomStatus(deviceIp).thenAccept(status -> {
+            if ("master".equals(status.getRole())) {
+                httpClient.setGroupMute(deviceIp, status.getSlaveIPs(), mute).thenRun(this::updateGroupState);
+            } else {
+                logger.debug("Group mute command ignored - device is not a master");
+            }
+        }).exceptionally(e -> {
+            handleGroupError("setting group mute", e);
+            return null;
+        });
+    }
+
+    private void joinGroup(String deviceIp, String masterIP) {
+        httpClient.joinGroup(deviceIp, masterIP).thenRun(this::updateGroupState).exceptionally(e -> {
+            handleGroupError("joining group", e);
+            return null;
+        });
+    }
+
+    private void kickoutSlave(String deviceIp, String slaveIp) {
+        httpClient.kickoutSlave(deviceIp, slaveIp).thenRun(this::updateGroupState).exceptionally(e -> {
+            handleGroupError("kicking out slave", e);
+            return null;
+        });
+    }
+
+    private void handleGroupError(String operation, Throwable e) {
+        String errorMessage = e.getMessage();
+        logger.debug("Error {} for device {}: {}", operation, deviceIp,
+                errorMessage != null ? errorMessage : "Unknown error");
+        if (thing.getHandler() instanceof LinkPlayThingHandler handler) {
+            handler.handleCommunicationError(
+                    new LinkPlayCommunicationException(errorMessage != null ? errorMessage : "Unknown error"));
         }
     }
 }

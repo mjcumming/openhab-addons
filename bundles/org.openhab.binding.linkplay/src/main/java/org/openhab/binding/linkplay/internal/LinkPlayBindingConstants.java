@@ -61,13 +61,13 @@ public class LinkPlayBindingConstants {
     public static final String CHANNEL_WIFI_SIGNAL = "wifiSignal";
 
     // Multiroom Channels
-    public static final String CHANNEL_GROUP_ROLE = "role";
-    public static final String CHANNEL_GROUP_MASTER_IP = "masterIP";
-    public static final String CHANNEL_GROUP_SLAVE_IPS = "slaveIPs";
-    public static final String CHANNEL_GROUP_JOIN = "join";
-    public static final String CHANNEL_GROUP_LEAVE = "leave";
-    public static final String CHANNEL_GROUP_UNGROUP = "ungroup";
-    public static final String CHANNEL_GROUP_KICKOUT = "kickout";
+    public static final String CHANNEL_ROLE = "role";
+    public static final String CHANNEL_MASTER_IP = "masterIP";
+    public static final String CHANNEL_SLAVE_IPS = "slaveIPs";
+    public static final String CHANNEL_JOIN = "join";
+    public static final String CHANNEL_LEAVE = "leave";
+    public static final String CHANNEL_UNGROUP = "ungroup";
+    public static final String CHANNEL_KICKOUT = "kickout";
     public static final String CHANNEL_GROUP_VOLUME = "groupVolume";
     public static final String CHANNEL_GROUP_MUTE = "groupMute";
 
@@ -83,12 +83,6 @@ public class LinkPlayBindingConstants {
     public static final String UPNP_SERVICE_TYPE_RENDERING_CONTROL = "urn:schemas-upnp-org:service:RenderingControl:1";
     public static final String UPNP_SERVICE_TYPE_AV_TRANSPORT = "urn:schemas-upnp-org:service:AVTransport:1";
     public static final String UPNP_SERVICE_TYPE_CONNECTION_MANAGER = "urn:schemas-upnp-org:service:ConnectionManager:1";
-
-    // Channel Group IDs
-    public static final String CHANNEL_GROUP_PLAYBACK = "playback";
-    public static final String CHANNEL_GROUP_CONTROL = "control";
-    public static final String CHANNEL_GROUP_INFO = "info";
-    public static final String CHANNEL_GROUP_MULTIROOM = "multiroom";
 
     // HTTP Related Constants
     public static final String API_URL_PREFIX = "http://%s:8080";

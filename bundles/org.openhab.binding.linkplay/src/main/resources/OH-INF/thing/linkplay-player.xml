@@ -43,10 +43,10 @@
 			<channel id="control" typeId="system.media-control"/>
 			<channel id="title" typeId="system.media-title"/>
 			<channel id="artist" typeId="system.media-artist"/>
-			<channel id="album" typeId="system.media-album"/>
-			<channel id="albumArt" typeId="albumArt"/>
-			<channel id="duration" typeId="duration"/>
-			<channel id="position" typeId="position"/>
+			<channel id="album" typeId="system.media-title"/>
+			<channel id="albumArt" typeId="system.media-artwork"/>
+			<channel id="duration" typeId="system.media-duration"/>
+			<channel id="position" typeId="system.media-elapsed"/>
 			<channel id="volume" typeId="system.volume"/>
 			<channel id="mute" typeId="system.mute"/>
 			<channel id="repeat" typeId="repeat"/>
@@ -78,13 +78,13 @@
 		<label>Multiroom</label>
 		<description>Multiroom control and status</description>
 		<channels>
-			<channel id="role" typeId="groupRole"/>
-			<channel id="masterIP" typeId="groupMasterIP"/>
-			<channel id="slaveIPs" typeId="groupSlaveIPs"/>
-			<channel id="join" typeId="groupJoin"/>
-			<channel id="leave" typeId="groupLeave"/>
-			<channel id="ungroup" typeId="groupUngroup"/>
-			<channel id="kickout" typeId="groupSlaveKickout"/>
+			<channel id="role" typeId="role"/>
+			<channel id="masterIP" typeId="masterIP"/>
+			<channel id="slaveIPs" typeId="slaveIPs"/>
+			<channel id="join" typeId="join"/>
+			<channel id="leave" typeId="leave"/>
+			<channel id="ungroup" typeId="ungroup"/>
+			<channel id="kickout" typeId="kickout"/>
 			<channel id="groupVolume" typeId="system.volume"/>
 			<channel id="groupMute" typeId="system.mute"/>
 		</channels>
@@ -98,8 +98,8 @@
 		<state>
 			<options>
 				<option value="off">Off</option>
+				<option value="one">One</option>
 				<option value="all">All</option>
-				<option value="single">Single</option>
 			</options>
 		</state>
 	</channel-type>
@@ -113,13 +113,14 @@
 	<channel-type id="source">
 		<item-type>String</item-type>
 		<label>Source</label>
-		<description>Playback source (e.g., Bluetooth).</description>
+		<description>Current audio source.</description>
 		<state>
 			<options>
-				<option value="wifi">WiFi</option>
-				<option value="line-in">Line-In</option>
+				<option value="airplay">AirPlay</option>
+				<option value="spotify">Spotify</option>
+				<option value="dlna">DLNA</option>
+				<option value="line-in">Line In</option>
 				<option value="bluetooth">Bluetooth</option>
-				<option value="optical">Optical</option>
 			</options>
 		</state>
 	</channel-type>
@@ -128,82 +129,87 @@
 	<channel-type id="deviceName">
 		<item-type>String</item-type>
 		<label>Device Name</label>
-		<description>Friendly name of the device.</description>
+		<description>Name of the device.</description>
+		<state readOnly="true"/>
 	</channel-type>
 
 	<channel-type id="firmware">
 		<item-type>String</item-type>
 		<label>Firmware Version</label>
-		<description>The firmware version of the device.</description>
+		<description>Current firmware version.</description>
+		<state readOnly="true"/>
 	</channel-type>
 
 	<channel-type id="macAddress">
 		<item-type>String</item-type>
 		<label>MAC Address</label>
-		<description>The MAC address of the device.</description>
+		<description>MAC address of the device.</description>
+		<state readOnly="true"/>
 	</channel-type>
 
 	<channel-type id="ipAddress">
 		<item-type>String</item-type>
 		<label>IP Address</label>
-		<description>IP address of the device.</description>
+		<description>Current IP address.</description>
+		<state readOnly="true"/>
 	</channel-type>
 
 	<channel-type id="wifiSignal">
-		<item-type>Percent</item-type>
-		<label>WiFi Signal Strength</label>
-		<description>WiFi signal strength as a percentage.</description>
+		<item-type>Number</item-type>
+		<label>WiFi Signal</label>
+		<description>WiFi signal strength in dBm.</description>
+		<state readOnly="true" pattern="%d dBm"/>
 	</channel-type>
 
 	<!-- Group Channel Types -->
-	<channel-type id="groupRole">
+	<channel-type id="role">
 		<item-type>String</item-type>
-		<label>Group Role</label>
-		<description>Device role in group setup (standalone/master/slave).</description>
+		<label>Multiroom Role</label>
+		<description>Role in multiroom setup (master/slave/standalone).</description>
 		<state readOnly="true">
 			<options>
-				<option value="standalone">Standalone</option>
 				<option value="master">Master</option>
 				<option value="slave">Slave</option>
+				<option value="standalone">Standalone</option>
 			</options>
 		</state>
 	</channel-type>
 
-	<channel-type id="groupMasterIP">
+	<channel-type id="masterIP">
 		<item-type>String</item-type>
-		<label>Group Master IP</label>
-		<description>IP address of the master device.</description>
+		<label>Master IP</label>
+		<description>IP address of master device (if slave).</description>
 		<state readOnly="true"/>
 	</channel-type>
 
-	<channel-type id="groupSlaveIPs">
+	<channel-type id="slaveIPs">
 		<item-type>String</item-type>
-		<label>Slave Device IPs</label>
-		<description>List of slave device IPs.</description>
+		<label>Slave IPs</label>
+		<description>IP addresses of slave devices (if master).</description>
 		<state readOnly="true"/>
 	</channel-type>
 
-	<channel-type id="groupJoin">
+	<channel-type id="join">
 		<item-type>String</item-type>
 		<label>Join Group</label>
-		<description>Joins a group (specify master IP).</description>
+		<description>Join a multiroom group by master IP.</description>
 	</channel-type>
 
-	<channel-type id="groupLeave">
-		<item-type>String</item-type>
+	<channel-type id="leave">
+		<item-type>Switch</item-type>
 		<label>Leave Group</label>
-		<description>Leaves the current group.</description>
+		<description>Leave current multiroom group.</description>
 	</channel-type>
 
-	<channel-type id="groupUngroup">
-		<item-type>String</item-type>
+	<channel-type id="ungroup">
+		<item-type>Switch</item-type>
 		<label>Ungroup</label>
-		<description>Master command to ungroup all slaves.</description>
+		<description>Disband current multiroom group (if master).</description>
 	</channel-type>
 
-	<channel-type id="groupSlaveKickout">
+	<channel-type id="kickout">
 		<item-type>String</item-type>
-		<label>Slave Kickout</label>
-		<description>Removes a specific slave from the group.</description>
+		<label>Kick Out</label>
+		<description>Remove a slave from group by IP (if master).</description>
 	</channel-type>
 </thing:thing-descriptions>
