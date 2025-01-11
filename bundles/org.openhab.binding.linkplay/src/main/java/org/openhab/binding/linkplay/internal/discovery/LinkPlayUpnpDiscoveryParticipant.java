@@ -24,11 +24,12 @@ import java.util.Map;
 import java.util.Set;
 
 import javax.net.ssl.HttpsURLConnection;
+import javax.net.ssl.SSLContext;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.jupnp.model.meta.RemoteDevice;
-import org.openhab.binding.linkplay.internal.http.LinkPlayPemConstants;
+import org.openhab.binding.linkplay.internal.http.LinkPlaySslUtil;
 import org.openhab.core.config.discovery.DiscoveryResult;
 import org.openhab.core.config.discovery.DiscoveryResultBuilder;
 import org.openhab.core.config.discovery.upnp.UpnpDiscoveryParticipant;
@@ -76,87 +77,50 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
     }
 
     @Override
-    public @Nullable DiscoveryResult createResult(RemoteDevice device) {
+    public @Nullable DiscoveryResult createResult(@Nullable RemoteDevice device) {
         ThingUID thingUID = getThingUID(device);
-        if (thingUID == null) {
+        if (thingUID == null || device == null) {
             return null;
         }
 
         String ipAddress = device.getIdentity().getDescriptorURL().getHost();
-        String friendlyName = device.getDetails().getFriendlyName();
-        if (friendlyName == null || friendlyName.isEmpty()) {
-            friendlyName = "LinkPlay Device";
-        }
-
-        logger.debug("UPnP: Checking LinkPlay device '{}' at IP={} for validation", friendlyName, ipAddress);
-
-        // First validate IP address format
-        if (!isValidIpAddress(ipAddress)) {
-            logger.warn("UPnP: Invalid IP address {} for device {}. Skipping discovery.", ipAddress, friendlyName);
-            return null;
-        }
-
-        // Then validate it's actually a LinkPlay device by checking the API endpoint
-        if (!testLinkPlayHttp(ipAddress)) {
-            logger.warn("UPnP: Device at IP={} not responding to LinkPlay API. Skipping discovery.", ipAddress);
+        if (!validateDevice(ipAddress)) {
             return null;
         }
 
         Map<String, Object> properties = new HashMap<>();
-        properties.put(CONFIG_IP_ADDRESS, ipAddress);
-        properties.put("udn", device.getIdentity().getUdn().getIdentifierString());
-        properties.put("modelName", device.getDetails().getModelDetails().getModelName());
-        properties.put("manufacturer", device.getDetails().getManufacturerDetails().getManufacturer());
+        properties.put(PROPERTY_IP, ipAddress);
 
-        String label = friendlyName + " (" + ipAddress + ")";
+        String friendlyName = device.getDetails().getFriendlyName();
+        String label = friendlyName != null ? friendlyName : "LinkPlay Device";
 
-        return DiscoveryResultBuilder.create(thingUID).withProperties(properties).withLabel(label)
-                .withRepresentationProperty(CONFIG_IP_ADDRESS).build();
+        return DiscoveryResultBuilder.create(thingUID).withLabel(label).withProperties(properties)
+                .withRepresentationProperty(PROPERTY_IP).build();
     }
 
-    private boolean isValidIpAddress(String ipAddress) {
-        if (ipAddress.isEmpty()) {
-            return false;
-        }
-
-        String[] octets = ipAddress.split("\\.");
-        if (octets.length != 4) {
-            return false;
-        }
-
-        try {
-            for (String octet : octets) {
-                int value = Integer.parseInt(octet);
-                if (value < 0 || value > 255) {
-                    return false;
-                }
-            }
-            return true;
-        } catch (NumberFormatException e) {
-            return false;
-        }
-    }
-
-    private boolean testLinkPlayHttp(String ipAddress) {
-        // Try HTTPS ports first
+    private boolean validateDevice(String ipAddress) {
+        // Try HTTPS first
         for (int port : HTTPS_PORTS) {
-            if (httpCheck("https", ipAddress, port, true)) {
+            if (validateConnection(ipAddress, port, true)) {
                 return true;
             }
         }
-        // Fall back to HTTP if HTTPS fails
-        return httpCheck("http", ipAddress, HTTP_PORT, false);
+
+        // Fall back to HTTP
+        return validateConnection(ipAddress, HTTP_PORT, false);
     }
 
-    private boolean httpCheck(String protocol, String ipAddress, int port, boolean useSsl) {
+    private boolean validateConnection(String ipAddress, int port, boolean useSsl) {
+        String protocol = useSsl ? "https" : "http";
         String urlStr = String.format("%s://%s:%d%s", protocol, ipAddress, port, VALIDATION_ENDPOINT);
         try {
             URL url = new URL(urlStr);
             HttpURLConnection conn;
             if (useSsl) {
                 conn = (HttpsURLConnection) url.openConnection();
-                ((HttpsURLConnection) conn)
-                        .setSSLSocketFactory(LinkPlayPemConstants.createSslContext().getSocketFactory());
+                SSLContext sslContext = LinkPlaySslUtil.createSslContext(LinkPlaySslUtil.createTrustAllManager());
+                ((HttpsURLConnection) conn).setSSLSocketFactory(sslContext.getSocketFactory());
+                ((HttpsURLConnection) conn).setHostnameVerifier((hostname, session) -> true);
             } else {
                 conn = (HttpURLConnection) url.openConnection();
             }

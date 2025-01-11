@@ -9,37 +9,12 @@
 		<label>LinkPlay Audio Device</label>
 		<description>A LinkPlay-based audio device.</description>
 
-		<channels>
-			<!-- Media Control -->
-			<channel id="control" typeId="system.media-control"/>
-			<channel id="title" typeId="system.media-title"/>
-			<channel id="artist" typeId="system.media-artist"/>
-			<channel id="volume" typeId="system.volume"/>
-			<channel id="mute" typeId="system.mute"/>
-
-			<!-- Playback Options -->
-			<channel id="repeat" typeId="repeat"/>
-			<channel id="shuffle" typeId="shuffle"/>
-			<channel id="source" typeId="source"/>
-
-			<!-- Device Metadata -->
-			<channel id="deviceName" typeId="deviceName"/>
-			<channel id="firmware" typeId="firmware"/>
-			<channel id="macAddress" typeId="macAddress"/>
-			<channel id="ipAddress" typeId="ipAddress"/>
-			<channel id="wifiSignal" typeId="wifiSignal"/>
-
-			<!-- Group Control -->
-			<channel id="groupRole" typeId="groupRole"/>
-			<channel id="groupMasterIP" typeId="groupMasterIP"/>
-			<channel id="groupSlaveIPs" typeId="groupSlaveIPs"/>
-			<channel id="groupJoin" typeId="groupJoin"/>
-			<channel id="groupLeave" typeId="groupLeave"/>
-			<channel id="groupUngroup" typeId="groupUngroup"/>
-			<channel id="groupSlaveKickout" typeId="groupSlaveKickout"/>
-			<channel id="groupVolume" typeId="system.volume"/>
-			<channel id="groupMute" typeId="system.mute"/>
-		</channels>
+		<channel-groups>
+			<channel-group id="playback" typeId="playback"/>
+			<channel-group id="system" typeId="system"/>
+			<channel-group id="network" typeId="network"/>
+			<channel-group id="multiroom" typeId="multiroom"/>
+		</channel-groups>
 
 		<config-description>
 			<parameter name="ipAddress" type="text" required="true">
@@ -59,6 +34,61 @@
 			</parameter>
 		</config-description>
 	</thing-type>
+
+	<!-- Channel Group Type Definitions -->
+	<channel-group-type id="playback">
+		<label>Playback</label>
+		<description>Media playback controls and information</description>
+		<channels>
+			<channel id="control" typeId="system.media-control"/>
+			<channel id="title" typeId="system.media-title"/>
+			<channel id="artist" typeId="system.media-artist"/>
+			<channel id="album" typeId="system.media-album"/>
+			<channel id="albumArt" typeId="albumArt"/>
+			<channel id="duration" typeId="duration"/>
+			<channel id="position" typeId="position"/>
+			<channel id="volume" typeId="system.volume"/>
+			<channel id="mute" typeId="system.mute"/>
+			<channel id="repeat" typeId="repeat"/>
+			<channel id="shuffle" typeId="shuffle"/>
+			<channel id="source" typeId="source"/>
+		</channels>
+	</channel-group-type>
+
+	<channel-group-type id="system">
+		<label>System</label>
+		<description>Device system information</description>
+		<channels>
+			<channel id="deviceName" typeId="deviceName"/>
+			<channel id="firmware" typeId="firmware"/>
+		</channels>
+	</channel-group-type>
+
+	<channel-group-type id="network">
+		<label>Network</label>
+		<description>Network-related information</description>
+		<channels>
+			<channel id="ipAddress" typeId="ipAddress"/>
+			<channel id="macAddress" typeId="macAddress"/>
+			<channel id="wifiSignal" typeId="wifiSignal"/>
+		</channels>
+	</channel-group-type>
+
+	<channel-group-type id="multiroom">
+		<label>Multiroom</label>
+		<description>Multiroom control and status</description>
+		<channels>
+			<channel id="role" typeId="groupRole"/>
+			<channel id="masterIP" typeId="groupMasterIP"/>
+			<channel id="slaveIPs" typeId="groupSlaveIPs"/>
+			<channel id="join" typeId="groupJoin"/>
+			<channel id="leave" typeId="groupLeave"/>
+			<channel id="ungroup" typeId="groupUngroup"/>
+			<channel id="kickout" typeId="groupSlaveKickout"/>
+			<channel id="groupVolume" typeId="system.volume"/>
+			<channel id="groupMute" typeId="system.mute"/>
+		</channels>
+	</channel-group-type>
 
 	<!-- Channel Type Definitions -->
 	<channel-type id="repeat">

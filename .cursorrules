@@ -1,0 +1,70 @@
+# .cursorrules for OpenHAB Linkplay Binding
+
+# General Guidelines
+- Adhere to the OpenHAB coding guidelines: https://www.openhab.org/docs/developer/guidelines.html
+- Follow established patterns and best practices from existing OpenHAB bindings.
+- Prioritize code readability and maintainability.
+- Use clear and concise comments to explain code logic.
+
+# Language and Framework
+- Use Java for all code within the binding.
+- Leverage the OpenHAB API and related libraries.
+
+# Binding Structure
+- Follow the OpenHAB binding development guidelines: https://www.openhab.org/docs/developer/bindings/
+- Organize code into appropriate packages (e.g., `org.openhab.binding.linkplay.internal`).
+- Create separate classes for things, handlers, and discovery.
+
+# API Implementation
+- Refer to the Linkplay HTTP API documentation: https://developer.arylic.com/httpapi/#http-api
+- Specifically, use these sections for reference:
+    - Device Information: https://developer.arylic.com/httpapi/#device-information
+    - Playback Control: https://developer.arylic.com/httpapi/#playback-control
+    - Multiroom/Multizone: https://developer.arylic.com/httpapi/#multiroom-multizone
+    - Extended M3U Tags: https://developer.arylic.com/httpapi/#extended-m3u-tags 
+- Use the Python Linkplay API implementation for reference: https://github.com/Velleman/python-linkplay/tree/main/src/linkplay
+- Implement robust error handling and retry mechanisms.
+
+# Specific Features
+- UPnP:
+    - Refer to the Sonos and Wemo bindings for UPnP discovery and communication examples.
+- SSL/TLS:
+    - Refer to the MQTT binding for SSL/TLS implementation examples.
+
+# External Libraries
+- Use minimal external libraries.
+- If necessary, use well-established and maintained libraries.
+- Document any external library dependencies.
+
+# Testing
+- Write comprehensive unit tests for all core functionalities.
+- Consider integration tests to verify interaction with the Linkplay devices.
+
+# Documentation
+- Provide clear and concise documentation for the binding.
+- Include setup instructions, configuration options, and usage examples.
+
+# Research and References
+- Always consult existing OpenHAB bindings for similar functionalities or challenges.
+- Use the OpenHAB community forums and documentation for support and guidance.
+
+# Project Context
+- This binding is part of the OpenHAB project: https://www.openhab.org/docs/developer/
+- The root directory of the project is `C:\GitHub\openhab-addons`. 
+- This binding is located in the `C:\GitHub\openhab-addons\bundles\org.openhab.binding.linkplay` directory.
+- Always consider the broader OpenHAB project context when generating code.
+
+# OpenHAB Developer Documentation
+- General developer documentation: https://www.openhab.org/docs/developer/
+- Coding guidelines: https://www.openhab.org/docs/developer/guidelines.html
+- Add-on development guidelines: https://www.openhab.org/docs/developer/addons/
+- Binding development guidelines: https://www.openhab.org/docs/developer/bindings/
+
+# Development Environment
+- Operating System: Windows
+- Terminal: PowerShell
+- Always run Maven commands in the `C:\GitHub\openhab-addons\bundles\org.openhab.binding.linkplay` directory.
+
+
+For author information, use the following:
+- Author: Michael Cumming

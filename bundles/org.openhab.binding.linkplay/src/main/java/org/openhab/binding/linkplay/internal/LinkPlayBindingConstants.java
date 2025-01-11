@@ -31,35 +31,45 @@ public class LinkPlayBindingConstants {
     // Manufacturer
     public static final String SUPPORTED_MANUFACTURER = "LinkPlay";
 
-    // List of all Channel IDs
+    // Channel Groups
+    public static final String GROUP_PLAYBACK = "playback";
+    public static final String GROUP_SYSTEM = "system";
+    public static final String GROUP_MULTIROOM = "multiroom";
+    public static final String GROUP_NETWORK = "network";
+
+    // Playback Channels
     public static final String CHANNEL_CONTROL = "control";
-    public static final String CHANNEL_REPEAT = "repeat";
-    public static final String CHANNEL_SHUFFLE = "shuffle";
     public static final String CHANNEL_TITLE = "title";
     public static final String CHANNEL_ARTIST = "artist";
     public static final String CHANNEL_ALBUM = "album";
     public static final String CHANNEL_ALBUM_ART = "albumArt";
     public static final String CHANNEL_DURATION = "duration";
     public static final String CHANNEL_POSITION = "position";
-    public static final String CHANNEL_SOURCE = "source";
     public static final String CHANNEL_VOLUME = "volume";
     public static final String CHANNEL_MUTE = "mute";
-    public static final String CHANNEL_SLAVE_VOLUME = "slaveVolume";
-    public static final String CHANNEL_SLAVE_MUTE = "slaveMute";
-    public static final String CHANNEL_PSEUDO_MASTER_VOLUME = "pseudoMasterVolume";
-    public static final String CHANNEL_PSEUDO_MASTER_MUTE = "pseudoMasterMute";
-    public static final String CHANNEL_GROUP_ROLE = "groupRole";
-    public static final String CHANNEL_GROUP_MASTER_IP = "groupMasterIP";
-    public static final String CHANNEL_GROUP_SLAVE_IPS = "groupSlaveIPs";
-    public static final String CHANNEL_GROUP_JOIN = "groupJoin";
-    public static final String CHANNEL_GROUP_LEAVE = "groupLeave";
-    public static final String CHANNEL_GROUP_UNGROUP = "groupUngroup";
-    public static final String CHANNEL_GROUP_SLAVE_KICKOUT = "groupSlaveKickout";
-    public static final String CHANNEL_GROUP_VOLUME = "groupVolume";
-    public static final String CHANNEL_GROUP_MUTE = "groupMute";
+    public static final String CHANNEL_REPEAT = "repeat";
+    public static final String CHANNEL_SHUFFLE = "shuffle";
+    public static final String CHANNEL_SOURCE = "source";
+
+    // System Channels
+    public static final String CHANNEL_DEVICE_NAME = "deviceName";
+    public static final String CHANNEL_FIRMWARE = "firmware";
+
+    // Network Channels
     public static final String CHANNEL_IP_ADDRESS = "ipAddress";
     public static final String CHANNEL_MAC_ADDRESS = "macAddress";
     public static final String CHANNEL_WIFI_SIGNAL = "wifiSignal";
+
+    // Multiroom Channels
+    public static final String CHANNEL_GROUP_ROLE = "role";
+    public static final String CHANNEL_GROUP_MASTER_IP = "masterIP";
+    public static final String CHANNEL_GROUP_SLAVE_IPS = "slaveIPs";
+    public static final String CHANNEL_GROUP_JOIN = "join";
+    public static final String CHANNEL_GROUP_LEAVE = "leave";
+    public static final String CHANNEL_GROUP_UNGROUP = "ungroup";
+    public static final String CHANNEL_GROUP_KICKOUT = "kickout";
+    public static final String CHANNEL_GROUP_VOLUME = "groupVolume";
+    public static final String CHANNEL_GROUP_MUTE = "groupMute";
 
     // Configuration properties
     public static final String CONFIG_IP_ADDRESS = "ipAddress";
@@ -90,4 +100,7 @@ public class LinkPlayBindingConstants {
     public static final String UPNP_DISCOVERY_THING_TYPE = "urn:schemas-upnp-org:device:MediaRenderer:1";
     public static final String UPNP_MANUFACTURER = "LinkPlay";
     public static final String UPNP_DEVICE_TYPE_PREFIX = "urn:schemas-upnp-org:device:";
+
+    // Property keys
+    public static final String PROPERTY_IP = "ipAddress";
 }
