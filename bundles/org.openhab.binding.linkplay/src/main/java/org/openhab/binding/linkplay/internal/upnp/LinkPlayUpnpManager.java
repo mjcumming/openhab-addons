@@ -9,6 +9,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.json.JsonObject;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 @NonNullByDefault
 public class LinkPlayUpnpManager implements UpnpIOParticipant {
@@ -18,6 +21,7 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
     private final UpnpIOService upnpIOService;
     private final LinkPlayDeviceManager deviceManager;
     private final String deviceId;
+    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
 
     private @Nullable String udn; // Unique Device Name
 
@@ -29,17 +33,58 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
 
     public void register(String udn) {
         this.udn = udn;
-        upnpIOService.registerParticipant(this, udn);
-        deviceManager.setUpnpSubscriptionState(true);
-        logger.debug("Registered UPnP participant for UDN {}", udn);
+        try {
+            upnpIOService.registerParticipant(this, udn);
+            deviceManager.setUpnpSubscriptionState(true);
+            logger.debug("Registered UPnP participant for UDN {}", udn);
+
+            // Schedule periodic subscription renewal
+            scheduleSubscriptionRenewal();
+        } catch (Exception e) {
+            logger.warn("Failed to register UPnP participant: {}", e.getMessage());
+            retryRegistration();
+        }
     }
 
     public void unregister() {
         if (udn != null) {
-            upnpIOService.unregisterParticipant(this);
-            deviceManager.setUpnpSubscriptionState(false);
-            logger.debug("Unregistered UPnP participant for UDN {}", udn);
+            try {
+                upnpIOService.unregisterParticipant(this);
+                deviceManager.setUpnpSubscriptionState(false);
+                logger.debug("Unregistered UPnP participant for UDN {}", udn);
+            } catch (Exception e) {
+                logger.warn("Failed to unregister UPnP participant: {}", e.getMessage());
+            } finally {
+                scheduler.shutdownNow();
+            }
         }
+    }
+
+    private void scheduleSubscriptionRenewal() {
+        scheduler.scheduleAtFixedRate(() -> {
+            try {
+                if (udn != null) {
+                    upnpIOService.registerParticipant(this, udn);
+                    logger.debug("Renewed UPnP subscription for UDN {}", udn);
+                }
+            } catch (Exception e) {
+                logger.warn("Failed to renew UPnP subscription: {}", e.getMessage());
+                retryRegistration();
+            }
+        }, 25, 25, TimeUnit.MINUTES); // Adjust interval based on UPnP timeout
+    }
+
+    private void retryRegistration() {
+        scheduler.schedule(() -> {
+            if (udn != null) {
+                try {
+                    upnpIOService.registerParticipant(this, udn);
+                    logger.debug("UPnP subscription restored for UDN {}", udn);
+                } catch (Exception e) {
+                    logger.warn("Retrying UPnP registration failed: {}", e.getMessage());
+                }
+            }
+        }, 10, TimeUnit.SECONDS);
     }
 
     @Override
@@ -71,6 +116,7 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
     public void onServiceUnsubscribed(String service) {
         logger.warn("[{}] Unsubscribed from UPnP service: {}", deviceId, service);
         deviceManager.setUpnpSubscriptionState(false);
+        retryRegistration();
     }
 
     @Override
@@ -86,6 +132,7 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
                 "urn:schemas-upnp-org:device:MediaRenderer:1");
     }
 
+}
     private @Nullable JsonObject parseUpnpEvent(String variable, String value, String service) {
         JsonObject.Builder jsonBuilder = Json.createObjectBuilder();
 
@@ -163,6 +210,7 @@ private void handleAVTransportEvent(JsonObject.Builder jsonBuilder, String varia
             logger.debug("[{}] Unhandled AVTransport variable: {}", deviceId, variable);
     }
 }
+
 private void handleRenderingControlEvent(JsonObject.Builder jsonBuilder, String variable, String value) {
     switch (variable) {
         case "Volume":
