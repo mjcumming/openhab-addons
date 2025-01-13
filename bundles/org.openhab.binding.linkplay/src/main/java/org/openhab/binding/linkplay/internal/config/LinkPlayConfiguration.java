@@ -1,24 +1,3 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
- *
- * See the NOTICE file(s) distributed with this work for additional
- * information.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0
- *
- * SPDX-License-Identifier: EPL-2.0
- */
-package org.openhab.binding.linkplay.internal.config;
-
-import org.eclipse.jdt.annotation.NonNullByDefault;
-
-/**
- * The {@link LinkPlayConfiguration} class contains fields mapping thing configuration parameters.
- *
- * @author Michael Cumming - Initial contribution
- */
 @NonNullByDefault
 public class LinkPlayConfiguration {
 
@@ -51,6 +30,18 @@ public class LinkPlayConfiguration {
     public static final int MIN_POLLING_INTERVAL = 10;
     public static final int MAX_POLLING_INTERVAL = 60;
 
+    /**
+     * Maximum number of retries for HTTP commands.
+     * Default value is 3.
+     */
+    public int maxRetries = 3;
+
+    /**
+     * Delay in milliseconds between retries for HTTP commands.
+     * Default value is 1000 ms.
+     */
+    public int retryDelayMillis = 1000;
+
     public boolean isValid() {
         // IP address is required
         if (ipAddress.isEmpty()) {
@@ -81,6 +72,10 @@ public class LinkPlayConfiguration {
         if (!udn.isEmpty() && !udn.startsWith("uuid:")) {
             udn = "uuid:" + udn;
         }
+
+        // Ensure maxRetries and retryDelayMillis have sensible values
+        maxRetries = Math.max(maxRetries, 0); // Minimum 0 retries allowed
+        retryDelayMillis = Math.max(retryDelayMillis, 100); // Minimum 100ms delay
 
         return true;
     }
