@@ -220,3 +220,38 @@ private void updateDeviceChannels(JsonObject status, String source) {
         }
     }
 }
+    private void updateHexEncodedMetadata(JsonObject status, String field, String channelId) {
+    if (status.has(field)) {
+        String hexValue = status.get(field).getAsString();
+        String decoded = HexConverter.hexToString(hexValue); // Using HexConverter
+        if (!decoded.isEmpty()) {
+            updateChannelState(channelId, new StringType(decoded));
+        } else {
+            logger.debug("[{}] Failed to decode {} metadata: {}", deviceId, field, hexValue);
+        }
+    }
+}
+
+private String mapModeToSource(String mode) {
+    switch (mode.toLowerCase()) {
+        case "airplay":
+            return "Airplay";
+        case "dlna":
+            return "DLNA";
+        case "line-in":
+            return "Line-In";
+        case "bluetooth":
+            return "Bluetooth";
+        case "optical":
+            return "Optical";
+        case "usb":
+        case "udisk":
+            return "USB";
+        case "spotify":
+            return "Spotify";
+        case "idle":
+            return "Idle";
+        default:
+            return mode; // Return the raw mode if it doesn't match known types
+    }
+}
