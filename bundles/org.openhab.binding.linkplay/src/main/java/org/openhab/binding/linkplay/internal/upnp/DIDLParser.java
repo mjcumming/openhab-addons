@@ -22,6 +22,7 @@ import javax.xml.xpath.XPath;
 import javax.xml.xpath.XPathConstants;
 import javax.xml.xpath.XPathFactory;
 
+import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.w3c.dom.Document;
@@ -34,6 +35,7 @@ import org.xml.sax.InputSource;
  *
  * @author Michael Cumming - Initial contribution
  */
+@NonNullByDefault
 public class DIDLParser {
     private static final Logger logger = LoggerFactory.getLogger(DIDLParser.class);
 

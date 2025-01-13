@@ -14,11 +14,12 @@ package org.openhab.binding.linkplay.internal.handler;
 
 import static org.openhab.binding.linkplay.internal.LinkPlayBindingConstants.*;
 
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -65,7 +66,6 @@ public class LinkPlayThingHandler extends BaseThingHandler implements UpnpIOPart
     private final UpnpIOService upnpIOService;
     private final LinkPlayHttpClient linkplayClient;
     private final Object upnpLock = new Object();
-    private final Map<String, Boolean> subscriptionState = new HashMap<>();
     private final LinkPlayGroupManager groupManager;
 
     private @Nullable ScheduledFuture<?> pollingJob;
@@ -76,7 +76,13 @@ public class LinkPlayThingHandler extends BaseThingHandler implements UpnpIOPart
     private static final String UPNP_SERVICE_RENDERING_CONTROL = "urn:schemas-upnp-org:service:RenderingControl:1";
     private static final Collection<String> SERVICE_SUBSCRIPTIONS = Arrays.asList(UPNP_SERVICE_AV_TRANSPORT,
             UPNP_SERVICE_RENDERING_CONTROL);
-    protected static final int SUBSCRIPTION_DURATION = 1800;
+    protected static final int SUBSCRIPTION_DURATION = 600;
+    private @Nullable ScheduledFuture<?> subscriptionJob;
+    private final Map<String, Instant> subscriptionTimes = new ConcurrentHashMap<>();
+
+    private static final int MAX_REGISTRATION_RETRIES = 3;
+    private static final int INITIAL_RETRY_DELAY_MS = 1000;
+    private static final int MAX_RETRY_DELAY_MS = 10000;
 
     public LinkPlayThingHandler(Thing thing, UpnpIOService upnpIOService, LinkPlayHttpClient linkplayClient) {
         super(thing);
@@ -88,55 +94,34 @@ public class LinkPlayThingHandler extends BaseThingHandler implements UpnpIOPart
     @Override
     public void initialize() {
         logger.debug("[{}] Initializing LinkPlay handler", getThing().getUID());
-
-        LinkPlayConfiguration config = getConfigAs(LinkPlayConfiguration.class);
-        if (!config.isValid()) {
-            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR, "Invalid configuration");
-            return;
-        }
-
-        // Update properties with IP address
-        Map<String, String> properties = editProperties();
-        properties.put(PROPERTY_IP, config.ipAddress);
-
-        // Handle UDN from config and properties
-        String configUDN = config.udn;
-        String propertyUDN = getThing().getProperties().get(PROPERTY_UDN);
-
-        if (!configUDN.isEmpty()) {
-            // Config UDN takes precedence
-            upnpIOService.registerParticipant(this);
-            handleUDNUpdate(configUDN);
-        } else if (propertyUDN != null && !propertyUDN.isEmpty()) {
-            // Fall back to property UDN if available
-            upnpIOService.registerParticipant(this);
-            handleUDNUpdate(propertyUDN);
-        }
-
-        updateProperties(properties);
-
-        // Set initial status to UNKNOWN while we test connection
         updateStatus(ThingStatus.UNKNOWN);
 
-        // Do initial connection test and status update
-        linkplayClient.getStatusEx(config.ipAddress).thenAccept(status -> {
-            isReachable = true;
-            updateStatus(ThingStatus.ONLINE);
+        // Start polling for device status
+        startAutomaticRefresh();
 
-            // Update properties and handle UDN discovery
-            handleDeviceStatusUpdate(status);
+        // Handle UPnP registration separately
+        String udn = getUDN();
+        if (!udn.isEmpty()) {
+            logger.debug("[{}] Registering UPnP participant with UDN '{}' at {}", getThing().getUID(), udn,
+                    java.time.LocalDateTime.now());
+            upnpIOService.registerParticipant(this);
 
-            // Update channels
-            updateChannelsFromStatus(status);
-
-            // Start regular polling
-            startAutomaticRefresh();
-        }).exceptionally(e -> {
-            handleConnectionError(e);
-            // Still start polling to try to reconnect
-            startAutomaticRefresh();
-            return null;
-        });
+            // Schedule UPnP verification and subscription after a delay
+            scheduler.schedule(() -> {
+                synchronized (upnpLock) {
+                    logger.debug("[{}] Checking UPnP registration status after delay", getThing().getUID());
+                    if (isUpnpDeviceRegistered()) {
+                        logger.debug("[{}] UPnP device successfully registered, adding subscriptions",
+                                getThing().getUID());
+                        addSubscriptions();
+                    } else {
+                        logger.warn("[{}] UPnP device registration failed for UDN '{}'", getThing().getUID(), udn);
+                    }
+                }
+            }, 2, TimeUnit.SECONDS);
+        } else {
+            logger.warn("[{}] No UDN available, skipping UPnP registration", getThing().getUID());
+        }
     }
 
     private void startAutomaticRefresh() {
@@ -155,6 +140,10 @@ public class LinkPlayThingHandler extends BaseThingHandler implements UpnpIOPart
                         if (!isReachable) {
                             isReachable = true;
                             updateStatus(ThingStatus.ONLINE);
+                            // Add UPnP subscriptions when device comes online
+                            synchronized (upnpLock) {
+                                addSubscriptions();
+                            }
                         }
                         // Update channels with player status
                         updateChannelsFromStatus(playerStatus);
@@ -167,6 +156,10 @@ public class LinkPlayThingHandler extends BaseThingHandler implements UpnpIOPart
                         if (!isReachable) {
                             isReachable = true;
                             updateStatus(ThingStatus.ONLINE);
+                            // Add UPnP subscriptions when device comes online
+                            synchronized (upnpLock) {
+                                addSubscriptions();
+                            }
                         }
                         // Update properties and handle UDN discovery
                         handleDeviceStatusUpdate(statusEx);
@@ -246,7 +239,12 @@ public class LinkPlayThingHandler extends BaseThingHandler implements UpnpIOPart
         isReachable = false;
         String message = e.getMessage() != null ? e.getMessage() : "Unknown error";
         updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR, message);
-        logger.debug("[{}] Connection error: {}", getThing().getUID(), message);
+        logger.debug("[{}] HTTP connection error: {}", getThing().getUID(), message);
+
+        // Also remove UPnP subscriptions when device goes offline
+        synchronized (upnpLock) {
+            removeSubscriptions();
+        }
     }
 
     @Override
@@ -256,17 +254,19 @@ public class LinkPlayThingHandler extends BaseThingHandler implements UpnpIOPart
         // Cancel polling job
         stopPolling();
 
-        // Clean up UPnP subscriptions
+        // Clean up UPnP
         synchronized (upnpLock) {
             removeSubscriptions();
+            logger.debug("[{}] Unregistering UPnP participant", getThing().getUID());
             upnpIOService.unregisterParticipant(this);
-            subscriptionState.clear();
+            subscriptionTimes.clear();
         }
 
         super.dispose();
     }
 
     private void stopPolling() {
+        logger.debug("[{}] Stopping polling", getThing().getUID());
         ScheduledFuture<?> job = pollingJob;
         if (job != null && !job.isCancelled()) {
             job.cancel(true);
@@ -290,32 +290,35 @@ public class LinkPlayThingHandler extends BaseThingHandler implements UpnpIOPart
 
     private void addSubscriptions() {
         synchronized (upnpLock) {
+            String udn = getUDN();
             if (!isUpnpDeviceRegistered()) {
+                logger.warn("[{}] Cannot add UPnP subscriptions - device not registered (UDN: {})", getThing().getUID(),
+                        udn);
                 return;
             }
+            logger.debug("[{}] Adding UPnP subscriptions for device {} at {}", getThing().getUID(), udn,
+                    java.time.LocalDateTime.now());
+
             for (String service : SERVICE_SUBSCRIPTIONS) {
-                Boolean state = subscriptionState.get(service);
-                if (state == null || !state) {
-                    logger.debug("{}: Subscribing to service {}...", getUDN(), service);
-                    upnpIOService.addSubscription(this, service, SUBSCRIPTION_DURATION);
-                    subscriptionState.put(service, true);
-                }
+                logger.debug("[{}] Adding UPnP subscription for service {} (current subscriptions: {})",
+                        getThing().getUID(), service, subscriptionTimes.keySet());
+                upnpIOService.addSubscription(this, service, SUBSCRIPTION_DURATION);
             }
         }
     }
 
     private void removeSubscriptions() {
         synchronized (upnpLock) {
-            if (isUpnpDeviceRegistered()) {
-                for (String service : SERVICE_SUBSCRIPTIONS) {
-                    Boolean state = subscriptionState.get(service);
-                    if (state != null && state) {
-                        logger.debug("{}: Unsubscribing from service {}...", getUDN(), service);
-                        upnpIOService.removeSubscription(this, service);
-                    }
-                }
+            String udn = getUDN();
+            logger.debug("[{}] Removing UPnP subscriptions for device {} at {} (current subscriptions: {})",
+                    getThing().getUID(), udn, java.time.LocalDateTime.now(), subscriptionTimes.keySet());
+
+            for (String service : SERVICE_SUBSCRIPTIONS) {
+                logger.debug("[{}] Removing UPnP subscription for service {}", getThing().getUID(), service);
+                upnpIOService.removeSubscription(this, service);
             }
-            subscriptionState.clear();
+            subscriptionTimes.clear();
+            logger.debug("[{}] All UPnP subscriptions removed", getThing().getUID());
         }
     }
 
@@ -370,6 +373,11 @@ public class LinkPlayThingHandler extends BaseThingHandler implements UpnpIOPart
         if (thing.getStatus() != ThingStatus.OFFLINE) {
             updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
                     "Device not reachable: " + e.getMessage());
+
+            // Also remove UPnP subscriptions when device goes offline
+            synchronized (upnpLock) {
+                removeSubscriptions();
+            }
         }
     }
 
@@ -503,118 +511,69 @@ public class LinkPlayThingHandler extends BaseThingHandler implements UpnpIOPart
     @Override
     public void onValueReceived(@Nullable String variable, @Nullable String value, @Nullable String service) {
         if (variable == null || value == null || service == null) {
+            logger.warn("[{}] Received UPnP event with null values - variable: {}, value: {}, service: {}",
+                    getThing().getUID(), variable, value, service);
             return;
         }
 
-        logger.debug("[{}] UPnP event received - Service: {}, Variable: {}, Value: {}", getThing().getUID(), service,
-                variable, value);
+        logger.debug(
+                "[{}] Processing UPnP event at {} - Service: '{}', Variable: '{}', Value: '{}' (subscriptions: {})",
+                getThing().getUID(), java.time.LocalDateTime.now(), service, variable, value,
+                subscriptionTimes.keySet());
 
-        // Handle LastChange events which contain multiple updates
-        if ("LastChange".equals(variable)) {
-            if (UPNP_SERVICE_AV_TRANSPORT.equals(service)) {
-                handleAVTransportLastChange(value);
-            } else if (UPNP_SERVICE_RENDERING_CONTROL.equals(service)) {
-                handleRenderingControlLastChange(value);
-            }
-            return;
-        }
-
-        // Handle direct variable updates
-        if (UPNP_SERVICE_AV_TRANSPORT.equals(service)) {
-            handleAVTransportEvent(variable, value);
-        } else if (UPNP_SERVICE_RENDERING_CONTROL.equals(service)) {
-            handleRenderingControlEvent(variable, value);
-        }
-    }
-
-    private void handleAVTransportLastChange(String xml) {
         try {
-            Map<String, String> changes = DIDLParser.getAVTransportFromXML(xml);
-            logger.debug("[{}] Parsed AVTransport LastChange: {}", getThing().getUID(), changes);
-
-            for (Map.Entry<String, String> change : changes.entrySet()) {
-                switch (change.getKey()) {
-                    case "TransportState":
-                        updateTransportState(change.getValue());
-                        break;
-                    case "CurrentTrackMetaData":
-                        updateTrackMetadata(change.getValue());
-                        break;
-                    default:
-                        logger.trace("Unhandled AVTransport variable: {}", change.getKey());
-                }
+            switch (service) {
+                case UPNP_SERVICE_AV_TRANSPORT:
+                    handleAVTransportUpdate(variable, value);
+                    break;
+                case UPNP_SERVICE_RENDERING_CONTROL:
+                    handleRenderingControlUpdate(variable, value);
+                    break;
+                default:
+                    logger.debug("[{}] Unhandled UPnP service: {} (known services: {})", getThing().getUID(), service,
+                            SERVICE_SUBSCRIPTIONS);
             }
         } catch (Exception e) {
-            logger.debug("[{}] Error parsing AVTransport LastChange event: {}", getThing().getUID(), e.getMessage());
+            logger.warn("[{}] Error processing UPnP event: {} (service: {}, variable: {}, value: {})",
+                    getThing().getUID(), e.getMessage(), service, variable, value);
         }
     }
 
-    private void handleRenderingControlLastChange(String xml) {
-        try {
-            Map<String, String> changes = DIDLParser.getRenderingControlFromXML(xml);
-            logger.debug("[{}] Parsed RenderingControl LastChange: {}", getThing().getUID(), changes);
-
-            for (Map.Entry<String, String> change : changes.entrySet()) {
-                switch (change.getKey()) {
-                    case "Volume":
-                        updateVolume(change.getValue());
-                        break;
-                    case "Mute":
-                        updateMute(change.getValue());
-                        break;
-                    default:
-                        logger.trace("Unhandled RenderingControl variable: {}", change.getKey());
-                }
-            }
-        } catch (Exception e) {
-            logger.debug("[{}] Error parsing RenderingControl LastChange event: {}", getThing().getUID(),
-                    e.getMessage());
-        }
-    }
-
-    private void handleAVTransportEvent(String variable, String value) {
-        logger.debug("[{}] Handling AVTransport event - Variable: {}, Value: {}", getThing().getUID(), variable, value);
-
+    private void handleAVTransportUpdate(String variable, String value) {
         switch (variable) {
             case "TransportState":
-                updateTransportState(value);
+                updateState(GROUP_PLAYBACK + "#" + CHANNEL_CONTROL,
+                        "PLAYING".equals(value) ? PlayPauseType.PLAY : PlayPauseType.PAUSE);
                 break;
             case "CurrentTrackMetaData":
+                // Parse and update track metadata
                 updateTrackMetadata(value);
                 break;
             default:
-                logger.trace("Unhandled AVTransport variable: {}", variable);
+                logger.debug("[{}] Unhandled AVTransport variable: {}", getThing().getUID(), variable);
         }
     }
 
-    private void handleRenderingControlEvent(String variable, String value) {
+    private void handleRenderingControlUpdate(String variable, String value) {
         switch (variable) {
             case "Volume":
-                updateVolume(value);
+                try {
+                    int volume = Integer.parseInt(value);
+                    logger.debug("[{}] Processing UPnP volume update - raw value: {}", getThing().getUID(), volume);
+                    if (volume >= 0 && volume <= 100) {
+                        String channelId = GROUP_PLAYBACK + "#" + CHANNEL_VOLUME;
+                        logger.debug("[{}] Updating volume channel {} to {}%", getThing().getUID(), channelId, volume);
+                        updateState(channelId, new PercentType(volume));
+                    }
+                } catch (NumberFormatException e) {
+                    logger.warn("[{}] Invalid UPnP volume value: {}", getThing().getUID(), value);
+                }
                 break;
             case "Mute":
-                updateMute(value);
+                updateState(GROUP_PLAYBACK + "#" + CHANNEL_MUTE, OnOffType.from("1".equals(value)));
                 break;
             default:
-                logger.trace("Unhandled RenderingControl variable: {}", variable);
-        }
-    }
-
-    private void updateTransportState(String state) {
-        try {
-            switch (state.toUpperCase()) {
-                case "PLAYING":
-                    updateState(CHANNEL_CONTROL, PlayPauseType.PLAY);
-                    break;
-                case "PAUSED_PLAYBACK":
-                case "STOPPED":
-                    updateState(CHANNEL_CONTROL, PlayPauseType.PAUSE);
-                    break;
-                default:
-                    logger.debug("Unknown transport state: {}", state);
-            }
-        } catch (Exception e) {
-            logger.warn("Error updating transport state: {}", e.getMessage());
+                logger.debug("[{}] Unhandled RenderingControl variable: {}", getThing().getUID(), variable);
         }
     }
 
@@ -643,43 +602,41 @@ public class LinkPlayThingHandler extends BaseThingHandler implements UpnpIOPart
     @Override
     public void onServiceSubscribed(@Nullable String service, boolean succeeded) {
         if (service == null) {
+            logger.warn("[{}] Received null service in onServiceSubscribed", getThing().getUID());
             return;
         }
         synchronized (upnpLock) {
-            logger.debug("{}: Subscription to service {} {}", getUDN(), service, succeeded ? "succeeded" : "failed");
-            subscriptionState.put(service, succeeded);
+            if (succeeded) {
+                Instant now = Instant.now();
+                logger.debug("[{}] UPnP subscription succeeded for service {} at {} (previous subscriptions: {})",
+                        getThing().getUID(), service, now, subscriptionTimes.keySet());
+                subscriptionTimes.put(service, now);
+                logger.debug("[{}] Updated subscription times: {}", getThing().getUID(), subscriptionTimes);
+            } else {
+                logger.warn("[{}] UPnP subscription failed for service {} at {} (current subscriptions: {})",
+                        getThing().getUID(), service, java.time.LocalDateTime.now(), subscriptionTimes.keySet());
+            }
         }
     }
 
     @Override
     public void onStatusChanged(boolean status) {
+        String udn = getUDN();
+        logger.debug("[{}] UPnP device status changed to {} for device {} at {}", getThing().getUID(), status, udn,
+                java.time.LocalDateTime.now());
+
         if (status) {
-            logger.debug("[{}] UPnP device {} is present", getThing().getUID(), getUDN());
-            synchronized (upnpLock) {
-                addSubscriptions();
-            }
+            logger.debug("[{}] UPnP device {} is present (current subscriptions: {})", getThing().getUID(), udn,
+                    subscriptionTimes.keySet());
+            addSubscriptions();
         } else {
-            logger.info("[{}] UPnP device {} is absent", getThing().getUID(), getUDN());
+            logger.info("[{}] UPnP device {} is absent, removing subscriptions", getThing().getUID(), udn);
             synchronized (upnpLock) {
                 removeSubscriptions();
             }
-            handleCommunicationError(new LinkPlayCommunicationException("UPnP connection lost"));
+            // Don't change device status - let HTTP connection determine that
+            logger.debug("[{}] UPnP connection lost but keeping device status as is", getThing().getUID());
         }
-    }
-
-    private void updateVolume(String value) {
-        try {
-            int volume = Integer.parseInt(value);
-            if (volume >= 0 && volume <= 100) {
-                updateState(CHANNEL_VOLUME, new PercentType(volume));
-            }
-        } catch (NumberFormatException e) {
-            logger.debug("Invalid volume value: {}", value);
-        }
-    }
-
-    private void updateMute(String value) {
-        updateState(CHANNEL_MUTE, OnOffType.from("1".equals(value)));
     }
 
     protected void updateChannelsFromStatus(JsonObject status) {
@@ -873,5 +830,33 @@ public class LinkPlayThingHandler extends BaseThingHandler implements UpnpIOPart
             default:
                 return mode;
         }
+    }
+
+    @Override
+    public void handleRemoval() {
+        // Clean up everything when thing is removed
+        stopPolling();
+        synchronized (upnpLock) {
+            removeSubscriptions();
+            upnpIOService.unregisterParticipant(this);
+            subscriptionTimes.clear();
+        }
+        super.handleRemoval();
+    }
+
+    @Override
+    public void thingUpdated(Thing thing) {
+        // Check if thing was disabled
+        if (!thing.isEnabled() && getThing().isEnabled()) {
+            // Thing was disabled, stop everything
+            logger.debug("[{}] Thing disabled, stopping all operations", getThing().getUID());
+            stopPolling();
+            synchronized (upnpLock) {
+                removeSubscriptions();
+                upnpIOService.unregisterParticipant(this);
+                subscriptionTimes.clear();
+            }
+        }
+        super.thingUpdated(thing);
     }
 }
