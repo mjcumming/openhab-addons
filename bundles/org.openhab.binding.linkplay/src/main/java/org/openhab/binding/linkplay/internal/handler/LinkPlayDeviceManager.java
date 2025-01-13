@@ -27,6 +27,7 @@ public class LinkPlayDeviceManager {
     private final LinkPlayUpnpManager upnpManager;
 
     private boolean upnpSubscriptionActive = true; // Tracks whether UPnP events are available
+private @Nullable ScheduledFuture<?> pollingJob;
 
     public LinkPlayDeviceManager(String ipAddress, String deviceId, LinkPlayHttpManager httpManager,
             LinkPlayUpnpManager upnpManager) {
@@ -37,6 +38,8 @@ public class LinkPlayDeviceManager {
 
         httpManager.setIpAddress(ipAddress);
         logger.debug("Initialized LinkPlayDeviceManager for device: {}", deviceId);
+            // Start polling
+    startPolling();
     }
 
     public String getIpAddress() {
@@ -54,6 +57,26 @@ public class LinkPlayDeviceManager {
     public LinkPlayUpnpManager getUpnpManager() {
         return upnpManager;
     }
+    private void startPolling() {
+    stopPolling(); // Ensure no duplicate jobs
+
+    pollingJob = scheduler.scheduleWithFixedDelay(() -> {
+        httpManager.sendCommandWithRetry(ipAddress, "getPlayerStatus").whenComplete((response, error) -> {
+            if (error != null) {
+                logger.warn("Failed to poll player status: {}", error.getMessage());
+            } else {
+                updateChannelsFromHttp(response); // Update device state
+                logger.debug("Polling response: {}", response);
+            }
+        });
+    }, 0, 10, TimeUnit.SECONDS);
+}
+    private void stopPolling() {
+    if (pollingJob != null) {
+        pollingJob.cancel(true);
+        pollingJob = null;
+    }
+}
 
     /**
      * Updates channels from UPnP data if the subscription is active.
@@ -254,4 +277,8 @@ private String mapModeToSource(String mode) {
         default:
             return mode; // Return the raw mode if it doesn't match known types
     }
+}
+public void dispose() {
+    stopPolling();
+    logger.debug("Disposing device manager for IP: {}", ipAddress);
 }
