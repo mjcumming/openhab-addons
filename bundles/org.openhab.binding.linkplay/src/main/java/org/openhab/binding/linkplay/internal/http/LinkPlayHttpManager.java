@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import org.openhab.binding.linkplay.internal.config.LinkPlayConfiguration;
 
 /**
  * Refactored LinkPlayHttpManager with retry logic for HTTP commands.
@@ -15,11 +16,13 @@ public class LinkPlayHttpManager {
     private final LinkPlayHttpClient httpClient;
     private final int maxRetries;
     private final long retryDelayMillis;
+    private final LinkPlayConfiguration config;
 
-    public LinkPlayHttpManager(LinkPlayHttpClient httpClient, int maxRetries, long retryDelayMillis) {
+    public LinkPlayHttpManager(LinkPlayHttpClient httpClient, LinkPlayConfiguration config) {
         this.httpClient = httpClient;
-        this.maxRetries = maxRetries;
-        this.retryDelayMillis = retryDelayMillis;
+        this.config = config;
+        this.maxRetries = config.getMaxRetries();
+        this.retryDelayMillis = config.getRetryDelayMillis();
     }
 
     /**
