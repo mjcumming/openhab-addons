@@ -29,6 +29,9 @@ import javax.net.ssl.SSLContext;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.jupnp.model.meta.RemoteDevice;
+import org.jupnp.model.meta.Service;
+import org.jupnp.model.types.ServiceId;
+import org.jupnp.model.types.UDAServiceId;
 import org.openhab.binding.linkplay.internal.http.LinkPlaySslUtil;
 import org.openhab.core.config.discovery.DiscoveryResult;
 import org.openhab.core.config.discovery.DiscoveryResultBuilder;
@@ -71,6 +74,12 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
     private static final int READ_TIMEOUT_MS = 2000;
     private static final String VALIDATION_ENDPOINT = "/httpapi.asp?command=getStatusEx";
     private static final String EXPECTED_RESPONSE_CONTENT = "uuid";
+
+    private static final ServiceId SERVICE_ID_AV_TRANSPORT = new UDAServiceId("AVTransport");
+    private static final ServiceId SERVICE_ID_RENDERING_CONTROL = new UDAServiceId("RenderingControl");
+
+    private static final String PROPERTY_HAS_AVTRANSPORT = "hasAVTransport";
+    private static final String PROPERTY_HAS_RENDERING_CONTROL = "hasRenderingControl";
 
     @Activate
     protected void activate(ComponentContext context) {
@@ -147,6 +156,15 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
         String modelName = device.getDetails().getModelDetails().getModelName();
         String modelDesc = device.getDetails().getModelDetails().getModelDescription();
 
+        // Check UPnP services
+        Service<?, ?> avTransportService = device.findService(SERVICE_ID_AV_TRANSPORT);
+        Service<?, ?> renderingControlService = device.findService(SERVICE_ID_RENDERING_CONTROL);
+        boolean hasRequiredServices = avTransportService != null && renderingControlService != null;
+
+        // Log service availability
+        logger.debug("Device {} services - AVTransport: {}, RenderingControl: {}",
+                device.getDetails().getFriendlyName(), avTransportService != null, renderingControlService != null);
+
         // Primary check: manufacturer and device type
         boolean isValidManufacturer = manufacturer != null
                 && SUPPORTED_MANUFACTURERS.contains(manufacturer.toLowerCase());
@@ -162,29 +180,27 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
             hasLinkPlayIdentifier = modelDesc.toLowerCase().contains(LINKPLAY_IDENTIFIER);
         }
 
-        // Log discovery details at trace level
-        if (!isValidManufacturer || !isValidDeviceType) {
-            logger.trace("Device check - manufacturer: {} valid: {}, type: {} valid: {}", manufacturer,
-                    isValidManufacturer, deviceType, isValidDeviceType);
-        }
-        if (hasLinkPlayIdentifier) {
-            logger.debug("Found LinkPlay identifier in model: {} / description: {}", modelName, modelDesc);
-        }
-
-        // Device is valid if it matches manufacturer/type OR contains LinkPlay identifier
-        return (isValidManufacturer && isValidDeviceType) || hasLinkPlayIdentifier;
+        // Device is valid if it matches manufacturer/type OR contains LinkPlay identifier OR has required services
+        return (isValidManufacturer && isValidDeviceType) || hasLinkPlayIdentifier || hasRequiredServices;
     }
 
     private boolean validateDevice(String ipAddress) {
         // Try HTTPS first
         for (int port : HTTPS_PORTS) {
             if (validateConnection(ipAddress, port, true)) {
+                logger.debug("HTTPS validation successful for {} on port {}", ipAddress, port);
                 return true;
             }
         }
 
         // Fall back to HTTP
-        return validateConnection(ipAddress, HTTP_PORT, false);
+        boolean result = validateConnection(ipAddress, HTTP_PORT, false);
+        if (result) {
+            logger.debug("HTTP validation successful for {} on port {}", ipAddress, HTTP_PORT);
+        } else {
+            logger.debug("All validation attempts failed for {}", ipAddress);
+        }
+        return result;
     }
 
     private boolean validateConnection(String ipAddress, int port, boolean useSsl) {
@@ -192,38 +208,48 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
         String urlStr = String.format("%s://%s:%d%s", protocol, ipAddress, port, VALIDATION_ENDPOINT);
 
         try {
-            URL url = new URL(urlStr);
-            HttpURLConnection conn;
-            if (useSsl) {
-                conn = (HttpsURLConnection) url.openConnection();
-                SSLContext sslContext = LinkPlaySslUtil.createSslContext(LinkPlaySslUtil.createTrustAllManager());
-                ((HttpsURLConnection) conn).setSSLSocketFactory(sslContext.getSocketFactory());
-                ((HttpsURLConnection) conn).setHostnameVerifier((hostname, session) -> true);
-            } else {
-                conn = (HttpURLConnection) url.openConnection();
-            }
-            conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
-            conn.setReadTimeout(READ_TIMEOUT_MS);
-            conn.setRequestMethod("GET");
-
+            HttpURLConnection conn = createConnection(urlStr, useSsl);
             int responseCode = conn.getResponseCode();
+
             if (responseCode == 200) {
                 try (BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()))) {
                     String responseLine;
                     while ((responseLine = reader.readLine()) != null) {
                         if (responseLine.contains(EXPECTED_RESPONSE_CONTENT)) {
-                            logger.debug("HTTP(S) check success => {} contains expected content", urlStr);
+                            logger.trace("HTTP(S) validation successful: {} contains expected content", urlStr);
                             return true;
                         }
                     }
                 }
+                logger.trace("HTTP(S) validation failed: {} response missing expected content", urlStr);
             } else {
-                logger.trace("HTTP(S) check => {} => responseCode={}", urlStr, responseCode);
+                logger.trace("HTTP(S) validation failed: {} returned status code {}", urlStr, responseCode);
             }
         } catch (Exception e) {
-            logger.trace("HTTP(S) check fail => {} => {}", urlStr, e.getMessage());
+            logger.trace("HTTP(S) validation error for {}: {}", urlStr, e.getMessage());
         }
         return false;
+    }
+
+    private HttpURLConnection createConnection(String urlStr, boolean useSsl) throws Exception {
+        URL url = new URL(urlStr);
+        HttpURLConnection conn;
+
+        if (useSsl) {
+            HttpsURLConnection httpsConn = (HttpsURLConnection) url.openConnection();
+            SSLContext sslContext = LinkPlaySslUtil.createSslContext(LinkPlaySslUtil.createTrustAllManager());
+            httpsConn.setSSLSocketFactory(sslContext.getSocketFactory());
+            httpsConn.setHostnameVerifier((hostname, session) -> true);
+            conn = httpsConn;
+        } else {
+            conn = (HttpURLConnection) url.openConnection();
+        }
+
+        conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
+        conn.setReadTimeout(READ_TIMEOUT_MS);
+        conn.setRequestMethod("GET");
+
+        return conn;
     }
 
     protected void deactivate() {

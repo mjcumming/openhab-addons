@@ -84,4 +84,8 @@ public class LinkPlayConfiguration {
 
         return true;
     }
+
+    public String getUdn() {
+        return udn;
+    }
 }

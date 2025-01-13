@@ -25,9 +25,9 @@ import java.util.concurrent.TimeUnit;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
+import org.jupnp.model.types.ServiceId;
+import org.jupnp.model.types.UDAServiceId;
 import org.openhab.binding.linkplay.internal.config.LinkPlayConfiguration;
-import org.openhab.binding.linkplay.internal.http.LinkPlayApiException;
-import org.openhab.binding.linkplay.internal.http.LinkPlayCommunicationException;
 import org.openhab.binding.linkplay.internal.http.LinkPlayHttpClient;
 import org.openhab.binding.linkplay.internal.upnp.DIDLParser;
 import org.openhab.binding.linkplay.internal.utils.HexConverter;
@@ -48,6 +48,7 @@ import org.openhab.core.thing.ThingStatusDetail;
 import org.openhab.core.thing.binding.BaseThingHandler;
 import org.openhab.core.types.Command;
 import org.openhab.core.types.RefreshType;
+import org.openhab.core.types.State;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -84,11 +85,25 @@ public class LinkPlayThingHandler extends BaseThingHandler implements UpnpIOPart
     private static final int INITIAL_RETRY_DELAY_MS = 1000;
     private static final int MAX_RETRY_DELAY_MS = 10000;
 
+    // Add UPnP service constants
+    private static final UDAServiceId AVTRANSPORT_SERVICE_ID = new UDAServiceId("AVTransport");
+    private static final UDAServiceId RENDERING_CONTROL_SERVICE_ID = new UDAServiceId("RenderingControl");
+
+    private static final ServiceId SERVICE_ID_AV_TRANSPORT = new UDAServiceId("AVTransport");
+    private static final ServiceId SERVICE_ID_RENDERING_CONTROL = new UDAServiceId("RenderingControl");
+
+    // Add constants for UPnP services
+    private static final Set<String> SUBSCRIBED_UPNP_SERVICES = Set.of(SERVICE_ID_AV_TRANSPORT.toString(),
+            SERVICE_ID_RENDERING_CONTROL.toString());
+
+    private final LinkPlayConfiguration config;
+
     public LinkPlayThingHandler(Thing thing, UpnpIOService upnpIOService, LinkPlayHttpClient linkplayClient) {
         super(thing);
         this.upnpIOService = upnpIOService;
         this.linkplayClient = linkplayClient;
-        this.groupManager = new LinkPlayGroupManager(thing, linkplayClient);
+        this.config = getConfigAs(LinkPlayConfiguration.class);
+        this.groupManager = new LinkPlayGroupManager(this, linkplayClient, config.ipAddress);
     }
 
     @Override
@@ -96,20 +111,26 @@ public class LinkPlayThingHandler extends BaseThingHandler implements UpnpIOPart
         logger.debug("[{}] Initializing LinkPlay handler", getThing().getUID());
         updateStatus(ThingStatus.UNKNOWN);
 
+        LinkPlayConfiguration config = getConfigAs(LinkPlayConfiguration.class);
+        if (config.ipAddress == null || config.ipAddress.isEmpty()) {
+            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR, "IP address not configured");
+            return;
+        }
+
         // Start polling for device status
         startAutomaticRefresh();
 
-        // Handle UPnP registration separately
+        // Handle UPnP registration
         String udn = getUDN();
         if (!udn.isEmpty()) {
             logger.debug("[{}] Registering UPnP participant with UDN '{}' at {}", getThing().getUID(), udn,
                     java.time.LocalDateTime.now());
-            upnpIOService.registerParticipant(this);
 
-            // Schedule UPnP verification and subscription after a delay
+            // Schedule UPnP registration and verification
             scheduler.schedule(() -> {
-                synchronized (upnpLock) {
-                    logger.debug("[{}] Checking UPnP registration status after delay", getThing().getUID());
+                try {
+                    registerUpnpWithRetry();
+
                     if (isUpnpDeviceRegistered()) {
                         logger.debug("[{}] UPnP device successfully registered, adding subscriptions",
                                 getThing().getUID());
@@ -117,6 +138,8 @@ public class LinkPlayThingHandler extends BaseThingHandler implements UpnpIOPart
                     } else {
                         logger.warn("[{}] UPnP device registration failed for UDN '{}'", getThing().getUID(), udn);
                     }
+                } catch (Exception e) {
+                    logger.warn("[{}] Error during UPnP initialization: {}", getThing().getUID(), e.getMessage());
                 }
             }, 2, TimeUnit.SECONDS);
         } else {
@@ -127,11 +150,9 @@ public class LinkPlayThingHandler extends BaseThingHandler implements UpnpIOPart
     private void startAutomaticRefresh() {
         ScheduledFuture<?> localPollingJob = pollingJob;
         if (localPollingJob == null || localPollingJob.isCancelled()) {
-            LinkPlayConfiguration config = getConfigAs(LinkPlayConfiguration.class);
             pollingJob = scheduler.scheduleWithFixedDelay(() -> {
                 try {
                     if (!isReachable) {
-                        // Device was offline, try to reconnect
                         logger.debug("[{}] Trying to reconnect to device", getThing().getUID());
                     }
 
@@ -140,15 +161,17 @@ public class LinkPlayThingHandler extends BaseThingHandler implements UpnpIOPart
                         if (!isReachable) {
                             isReachable = true;
                             updateStatus(ThingStatus.ONLINE);
-                            // Add UPnP subscriptions when device comes online
                             synchronized (upnpLock) {
                                 addSubscriptions();
                             }
                         }
-                        // Update channels with player status
                         updateChannelsFromStatus(playerStatus);
                     }).exceptionally(e -> {
-                        handleConnectionError(e);
+                        if (e.getCause() instanceof Exception) {
+                            handleCommunicationError((Exception) e.getCause());
+                        } else {
+                            handleConnectionError(e);
+                        }
                         return null;
                     });
 
@@ -156,17 +179,18 @@ public class LinkPlayThingHandler extends BaseThingHandler implements UpnpIOPart
                         if (!isReachable) {
                             isReachable = true;
                             updateStatus(ThingStatus.ONLINE);
-                            // Add UPnP subscriptions when device comes online
                             synchronized (upnpLock) {
                                 addSubscriptions();
                             }
                         }
-                        // Update properties and handle UDN discovery
                         handleDeviceStatusUpdate(statusEx);
-                        // Update channels with extended status
                         updateChannelsFromStatus(statusEx);
                     }).exceptionally(e -> {
-                        handleConnectionError(e);
+                        if (e.getCause() instanceof Exception) {
+                            handleCommunicationError((Exception) e.getCause());
+                        } else {
+                            handleConnectionError(e);
+                        }
                         return null;
                     });
 
@@ -257,7 +281,6 @@ public class LinkPlayThingHandler extends BaseThingHandler implements UpnpIOPart
         // Clean up UPnP
         synchronized (upnpLock) {
             removeSubscriptions();
-            logger.debug("[{}] Unregistering UPnP participant", getThing().getUID());
             upnpIOService.unregisterParticipant(this);
             subscriptionTimes.clear();
         }
@@ -266,7 +289,6 @@ public class LinkPlayThingHandler extends BaseThingHandler implements UpnpIOPart
     }
 
     private void stopPolling() {
-        logger.debug("[{}] Stopping polling", getThing().getUID());
         ScheduledFuture<?> job = pollingJob;
         if (job != null && !job.isCancelled()) {
             job.cancel(true);
@@ -276,56 +298,99 @@ public class LinkPlayThingHandler extends BaseThingHandler implements UpnpIOPart
 
     @Override
     public String getUDN() {
-        String configUdn = getConfigAs(LinkPlayConfiguration.class).udn;
-        if (!configUdn.isEmpty()) {
-            return configUdn;
-        }
-        String propertyUdn = getThing().getProperties().get(PROPERTY_UDN);
-        return propertyUdn != null ? propertyUdn : "";
+        String configUdn = config.getUdn();
+        return configUdn != null ? configUdn : "";
     }
 
-    protected boolean isUpnpDeviceRegistered() {
-        return upnpIOService.isRegistered(this);
+    private boolean isUpnpDeviceRegistered() {
+        String udn = getUDN();
+        return !udn.isEmpty() && upnpIOService.isRegistered(this);
+    }
+
+    private boolean registerSubscription(String udn, ServiceId serviceId) {
+        synchronized (upnpLock) {
+            try {
+                logger.debug("[{}] Registering subscription for service {}", getThing().getUID(), serviceId);
+                upnpIOService.addSubscription(this, serviceId.toString(), SUBSCRIPTION_DURATION);
+                return true;
+            } catch (Exception e) {
+                logger.debug("[{}] Failed to register subscription for service {}: {}", getThing().getUID(), serviceId,
+                        e.getMessage());
+                return false;
+            }
+        }
     }
 
     private void addSubscriptions() {
         synchronized (upnpLock) {
-            String udn = getUDN();
             if (!isUpnpDeviceRegistered()) {
-                logger.warn("[{}] Cannot add UPnP subscriptions - device not registered (UDN: {})", getThing().getUID(),
-                        udn);
+                logger.debug("[{}] Cannot add subscriptions - device not registered", getThing().getUID());
                 return;
             }
-            logger.debug("[{}] Adding UPnP subscriptions for device {} at {}", getThing().getUID(), udn,
-                    java.time.LocalDateTime.now());
 
-            for (String service : SERVICE_SUBSCRIPTIONS) {
-                logger.debug("[{}] Adding UPnP subscription for service {} (current subscriptions: {})",
-                        getThing().getUID(), service, subscriptionTimes.keySet());
-                upnpIOService.addSubscription(this, service, SUBSCRIPTION_DURATION);
+            for (String service : SUBSCRIBED_UPNP_SERVICES) {
+                if (registerSubscription(getUDN(), new UDAServiceId(service))) {
+                    subscriptionTimes.put(service, Instant.now());
+                    logger.debug("[{}] Added subscription for service {}", getThing().getUID(), service);
+                }
             }
+
+            scheduleSubscriptionRenewal();
         }
     }
 
     private void removeSubscriptions() {
         synchronized (upnpLock) {
-            String udn = getUDN();
-            logger.debug("[{}] Removing UPnP subscriptions for device {} at {} (current subscriptions: {})",
-                    getThing().getUID(), udn, java.time.LocalDateTime.now(), subscriptionTimes.keySet());
+            logger.debug("[{}] Removing UPnP subscriptions", getThing().getUID());
 
-            for (String service : SERVICE_SUBSCRIPTIONS) {
-                logger.debug("[{}] Removing UPnP subscription for service {}", getThing().getUID(), service);
-                upnpIOService.removeSubscription(this, service);
+            // Cancel any pending renewal
+            ScheduledFuture<?> job = subscriptionJob;
+            if (job != null && !job.isCancelled()) {
+                job.cancel(true);
+                subscriptionJob = null;
+            }
+
+            // Remove all subscriptions
+            for (String service : SUBSCRIBED_UPNP_SERVICES) {
+                try {
+                    upnpIOService.removeSubscription(this, service);
+                    logger.debug("[{}] Removed subscription for service {}", getThing().getUID(), service);
+                } catch (Exception e) {
+                    logger.debug("[{}] Error removing subscription for service {}: {}", getThing().getUID(), service,
+                            e.getMessage());
+                }
             }
             subscriptionTimes.clear();
-            logger.debug("[{}] All UPnP subscriptions removed", getThing().getUID());
+        }
+    }
+
+    private void scheduleSubscriptionRenewal() {
+        synchronized (upnpLock) {
+            ScheduledFuture<?> job = subscriptionJob;
+            if (job == null || job.isCancelled()) {
+                subscriptionJob = scheduler.scheduleWithFixedDelay(() -> {
+                    synchronized (upnpLock) {
+                        for (String service : SUBSCRIBED_UPNP_SERVICES) {
+                            Instant lastRenewal = subscriptionTimes.get(service);
+                            if (lastRenewal == null
+                                    || lastRenewal.plusSeconds(SUBSCRIPTION_DURATION / 2).isBefore(Instant.now())) {
+                                logger.debug("[{}] Renewing subscription for service {}", getThing().getUID(), service);
+                                if (registerSubscription(getUDN(), new UDAServiceId(service))) {
+                                    subscriptionTimes.put(service, Instant.now());
+                                }
+                            }
+                        }
+                    }
+                }, SUBSCRIPTION_DURATION / 2, SUBSCRIPTION_DURATION / 2, TimeUnit.SECONDS);
+                logger.debug("[{}] Scheduled subscription renewal task", getThing().getUID());
+            }
         }
     }
 
     @Override
     public void handleCommand(ChannelUID channelUID, Command command) {
-        if (thing.getStatus() != ThingStatus.ONLINE) {
-            logger.debug("Thing not ONLINE, ignoring command {}", command);
+        if (getThing().getStatus() != ThingStatus.ONLINE) {
+            logger.debug("[{}] Thing not ONLINE, ignoring command {}", getThing().getUID(), command);
             return;
         }
 
@@ -336,7 +401,7 @@ public class LinkPlayThingHandler extends BaseThingHandler implements UpnpIOPart
 
         String groupId = channelUID.getGroupId();
         if (groupId == null) {
-            logger.debug("No group ID for channel {}", channelUID);
+            logger.debug("[{}] No group ID for channel {}", getThing().getUID(), channelUID);
             return;
         }
 
@@ -346,10 +411,10 @@ public class LinkPlayThingHandler extends BaseThingHandler implements UpnpIOPart
                     handlePlaybackCommand(channelUID, command);
                     break;
                 case GROUP_MULTIROOM:
-                    groupManager.handleCommand(channelUID, command);
+                    handleMultiroomCommand(channelUID, command);
                     break;
                 default:
-                    logger.debug("Unknown channel group: {}", groupId);
+                    logger.debug("[{}] Unknown channel group: {}", getThing().getUID(), groupId);
             }
         } catch (Exception e) {
             handleCommandError("Error handling command", channelUID, command, e);
@@ -358,14 +423,7 @@ public class LinkPlayThingHandler extends BaseThingHandler implements UpnpIOPart
 
     private void handleCommandError(String message, ChannelUID channelUID, Command command, Exception e) {
         String errorMessage = e.getMessage() != null ? e.getMessage() : "Unknown error";
-        if (e instanceof LinkPlayCommunicationException) {
-            logger.warn("{} {} for channel {}: {}", message, command, channelUID, errorMessage);
-            handleCommunicationError(e);
-        } else if (e instanceof LinkPlayApiException) {
-            logger.debug("{} {} for channel {}: {}", message, command, channelUID, errorMessage);
-        } else {
-            logger.warn("{} {} for channel {}: {}", message, command, channelUID, errorMessage);
-        }
+        logger.warn("[{}] {} {} for channel {}: {}", getThing().getUID(), message, command, channelUID, errorMessage);
     }
 
     protected void handleCommunicationError(Exception e) {
@@ -392,11 +450,10 @@ public class LinkPlayThingHandler extends BaseThingHandler implements UpnpIOPart
     }
 
     private void pollDeviceState(Set<String> channels) {
-        String ipAddress = getConfigAs(LinkPlayConfiguration.class).ipAddress;
+        String ipAddress = config.ipAddress;
         logger.debug("[{}] Polling device state for channels: {}", thing.getUID(), channels);
 
         if (channels.stream().anyMatch(id -> id.startsWith(GROUP_PLAYBACK))) {
-            // Get both player status and extended status
             linkplayClient.getPlayerStatus(ipAddress).thenAccept(status -> {
                 logger.debug("[{}] Player status check successful", thing.getUID());
                 if (thing.getStatus() != ThingStatus.ONLINE) {
@@ -404,11 +461,10 @@ public class LinkPlayThingHandler extends BaseThingHandler implements UpnpIOPart
                 }
                 updateChannelsFromStatus(status);
             }).exceptionally(e -> {
-                if (e != null) {
-                    logger.debug("[{}] Error polling player status: {}", thing.getUID(),
-                            e.getMessage() != null ? e.getMessage() : "Unknown error");
-                    updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
-                            "Device not responding: " + (e.getMessage() != null ? e.getMessage() : "Unknown error"));
+                if (e.getCause() instanceof Exception) {
+                    handleCommunicationError((Exception) e.getCause());
+                } else {
+                    handleConnectionError(e);
                 }
                 return null;
             });
@@ -420,11 +476,10 @@ public class LinkPlayThingHandler extends BaseThingHandler implements UpnpIOPart
                 }
                 updateChannelsFromStatus(statusEx);
             }).exceptionally(e -> {
-                if (e != null) {
-                    logger.debug("[{}] Error polling extended status: {}", thing.getUID(),
-                            e.getMessage() != null ? e.getMessage() : "Unknown error");
-                    updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
-                            "Device not responding: " + (e.getMessage() != null ? e.getMessage() : "Unknown error"));
+                if (e.getCause() instanceof Exception) {
+                    handleCommunicationError((Exception) e.getCause());
+                } else {
+                    handleConnectionError(e);
                 }
                 return null;
             });
@@ -437,8 +492,8 @@ public class LinkPlayThingHandler extends BaseThingHandler implements UpnpIOPart
     }
 
     private void handlePlaybackCommand(ChannelUID channelUID, Command command) {
-        String ipAddress = getConfigAs(LinkPlayConfiguration.class).ipAddress;
         String channelId = channelUID.getIdWithoutGroup();
+        String ipAddress = config.ipAddress;
 
         try {
             switch (channelId) {
@@ -473,334 +528,346 @@ public class LinkPlayThingHandler extends BaseThingHandler implements UpnpIOPart
                     break;
 
                 default:
-                    logger.debug("Channel {} not handled", channelId);
+                    logger.debug("[{}] Channel {} not handled", getThing().getUID(), channelId);
             }
         } catch (Exception e) {
-            handleCommandError("playback command", channelUID, command, e);
+            handleCommandError("Error handling playback command", channelUID, command, e);
+        }
+    }
+
+    private void handleMultiroomCommand(ChannelUID channelUID, Command command) {
+        String channelId = channelUID.getIdWithoutGroup();
+
+        try {
+            switch (channelId) {
+                case CHANNEL_JOIN:
+                    if (command instanceof StringType) {
+                        String masterIp = command.toString();
+                        groupManager.joinGroup(masterIp);
+                    }
+                    break;
+
+                case CHANNEL_LEAVE:
+                    if (command instanceof OnOffType && command == OnOffType.ON) {
+                        groupManager.leaveGroup();
+                    }
+                    break;
+
+                case CHANNEL_UNGROUP:
+                    if (command instanceof OnOffType && command == OnOffType.ON) {
+                        groupManager.ungroup();
+                    }
+                    break;
+
+                case CHANNEL_KICKOUT:
+                    if (command instanceof StringType) {
+                        String slaveIp = command.toString();
+                        groupManager.kickoutSlave(slaveIp);
+                    }
+                    break;
+
+                case CHANNEL_GROUP_VOLUME:
+                    if (command instanceof PercentType) {
+                        int volume = ((PercentType) command).intValue();
+                        groupManager.setGroupVolume(volume);
+                    }
+                    break;
+
+                case CHANNEL_GROUP_MUTE:
+                    if (command instanceof OnOffType) {
+                        groupManager.setGroupMute(command == OnOffType.ON);
+                    }
+                    break;
+
+                default:
+                    logger.debug("[{}] Unhandled multiroom channel: {}", getThing().getUID(), channelId);
+            }
+        } catch (Exception e) {
+            handleCommandError("Error handling multiroom command", channelUID, command, e);
         }
     }
 
     protected void updatePlaybackChannels(JsonObject status) {
+        // Playback Status
         if (status.has("status")) {
             String playStatus = status.get("status").getAsString();
-            updateState(CHANNEL_CONTROL, "play".equals(playStatus) ? PlayPauseType.PLAY : PlayPauseType.PAUSE);
+            updateChannelState(GROUP_PLAYBACK, CHANNEL_CONTROL,
+                    "play".equals(playStatus) ? PlayPauseType.PLAY : PlayPauseType.PAUSE);
         }
 
+        // Position and Duration
+        if (status.has("curpos") && status.has("totlen")) {
+            try {
+                int position = status.get("curpos").getAsInt() / 1000;
+                int duration = status.get("totlen").getAsInt() / 1000;
+                updateChannelState(GROUP_PLAYBACK, CHANNEL_POSITION, new QuantityType<>(position, Units.SECOND));
+                updateChannelState(GROUP_PLAYBACK, CHANNEL_DURATION, new QuantityType<>(duration, Units.SECOND));
+            } catch (NumberFormatException e) {
+                logger.debug("[{}] Invalid position/duration values in status", getThing().getUID());
+            }
+        }
+
+        // Media Information
+        updateHexEncodedMetadata(status, "Title", CHANNEL_TITLE);
+        updateHexEncodedMetadata(status, "Artist", CHANNEL_ARTIST);
+        updateHexEncodedMetadata(status, "Album", CHANNEL_ALBUM);
+
+        // Album Art
+        if (status.has("AlbumArt")) {
+            String albumArt = status.get("AlbumArt").getAsString();
+            if (!albumArt.isEmpty()) {
+                updateChannelState(GROUP_PLAYBACK, CHANNEL_ALBUM_ART, new StringType(albumArt));
+            }
+        }
+
+        // Volume and Mute
         if (status.has("vol")) {
-            updateState(CHANNEL_VOLUME, new PercentType(status.get("vol").getAsInt()));
+            try {
+                int volume = status.get("vol").getAsInt();
+                if (volume >= 0 && volume <= 100) {
+                    updateChannelState(GROUP_PLAYBACK, CHANNEL_VOLUME, new PercentType(volume));
+                }
+            } catch (NumberFormatException e) {
+                logger.warn("[{}] Invalid volume value in status", getThing().getUID());
+            }
         }
 
         if (status.has("mute")) {
-            updateState(CHANNEL_MUTE, OnOffType.from(status.get("mute").getAsInt() == 1));
+            try {
+                boolean muted = status.get("mute").getAsInt() == 1;
+                updateChannelState(GROUP_PLAYBACK, CHANNEL_MUTE, OnOffType.from(muted));
+            } catch (NumberFormatException e) {
+                logger.warn("[{}] Invalid mute value in status", getThing().getUID());
+            }
         }
 
-        if (status.has("curpos") && status.has("totlen")) {
-            int position = status.get("curpos").getAsInt() / 1000; // ms to seconds
-            int duration = status.get("totlen").getAsInt() / 1000; // ms to seconds
-            updateState(CHANNEL_POSITION, new QuantityType<>(position, Units.SECOND));
-            updateState(CHANNEL_DURATION, new QuantityType<>(duration, Units.SECOND));
+        // Playback Modes
+        if (status.has("loop")) {
+            try {
+                int loopMode = status.get("loop").getAsInt();
+                boolean shuffle = (loopMode == 2 || loopMode == 3);
+                boolean repeat = (loopMode == 0 || loopMode == 2);
+                updateChannelState(GROUP_PLAYBACK, CHANNEL_SHUFFLE, OnOffType.from(shuffle));
+                updateChannelState(GROUP_PLAYBACK, CHANNEL_REPEAT, OnOffType.from(repeat));
+            } catch (NumberFormatException e) {
+                logger.debug("[{}] Invalid loop mode value in status", getThing().getUID());
+            }
+        }
+
+        // Source
+        if (status.has("mode")) {
+            String mode = status.get("mode").getAsString();
+            updateChannelState(GROUP_PLAYBACK, CHANNEL_SOURCE, new StringType(mapModeToSource(mode)));
         }
     }
 
-    protected void updateGroupChannels(String role, String masterIP, String slaveIPs) {
-        updateState(new ChannelUID(getThing().getUID(), GROUP_MULTIROOM, CHANNEL_ROLE), new StringType(role));
-        updateState(new ChannelUID(getThing().getUID(), GROUP_MULTIROOM, CHANNEL_MASTER_IP), new StringType(masterIP));
-        updateState(new ChannelUID(getThing().getUID(), GROUP_MULTIROOM, CHANNEL_SLAVE_IPS), new StringType(slaveIPs));
+    private void updateDeviceChannels(JsonObject status) {
+        // Device Name
+        if (status.has("DeviceName")) {
+            updateChannelState(GROUP_SYSTEM, CHANNEL_DEVICE_NAME,
+                    new StringType(status.get("DeviceName").getAsString()));
+        }
+
+        // Firmware Version
+        if (status.has("firmware")) {
+            updateChannelState(GROUP_SYSTEM, CHANNEL_FIRMWARE, new StringType(status.get("firmware").getAsString()));
+        }
+    }
+
+    private void updateNetworkChannels(JsonObject status) {
+        // IP Address
+        if (status.has("ip")) {
+            updateChannelState(GROUP_NETWORK, CHANNEL_IP_ADDRESS, new StringType(status.get("ip").getAsString()));
+        }
+
+        // MAC Address
+        if (status.has("mac")) {
+            updateChannelState(GROUP_NETWORK, CHANNEL_MAC_ADDRESS, new StringType(status.get("mac").getAsString()));
+        }
+    }
+
+    private void updateMultiroomChannels(JsonObject status) {
+        // Let the group manager handle multiroom status updates
+        if (status.has("uuid") || status.has("host_uuid") || status.has("slave_list")) {
+            groupManager.handleStatusUpdate(status);
+        }
     }
 
     @Override
     public void onValueReceived(@Nullable String variable, @Nullable String value, @Nullable String service) {
         if (variable == null || value == null || service == null) {
-            logger.warn("[{}] Received UPnP event with null values - variable: {}, value: {}, service: {}",
-                    getThing().getUID(), variable, value, service);
+            logger.debug("[{}] Received incomplete UPnP value update", getThing().getUID());
             return;
         }
 
-        logger.debug(
-                "[{}] Processing UPnP event at {} - Service: '{}', Variable: '{}', Value: '{}' (subscriptions: {})",
-                getThing().getUID(), java.time.LocalDateTime.now(), service, variable, value,
-                subscriptionTimes.keySet());
+        if (getThing().getStatus() != ThingStatus.ONLINE) {
+            return;
+        }
+
+        logger.trace("[{}] Received UPnP value '{}' = '{}' for service {}", getThing().getUID(), variable, value,
+                service);
 
         try {
-            switch (service) {
-                case UPNP_SERVICE_AV_TRANSPORT:
-                    handleAVTransportUpdate(variable, value);
-                    break;
-                case UPNP_SERVICE_RENDERING_CONTROL:
-                    handleRenderingControlUpdate(variable, value);
-                    break;
-                default:
-                    logger.debug("[{}] Unhandled UPnP service: {} (known services: {})", getThing().getUID(), service,
-                            SERVICE_SUBSCRIPTIONS);
+            if (service.contains(SERVICE_ID_AV_TRANSPORT.toString())) {
+                handleAVTransportUpdate(variable, value);
+            } else if (service.contains(SERVICE_ID_RENDERING_CONTROL.toString())) {
+                handleRenderingControlUpdate(variable, value);
             }
         } catch (Exception e) {
-            logger.warn("[{}] Error processing UPnP event: {} (service: {}, variable: {}, value: {})",
-                    getThing().getUID(), e.getMessage(), service, variable, value);
+            logger.debug("[{}] Error processing UPnP value: {}", getThing().getUID(), e.getMessage());
         }
     }
 
     private void handleAVTransportUpdate(String variable, String value) {
-        switch (variable) {
-            case "TransportState":
-                updateState(GROUP_PLAYBACK + "#" + CHANNEL_CONTROL,
-                        "PLAYING".equals(value) ? PlayPauseType.PLAY : PlayPauseType.PAUSE);
-                break;
-            case "CurrentTrackMetaData":
-                // Parse and update track metadata
-                updateTrackMetadata(value);
-                break;
-            default:
-                logger.debug("[{}] Unhandled AVTransport variable: {}", getThing().getUID(), variable);
+        try {
+            switch (variable) {
+                case "TransportState":
+                    updateChannelState(GROUP_PLAYBACK, CHANNEL_CONTROL,
+                            "PLAYING".equals(value) ? PlayPauseType.PLAY : PlayPauseType.PAUSE);
+                    break;
+                case "CurrentTrackMetaData":
+                    if (!value.isEmpty()) {
+                        updateTrackMetadata(value);
+                    }
+                    break;
+                case "CurrentTrackDuration":
+                    if (!value.isEmpty() && !"NOT_IMPLEMENTED".equals(value)) {
+                        updateDuration(value);
+                    }
+                    break;
+                default:
+                    logger.trace("[{}] Unhandled AVTransport variable: {}", getThing().getUID(), variable);
+                    break;
+            }
+        } catch (Exception e) {
+            logger.debug("[{}] Error handling AVTransport update for {}: {}", getThing().getUID(), variable,
+                    e.getMessage());
+        }
+    }
+
+    private void updateDuration(String durationStr) {
+        try {
+            String[] parts = durationStr.split(":");
+            if (parts.length == 3) {
+                int hours = Integer.parseInt(parts[0]);
+                int minutes = Integer.parseInt(parts[1]);
+                int seconds = Integer.parseInt(parts[2]);
+                int totalSeconds = (hours * 3600) + (minutes * 60) + seconds;
+                updateChannelState(GROUP_PLAYBACK, CHANNEL_DURATION, new QuantityType<>(totalSeconds, Units.SECOND));
+            }
+        } catch (NumberFormatException e) {
+            logger.debug("[{}] Error parsing duration '{}': {}", getThing().getUID(), durationStr, e.getMessage());
         }
     }
 
     private void handleRenderingControlUpdate(String variable, String value) {
-        switch (variable) {
-            case "Volume":
-                try {
-                    int volume = Integer.parseInt(value);
-                    logger.debug("[{}] Processing UPnP volume update - raw value: {}", getThing().getUID(), volume);
-                    if (volume >= 0 && volume <= 100) {
-                        String channelId = GROUP_PLAYBACK + "#" + CHANNEL_VOLUME;
-                        logger.debug("[{}] Updating volume channel {} to {}%", getThing().getUID(), channelId, volume);
-                        updateState(channelId, new PercentType(volume));
+        try {
+            switch (variable) {
+                case "Volume":
+                    if (!value.isEmpty()) {
+                        updateChannelState(GROUP_PLAYBACK, CHANNEL_VOLUME, new PercentType(value));
                     }
-                } catch (NumberFormatException e) {
-                    logger.warn("[{}] Invalid UPnP volume value: {}", getThing().getUID(), value);
-                }
-                break;
-            case "Mute":
-                updateState(GROUP_PLAYBACK + "#" + CHANNEL_MUTE, OnOffType.from("1".equals(value)));
-                break;
-            default:
-                logger.debug("[{}] Unhandled RenderingControl variable: {}", getThing().getUID(), variable);
+                    break;
+                case "Mute":
+                    if (!value.isEmpty()) {
+                        updateChannelState(GROUP_PLAYBACK, CHANNEL_MUTE, OnOffType.from("1".equals(value)));
+                    }
+                    break;
+                default:
+                    logger.trace("[{}] Unhandled RenderingControl variable: {}", getThing().getUID(), variable);
+                    break;
+            }
+        } catch (Exception e) {
+            logger.debug("[{}] Error handling RenderingControl update for {}: {}", getThing().getUID(), variable,
+                    e.getMessage());
         }
     }
 
     private void updateTrackMetadata(String metadata) {
         try {
-            DIDLParser.MetaData parsedMetadata = DIDLParser.parseMetadata(metadata);
-            logger.debug("[{}] Parsed track metadata: {}", getThing().getUID(), parsedMetadata);
+            DIDLParser.MetaData content = DIDLParser.parseMetadata(metadata);
+            if (content != null) {
+                if (content.title != null && !content.title.isEmpty()) {
+                    updateChannelState(GROUP_PLAYBACK, CHANNEL_TITLE, new StringType(content.title));
+                }
 
-            if (!parsedMetadata.title.isEmpty()) {
-                updateState(CHANNEL_TITLE, new StringType(parsedMetadata.title));
-            }
-            if (!parsedMetadata.artist.isEmpty()) {
-                updateState(CHANNEL_ARTIST, new StringType(parsedMetadata.artist));
-            }
-            if (!parsedMetadata.album.isEmpty()) {
-                updateState(CHANNEL_ALBUM, new StringType(parsedMetadata.album));
-            }
-            if (!parsedMetadata.artworkUrl.isEmpty()) {
-                updateState(CHANNEL_ALBUM_ART, new StringType(parsedMetadata.artworkUrl));
+                if (content.artist != null && !content.artist.isEmpty()) {
+                    updateChannelState(GROUP_PLAYBACK, CHANNEL_ARTIST, new StringType(content.artist));
+                }
+
+                if (content.album != null && !content.album.isEmpty()) {
+                    updateChannelState(GROUP_PLAYBACK, CHANNEL_ALBUM, new StringType(content.album));
+                }
+
+                if (content.artworkUrl != null && !content.artworkUrl.isEmpty()) {
+                    updateChannelState(GROUP_PLAYBACK, CHANNEL_ALBUM_ART, new StringType(content.artworkUrl));
+                }
+
+                logger.debug("[{}] Updated track metadata - Title: {}, Artist: {}, Album: {}", getThing().getUID(),
+                        content.title, content.artist, content.album);
             }
         } catch (Exception e) {
-            logger.warn("Error updating track metadata: {}", e.getMessage());
+            logger.debug("[{}] Error parsing track metadata: {}", getThing().getUID(), e.getMessage());
+        }
+    }
+
+    private void updateHexEncodedMetadata(JsonObject status, String field, String channelId) {
+        if (status.has(field)) {
+            String hexValue = status.get(field).getAsString();
+            try {
+                String decoded = HexConverter.hexToString(hexValue);
+                if (!decoded.isEmpty()) {
+                    updateChannelState(GROUP_PLAYBACK, channelId, new StringType(decoded));
+                }
+            } catch (Exception e) {
+                logger.debug("[{}] Error decoding {} metadata: {}", getThing().getUID(), field, e.getMessage());
+            }
         }
     }
 
     @Override
-    public void onServiceSubscribed(@Nullable String service, boolean succeeded) {
-        if (service == null) {
-            logger.warn("[{}] Received null service in onServiceSubscribed", getThing().getUID());
-            return;
-        }
+    public void onServiceSubscribed(@Nullable String serviceId, boolean succeeded) {
         synchronized (upnpLock) {
-            if (succeeded) {
-                Instant now = Instant.now();
-                logger.debug("[{}] UPnP subscription succeeded for service {} at {} (previous subscriptions: {})",
-                        getThing().getUID(), service, now, subscriptionTimes.keySet());
-                subscriptionTimes.put(service, now);
-                logger.debug("[{}] Updated subscription times: {}", getThing().getUID(), subscriptionTimes);
+            if (serviceId != null && succeeded) {
+                subscriptionTimes.put(serviceId, Instant.now());
+                logger.debug("[{}] Renewed subscription for service {}", getThing().getUID(), serviceId);
             } else {
-                logger.warn("[{}] UPnP subscription failed for service {} at {} (current subscriptions: {})",
-                        getThing().getUID(), service, java.time.LocalDateTime.now(), subscriptionTimes.keySet());
+                logger.debug("[{}] Failed to renew subscription for service {}", getThing().getUID(), serviceId);
+                if (serviceId != null) {
+                    subscriptionTimes.remove(serviceId);
+                }
             }
         }
     }
 
     @Override
     public void onStatusChanged(boolean status) {
-        String udn = getUDN();
-        logger.debug("[{}] UPnP device status changed to {} for device {} at {}", getThing().getUID(), status, udn,
-                java.time.LocalDateTime.now());
+        synchronized (upnpLock) {
+            logger.debug("[{}] UPnP status changed to {}", getThing().getUID(), status);
 
-        if (status) {
-            logger.debug("[{}] UPnP device {} is present (current subscriptions: {})", getThing().getUID(), udn,
-                    subscriptionTimes.keySet());
-            addSubscriptions();
-        } else {
-            logger.info("[{}] UPnP device {} is absent, removing subscriptions", getThing().getUID(), udn);
-            synchronized (upnpLock) {
+            if (status) {
+                addSubscriptions();
+            } else {
                 removeSubscriptions();
             }
-            // Don't change device status - let HTTP connection determine that
-            logger.debug("[{}] UPnP connection lost but keeping device status as is", getThing().getUID());
         }
     }
 
     protected void updateChannelsFromStatus(JsonObject status) {
-        logger.debug("[{}] Updating channels from status: {}", getThing().getUID(), status);
+        logger.debug("[{}] Updating channels from status", getThing().getUID());
 
         try {
-            // Get device IP first for group state
-            String deviceIp = null;
-            if (status.has("eth0")) {
-                String ip = status.get("eth0").getAsString();
-                if (!ip.isEmpty() && !"0.0.0.0".equals(ip)) {
-                    deviceIp = ip;
-                    updateState(GROUP_NETWORK + "#" + CHANNEL_IP_ADDRESS, new StringType(ip));
-                }
-            }
+            // Playback channels
+            updatePlaybackChannels(status);
 
-            // 1. Playback Control & Position
-            if (status.has("status")) {
-                String playStatus = status.get("status").getAsString();
-                updateState(GROUP_PLAYBACK + "#" + CHANNEL_CONTROL,
-                        "play".equals(playStatus) ? PlayPauseType.PLAY : PlayPauseType.PAUSE);
-            }
+            // Device channels
+            updateDeviceChannels(status);
 
-            if (status.has("curpos") && status.has("totlen")) {
-                try {
-                    int position = status.get("curpos").getAsInt() / 1000; // ms to seconds
-                    int duration = status.get("totlen").getAsInt() / 1000; // ms to seconds
-                    updateState(GROUP_PLAYBACK + "#" + CHANNEL_POSITION, new QuantityType<>(position, Units.SECOND));
-                    updateState(GROUP_PLAYBACK + "#" + CHANNEL_DURATION, new QuantityType<>(duration, Units.SECOND));
-                } catch (NumberFormatException e) {
-                    logger.debug("[{}] Invalid position/duration values in status", getThing().getUID());
-                }
-            }
+            // Network channels
+            updateNetworkChannels(status);
 
-            // 2. Media Information (hex encoded)
-            if (status.has("Title")) {
-                String title = HexConverter.hexToString(status.get("Title").getAsString());
-                if (!title.isEmpty()) {
-                    updateState(GROUP_PLAYBACK + "#" + CHANNEL_TITLE, new StringType(title));
-                }
-            }
-            if (status.has("Artist")) {
-                String artist = HexConverter.hexToString(status.get("Artist").getAsString());
-                if (!artist.isEmpty()) {
-                    updateState(GROUP_PLAYBACK + "#" + CHANNEL_ARTIST, new StringType(artist));
-                }
-            }
-            if (status.has("Album")) {
-                String album = HexConverter.hexToString(status.get("Album").getAsString());
-                if (!album.isEmpty()) {
-                    updateState(GROUP_PLAYBACK + "#" + CHANNEL_ALBUM, new StringType(album));
-                }
-            }
-            if (status.has("AlbumArt")) {
-                String albumArt = status.get("AlbumArt").getAsString();
-                if (!albumArt.isEmpty()) {
-                    updateState(GROUP_PLAYBACK + "#" + CHANNEL_ALBUM_ART, new StringType(albumArt));
-                }
-            }
-
-            // 3. Volume Control
-            if (status.has("vol")) {
-                try {
-                    int volume = status.get("vol").getAsInt();
-                    logger.debug("[{}] Processing volume update - raw value: {}", getThing().getUID(), volume);
-                    if (volume >= 0 && volume <= 100) {
-                        String channelId = GROUP_PLAYBACK + "#" + CHANNEL_VOLUME;
-                        logger.debug("[{}] Updating volume channel {} to {}%", getThing().getUID(), channelId, volume);
-                        updateState(channelId, new PercentType(volume));
-                    } else {
-                        logger.warn("[{}] Volume value {} out of range (0-100)", getThing().getUID(), volume);
-                    }
-                } catch (NumberFormatException e) {
-                    logger.warn("[{}] Invalid volume value in status: {}", getThing().getUID(), status.get("vol"));
-                }
-            } else {
-                logger.debug("[{}] No volume information in status update", getThing().getUID());
-            }
-            if (status.has("mute")) {
-                try {
-                    boolean muted = status.get("mute").getAsInt() == 1;
-                    String channelId = GROUP_PLAYBACK + "#" + CHANNEL_MUTE;
-                    logger.debug("[{}] Updating mute channel {} to {}", getThing().getUID(), channelId, muted);
-                    updateState(channelId, OnOffType.from(muted));
-                } catch (NumberFormatException e) {
-                    logger.warn("[{}] Invalid mute value in status: {}", getThing().getUID(), status.get("mute"));
-                }
-            } else {
-                logger.debug("[{}] No mute information in status update", getThing().getUID());
-            }
-
-            // 4. Playback Modes
-            if (status.has("loop")) {
-                try {
-                    int loopMode = status.get("loop").getAsInt();
-                    boolean shuffle = (loopMode == 2 || loopMode == 3);
-                    boolean repeat = (loopMode == 0 || loopMode == 2);
-                    updateState(GROUP_PLAYBACK + "#" + CHANNEL_SHUFFLE, OnOffType.from(shuffle));
-                    updateState(GROUP_PLAYBACK + "#" + CHANNEL_REPEAT, OnOffType.from(repeat));
-                } catch (NumberFormatException e) {
-                    logger.debug("[{}] Invalid loop mode value in status", getThing().getUID());
-                }
-            }
-
-            // 5. Source
-            if (status.has("mode")) {
-                String mode = status.get("mode").getAsString();
-                updateState(GROUP_PLAYBACK + "#" + CHANNEL_SOURCE, new StringType(mapModeToSource(mode)));
-            }
-
-            // 6. Network Information
-            if (status.has("RSSI")) {
-                try {
-                    int rssi = status.get("RSSI").getAsInt();
-                    updateState(GROUP_NETWORK + "#" + CHANNEL_WIFI_SIGNAL,
-                            new QuantityType<>(rssi, Units.DECIBEL_MILLIWATTS));
-                } catch (NumberFormatException e) {
-                    logger.debug("[{}] Invalid RSSI value", getThing().getUID());
-                }
-            }
-            if (status.has("MAC")) {
-                String mac = status.get("MAC").getAsString();
-                if (!mac.isEmpty()) {
-                    updateState(GROUP_NETWORK + "#" + CHANNEL_MAC_ADDRESS, new StringType(mac));
-                }
-            }
-
-            // 7. Device Information
-            if (status.has("DeviceName")) {
-                String deviceName = status.get("DeviceName").getAsString();
-                if (!deviceName.isEmpty()) {
-                    updateState(GROUP_SYSTEM + "#" + CHANNEL_DEVICE_NAME, new StringType(deviceName));
-                }
-            }
-            if (status.has("firmware")) {
-                String firmware = status.get("firmware").getAsString();
-                if (!firmware.isEmpty()) {
-                    updateState(GROUP_SYSTEM + "#" + CHANNEL_FIRMWARE, new StringType(firmware));
-                }
-            }
-
-            // 8. Multiroom Status
-            if (deviceIp != null && status.has("group")) {
-                String role = "standalone";
-                String masterIP = "";
-                String slaveIPs = "";
-
-                if ("1".equals(status.get("group").getAsString())) {
-                    // This is part of a group
-                    if (status.has("GroupRole")) {
-                        role = status.get("GroupRole").getAsString().toLowerCase();
-                    }
-                    if (status.has("GroupMasterIP")) {
-                        masterIP = status.get("GroupMasterIP").getAsString();
-                    }
-                    if (status.has("GroupSlaveIPs")) {
-                        slaveIPs = status.get("GroupSlaveIPs").getAsString();
-                    }
-                }
-
-                updateState(GROUP_MULTIROOM + "#" + CHANNEL_ROLE, new StringType(role));
-                updateState(GROUP_MULTIROOM + "#" + CHANNEL_MASTER_IP, new StringType(masterIP));
-                updateState(GROUP_MULTIROOM + "#" + CHANNEL_SLAVE_IPS, new StringType(slaveIPs));
-            }
+            // Multiroom channels
+            updateMultiroomChannels(status);
 
         } catch (Exception e) {
             logger.warn("[{}] Error updating channels from status: {}", getThing().getUID(), e.getMessage());
@@ -858,5 +925,109 @@ public class LinkPlayThingHandler extends BaseThingHandler implements UpnpIOPart
             }
         }
         super.thingUpdated(thing);
+    }
+
+    private void registerUpnpService() {
+        synchronized (upnpLock) {
+            String udn = getConfigAs(LinkPlayConfiguration.class).getUdn();
+            if (udn == null || upnpIOService == null) {
+                return;
+            }
+
+            logger.debug("Registering UPnP services for device {}", udn);
+
+            // Register for AVTransport events
+            if (registerSubscription(udn, AVTRANSPORT_SERVICE_ID)) {
+                subscriptionTimes.put(AVTRANSPORT_SERVICE_ID.toString(), Instant.now());
+            }
+
+            // Register for RenderingControl events
+            if (registerSubscription(udn, RENDERING_CONTROL_SERVICE_ID)) {
+                subscriptionTimes.put(RENDERING_CONTROL_SERVICE_ID.toString(), Instant.now());
+            }
+        }
+    }
+
+    private void updateChannelState(String groupId, String channelId, State state) {
+        ChannelUID channelUID = new ChannelUID(getThing().getUID(), groupId, channelId);
+        updateState(channelUID, state);
+    }
+
+    private void registerUpnpWithRetry() {
+        synchronized (upnpLock) {
+            if (!isUpnpDeviceRegistered()) {
+                logger.debug("[{}] Registering UPnP device", getThing().getUID());
+                upnpIOService.registerParticipant(this);
+                addSubscriptions();
+            }
+        }
+    }
+
+    protected void updateGroupChannels(String role, String masterIP, String slaveIPs) {
+        updateChannelState(GROUP_MULTIROOM, CHANNEL_ROLE, new StringType(role));
+        if (masterIP != null && !masterIP.isEmpty()) {
+            updateChannelState(GROUP_MULTIROOM, CHANNEL_MASTER_IP, new StringType(masterIP));
+        }
+        if (slaveIPs != null && !slaveIPs.isEmpty()) {
+            updateChannelState(GROUP_MULTIROOM, CHANNEL_SLAVE_IPS, new StringType(slaveIPs));
+        }
+    }
+
+    private void initializeGroupManager() {
+        groupManager = new LinkPlayGroupManager(this, linkplayClient, config.ipAddress);
+    }
+
+    @Override
+    public void onNotificationReceived(String udn, String svcId, String data) {
+        if (udn == null || svcId == null || data == null) {
+            logger.debug("[{}] Received incomplete UPnP notification", getThing().getUID());
+            return;
+        }
+
+        logger.trace("[{}] Received UPnP notification for service {}", getThing().getUID(), svcId);
+
+        try {
+            if (svcId.contains(SERVICE_ID_AV_TRANSPORT.toString())) {
+                Map<String, String> eventValues = DIDLParser.getAVTransportFromXML(data);
+                for (Map.Entry<String, String> entry : eventValues.entrySet()) {
+                    handleAVTransportUpdate(entry.getKey(), entry.getValue());
+                }
+            } else if (svcId.contains(SERVICE_ID_RENDERING_CONTROL.toString())) {
+                Map<String, String> eventValues = DIDLParser.getRenderingControlFromXML(data);
+                for (Map.Entry<String, String> entry : eventValues.entrySet()) {
+                    handleRenderingControlUpdate(entry.getKey(), entry.getValue());
+                }
+            }
+        } catch (Exception e) {
+            logger.debug("[{}] Error processing UPnP notification: {}", getThing().getUID(), e.getMessage());
+        }
+    }
+
+    @Override
+    public void onSubscription(String service, String publication) {
+        logger.trace("[{}] Subscription callback received for service {}", getThing().getUID(), service);
+    }
+
+    private void initializeUPnP() {
+        String udn = getUDN();
+        if (!udn.isEmpty()) {
+            // Schedule UPnP registration and verification
+            scheduler.schedule(() -> {
+                try {
+                    registerUpnpWithRetry();
+
+                    if (isUpnpDeviceRegistered()) {
+                        logger.debug("[{}] UPnP device successfully registered", getThing().getUID());
+                        addSubscriptions();
+                    } else {
+                        logger.warn("[{}] UPnP device registration failed", getThing().getUID());
+                    }
+                } catch (Exception e) {
+                    logger.warn("[{}] Error during UPnP initialization: {}", getThing().getUID(), e.getMessage());
+                }
+            }, 2, TimeUnit.SECONDS);
+        } else {
+            logger.warn("[{}] No UDN available, skipping UPnP registration", getThing().getUID());
+        }
     }
 }

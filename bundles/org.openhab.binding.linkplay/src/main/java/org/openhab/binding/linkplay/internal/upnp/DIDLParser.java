@@ -12,23 +12,29 @@
  */
 package org.openhab.binding.linkplay.internal.upnp;
 
+import java.io.IOException;
 import java.io.StringReader;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.Map;
 
+import javax.xml.namespace.NamespaceContext;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.xpath.XPath;
 import javax.xml.xpath.XPathConstants;
+import javax.xml.xpath.XPathExpressionException;
 import javax.xml.xpath.XPathFactory;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.w3c.dom.Document;
 import org.w3c.dom.Node;
-import org.w3c.dom.NodeList;
 import org.xml.sax.InputSource;
+import org.xml.sax.SAXException;
 
 /**
  * Parser for UPnP DIDL and LastChange XML content
@@ -38,6 +44,30 @@ import org.xml.sax.InputSource;
 @NonNullByDefault
 public class DIDLParser {
     private static final Logger logger = LoggerFactory.getLogger(DIDLParser.class);
+
+    private static final NamespaceContext NAMESPACE_CONTEXT = new NamespaceContext() {
+        @Override
+        public String getNamespaceURI(String prefix) {
+            switch (prefix) {
+                case "dc":
+                    return "http://purl.org/dc/elements/1.1/";
+                case "upnp":
+                    return "urn:schemas-upnp-org:metadata-1-0/upnp/";
+                default:
+                    return null;
+            }
+        }
+
+        @Override
+        public String getPrefix(String namespaceURI) {
+            return null;
+        }
+
+        @Override
+        public Iterator<String> getPrefixes(String namespaceURI) {
+            return null;
+        }
+    };
 
     public static class MetaData {
         public String title = "";
@@ -52,102 +82,80 @@ public class DIDLParser {
         }
     }
 
-    public static MetaData parseMetadata(String metadata) {
-        MetaData result = new MetaData();
+    @Nullable
+    public static Map<String, String> parseMetadata(String metadata) {
         if (metadata == null || metadata.isEmpty()) {
-            return result;
+            return null;
         }
 
         try {
-            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-            DocumentBuilder builder = factory.newDocumentBuilder();
-            Document doc = builder.parse(new InputSource(new StringReader(metadata)));
-
-            XPath xpath = XPathFactory.newInstance().newXPath();
+            Document doc = parseXML(metadata);
+            Map<String, String> values = new HashMap<>();
 
             // Extract standard DIDL-Lite fields
-            result.title = getXPathValue(xpath, "//dc:title", doc);
-            result.artist = getXPathValue(xpath, "//dc:creator", doc);
-            result.album = getXPathValue(xpath, "//upnp:album", doc);
-            result.artworkUrl = getXPathValue(xpath, "//upnp:albumArtURI", doc);
+            addIfNotNull(values, "title", extractValue(doc, "//dc:title"));
+            addIfNotNull(values, "artist", extractValue(doc, "//dc:creator"));
+            addIfNotNull(values, "album", extractValue(doc, "//upnp:album"));
+            addIfNotNull(values, "albumArtUri", extractValue(doc, "//upnp:albumArtURI"));
 
+            return values.isEmpty() ? null : values;
         } catch (Exception e) {
-            logger.debug("Error parsing metadata XML: {}", e.getMessage());
+            logger.debug("Error parsing DIDL-Lite metadata: {}", e.getMessage());
+            return null;
         }
-
-        return result;
     }
 
+    private static void addIfNotNull(Map<String, String> map, String key, @Nullable String value) {
+        if (value != null && !value.isEmpty()) {
+            map.put(key, value);
+        }
+    }
+
+    @Nullable
     public static Map<String, String> getAVTransportFromXML(String xml) {
-        Map<String, String> result = new HashMap<>();
         if (xml == null || xml.isEmpty()) {
-            return result;
+            return null;
         }
 
         try {
-            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-            DocumentBuilder builder = factory.newDocumentBuilder();
-            Document doc = builder.parse(new InputSource(new StringReader(xml)));
+            Document doc = parseXML(xml);
+            Map<String, String> values = new HashMap<>();
 
-            XPath xpath = XPathFactory.newInstance().newXPath();
+            // Extract AVTransport specific fields
+            addIfNotNull(values, "TransportState", extractValue(doc, "//TransportState"));
+            addIfNotNull(values, "CurrentTrackMetaData", extractValue(doc, "//CurrentTrackMetaData"));
+            addIfNotNull(values, "CurrentTrackDuration", extractValue(doc, "//CurrentTrackDuration"));
+            addIfNotNull(values, "AVTransportURI", extractValue(doc, "//AVTransportURI"));
+            addIfNotNull(values, "NextAVTransportURI", extractValue(doc, "//NextAVTransportURI"));
 
-            // Get all InstanceID elements
-            NodeList instances = (NodeList) xpath.evaluate("//InstanceID", doc, XPathConstants.NODESET);
-            for (int i = 0; i < instances.getLength(); i++) {
-                Node instance = instances.item(i);
-                NodeList properties = instance.getChildNodes();
-
-                // Process each property in the InstanceID
-                for (int j = 0; j < properties.getLength(); j++) {
-                    Node property = properties.item(j);
-                    if (property.getNodeType() == Node.ELEMENT_NODE) {
-                        String name = property.getNodeName();
-                        String value = property.getAttributes().getNamedItem("val").getNodeValue();
-                        result.put(name, value);
-                    }
-                }
-            }
+            return values.isEmpty() ? null : values;
         } catch (Exception e) {
-            logger.debug("Error parsing AVTransport LastChange XML: {}", e.getMessage());
+            logger.debug("Error parsing AVTransport XML: {}", e.getMessage());
+            return null;
         }
-
-        return result;
     }
 
+    @Nullable
     public static Map<String, String> getRenderingControlFromXML(String xml) {
-        Map<String, String> result = new HashMap<>();
         if (xml == null || xml.isEmpty()) {
-            return result;
+            return null;
         }
 
         try {
-            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-            DocumentBuilder builder = factory.newDocumentBuilder();
-            Document doc = builder.parse(new InputSource(new StringReader(xml)));
+            Document doc = parseXML(xml);
+            Map<String, String> values = new HashMap<>();
 
-            XPath xpath = XPathFactory.newInstance().newXPath();
+            // Extract RenderingControl specific fields
+            addIfNotNull(values, "Volume", extractValue(doc, "//Volume"));
+            addIfNotNull(values, "Mute", extractValue(doc, "//Mute"));
+            addIfNotNull(values, "PresetNameList", extractValue(doc, "//PresetNameList"));
+            addIfNotNull(values, "CurrentPreset", extractValue(doc, "//CurrentPreset"));
 
-            // Get all InstanceID elements
-            NodeList instances = (NodeList) xpath.evaluate("//InstanceID", doc, XPathConstants.NODESET);
-            for (int i = 0; i < instances.getLength(); i++) {
-                Node instance = instances.item(i);
-                NodeList properties = instance.getChildNodes();
-
-                // Process each property in the InstanceID
-                for (int j = 0; j < properties.getLength(); j++) {
-                    Node property = properties.item(j);
-                    if (property.getNodeType() == Node.ELEMENT_NODE) {
-                        String name = property.getNodeName();
-                        String value = property.getAttributes().getNamedItem("val").getNodeValue();
-                        result.put(name, value);
-                    }
-                }
-            }
+            return values.isEmpty() ? null : values;
         } catch (Exception e) {
-            logger.debug("Error parsing RenderingControl LastChange XML: {}", e.getMessage());
+            logger.debug("Error parsing RenderingControl XML: {}", e.getMessage());
+            return null;
         }
-
-        return result;
     }
 
     private static String getXPathValue(XPath xpath, String expression, Document doc) {
@@ -156,5 +164,31 @@ public class DIDLParser {
         } catch (Exception e) {
             return "";
         }
+    }
+
+    @Nullable
+    private static String extractValue(Document doc, String xpathExpression) {
+        try {
+            XPath xPath = XPathFactory.newInstance().newXPath();
+            xPath.setNamespaceContext(NAMESPACE_CONTEXT);
+            Node node = (Node) xPath.evaluate(xpathExpression, doc, XPathConstants.NODE);
+            return node != null ? node.getTextContent() : null;
+        } catch (XPathExpressionException e) {
+            logger.debug("Error evaluating XPath expression '{}': {}", xpathExpression, e.getMessage());
+            return null;
+        }
+    }
+
+    private static Document parseXML(String xml) throws ParserConfigurationException, SAXException, IOException {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        // Disable external entity processing
+        factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+        factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+        factory.setXIncludeAware(false);
+        factory.setExpandEntityReferences(false);
+
+        DocumentBuilder builder = factory.newDocumentBuilder();
+        return builder.parse(new InputSource(new StringReader(xml)));
     }
 }
