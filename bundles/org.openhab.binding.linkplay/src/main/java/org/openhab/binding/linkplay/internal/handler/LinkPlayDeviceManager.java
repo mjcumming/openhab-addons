@@ -1,82 +1,90 @@
 package org.openhab.binding.linkplay.internal.device;
 
-import javax.json.JsonObject;
-
-import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.openhab.binding.linkplay.internal.http.LinkPlayHttpManager;
 import org.openhab.binding.linkplay.internal.upnp.LinkPlayUpnpManager;
+import org.openhab.binding.linkplay.internal.handler.LinkPlayGroupManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+
 /**
  * Manages device-specific details and communication for a LinkPlay device.
- * Encapsulates the HTTP and UPnP managers for modularity.
- * Prioritizes UPnP updates, falling back to HTTP if necessary.
- * 
- * @author Michael Cumming
+ * Encapsulates the HTTP, UPnP, and Group managers for modularity.
  */
-@NonNullByDefault
 public class LinkPlayDeviceManager {
 
     private static final Logger logger = LoggerFactory.getLogger(LinkPlayDeviceManager.class);
 
     private final String ipAddress;
     private final String deviceId;
-
     private final LinkPlayHttpManager httpManager;
     private final LinkPlayUpnpManager upnpManager;
-
-    private boolean upnpSubscriptionActive = true; // Tracks whether UPnP events are available
-private @Nullable ScheduledFuture<?> pollingJob;
+    private final LinkPlayGroupManager groupManager;
+    private final ScheduledExecutorService scheduler;
+    private ScheduledFuture<?> pollingJob;
 
     public LinkPlayDeviceManager(String ipAddress, String deviceId, LinkPlayHttpManager httpManager,
-            LinkPlayUpnpManager upnpManager) {
+                                  LinkPlayUpnpManager upnpManager, LinkPlayGroupManager groupManager,
+                                  ScheduledExecutorService scheduler) {
         this.ipAddress = ipAddress;
         this.deviceId = deviceId;
         this.httpManager = httpManager;
         this.upnpManager = upnpManager;
+        this.groupManager = groupManager;
+        this.scheduler = scheduler;
 
-        httpManager.setIpAddress(ipAddress);
         logger.debug("Initialized LinkPlayDeviceManager for device: {}", deviceId);
-            // Start polling
-    startPolling();
     }
 
-    public String getIpAddress() {
-        return ipAddress;
+    public void initialize() {
+        logger.debug("Initializing device manager for IP: {}", ipAddress);
+
+        // Start polling for device status
+        startPolling();
+
+        // Register UPnP services
+        upnpManager.register(deviceId);
+
+        logger.debug("Device manager initialized.");
     }
 
-    public String getDeviceId() {
-        return deviceId;
+    public void dispose() {
+        stopPolling();
+        upnpManager.unregister();
+        groupManager.dispose();
+        logger.debug("Device manager for IP: {} disposed.", ipAddress);
     }
 
-    public LinkPlayHttpManager getHttpManager() {
-        return httpManager;
-    }
-
-    public LinkPlayUpnpManager getUpnpManager() {
-        return upnpManager;
-    }
     private void startPolling() {
-    stopPolling(); // Ensure no duplicate jobs
+        stopPolling();
 
-    pollingJob = scheduler.scheduleWithFixedDelay(() -> {
-        httpManager.sendCommandWithRetry(ipAddress, "getPlayerStatus").whenComplete((response, error) -> {
-            if (error != null) {
-                logger.warn("Failed to poll player status: {}", error.getMessage());
-            } else {
-                updateChannelsFromHttp(response); // Update device state
-                logger.debug("Polling response: {}", response);
-            }
-        });
-    }, 0, 10, TimeUnit.SECONDS);
-}
+        pollingJob = scheduler.scheduleWithFixedDelay(() -> {
+            httpManager.sendCommandWithRetry(ipAddress, "getPlayerStatus").whenComplete((response, error) -> {
+                if (error != null) {
+                    logger.warn("Failed to poll player status: {}", error.getMessage());
+                } else {
+                    logger.debug("Polling response: {}", response);
+                }
+            });
+        }, 0, 10, TimeUnit.SECONDS);
+    }
+
     private void stopPolling() {
-    if (pollingJob != null) {
-        pollingJob.cancel(true);
-        pollingJob = null;
+        if (pollingJob != null) {
+            pollingJob.cancel(true);
+            pollingJob = null;
+        }
+    }
+
+    public void handleCommand(String channelId, String command) {
+        logger.debug("Handling command: {} for channel: {}", command, channelId);
+        // Add command handling logic here
     }
 }
+
 
     /**
      * Updates channels from UPnP data if the subscription is active.
