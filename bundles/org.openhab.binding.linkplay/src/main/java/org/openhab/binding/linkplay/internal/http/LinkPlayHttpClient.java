@@ -17,7 +17,6 @@ import static org.openhab.binding.linkplay.internal.LinkPlayBindingConstants.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.X509TrustManager;
@@ -54,13 +53,13 @@ public class LinkPlayHttpClient {
     private final HttpClient httpClient;
     private final HttpClient sslHttpClient;
 
-    private static final int CONNECT_TIMEOUT_MS = 5000;
-    private static final int READ_TIMEOUT_MS = 5000;
+    private static final int TIMEOUT_MS = 2000;
     private static final int[] HTTPS_PORTS = { 443, 4443 };
     private static final int HTTP_PORT = 80;
 
     @Activate
     public LinkPlayHttpClient(@Reference HttpClientFactory httpClientFactory) {
+        logger.debug("Initializing LinkPlay HTTP client");
         this.httpClient = httpClientFactory.getCommonHttpClient();
 
         try {
@@ -233,58 +232,40 @@ public class LinkPlayHttpClient {
 
     private CompletableFuture<String> sendRequest(String ipAddress, String params) {
         return CompletableFuture.supplyAsync(() -> {
-            // Try HTTPS first on different ports
+            // Try HTTPS first
             for (int port : HTTPS_PORTS) {
-                String httpsUrl = String.format("https://%s:%d/httpapi.asp?%s", ipAddress, port, params);
+                String url = String.format("https://%s:%d/httpapi.asp?%s", ipAddress, port, params);
                 try {
-                    logger.debug("Trying HTTPS request to {}", httpsUrl);
-                    ContentResponse response = sslHttpClient.newRequest(httpsUrl)
-                            .timeout(CONNECT_TIMEOUT_MS + READ_TIMEOUT_MS, TimeUnit.MILLISECONDS).send();
-
+                    logger.debug("Sending HTTPS request to {}", url);
+                    ContentResponse response = sslHttpClient.newRequest(url).timeout(TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                            .send();
                     if (response.getStatus() == 200) {
                         String content = response.getContentAsString();
-                        logger.debug("Received HTTPS response: {}", content);
                         if (content.contains("error") || content.contains("fail")) {
-                            throw new LinkPlayApiException("API error response: " + content);
+                            throw new LinkPlayApiException("API error: " + content);
                         }
                         return content;
                     }
-                } catch (LinkPlayApiException e) {
-                    throw new CompletionException(e);
                 } catch (Exception e) {
                     logger.debug("HTTPS request failed on port {}: {}", port, e.getMessage());
                 }
             }
 
-            // Fall back to HTTP if HTTPS fails
-            String httpUrl = String.format("http://%s:%d/httpapi.asp?%s", ipAddress, HTTP_PORT, params);
-            logger.debug("Falling back to HTTP request: {}", httpUrl);
-
+            // Fall back to HTTP
+            String url = String.format("http://%s:%d/httpapi.asp?%s", ipAddress, HTTP_PORT, params);
             try {
-                ContentResponse response = httpClient.newRequest(httpUrl)
-                        .timeout(CONNECT_TIMEOUT_MS + READ_TIMEOUT_MS, TimeUnit.MILLISECONDS).send();
-
-                int status = response.getStatus();
-                if (status == 200) {
+                logger.debug("Falling back to HTTP request: {}", url);
+                ContentResponse response = httpClient.newRequest(url).timeout(TIMEOUT_MS, TimeUnit.MILLISECONDS).send();
+                if (response.getStatus() == 200) {
                     String content = response.getContentAsString();
-                    logger.debug("Received HTTP response: {}", content);
                     if (content.contains("error") || content.contains("fail")) {
-                        throw new LinkPlayApiException("API error response: " + content);
+                        throw new LinkPlayApiException("API error: " + content);
                     }
                     return content;
-                } else {
-                    throw new LinkPlayCommunicationException("HTTP error " + status);
                 }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new CompletionException(new LinkPlayCommunicationException("Request interrupted", e));
-            } catch (TimeoutException e) {
-                throw new CompletionException(new LinkPlayCommunicationException("Request timed out", e));
-            } catch (LinkPlayApiException e) {
-                throw new CompletionException(e);
+                throw new LinkPlayCommunicationException("HTTP error " + response.getStatus());
             } catch (Exception e) {
-                logger.debug("HTTP request failed: {}", e.getMessage());
-                throw new CompletionException(new LinkPlayCommunicationException("Communication error", e));
+                throw new CompletionException(new LinkPlayCommunicationException("Request failed", e));
             }
         });
     }
