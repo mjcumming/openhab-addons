@@ -10,12 +10,6 @@ import org.slf4j.LoggerFactory;
 
 import javax.json.JsonObject;
 
-/**
- * Manages UPnP interactions for LinkPlay devices, including subscriptions,
- * event handling, and notifying the LinkPlayDeviceManager of updates.
- * 
- * @author Michael Cumming
- */
 @NonNullByDefault
 public class LinkPlayUpnpManager implements UpnpIOParticipant {
 
@@ -33,25 +27,17 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
         this.deviceId = deviceId;
     }
 
-    /**
-     * Registers the UPnP participant and initializes subscriptions.
-     * 
-     * @param udn Unique Device Name of the device.
-     */
     public void register(String udn) {
         this.udn = udn;
         upnpIOService.registerParticipant(this, udn);
-        deviceManager.setUpnpSubscriptionState(true); // Notify that subscription is active
+        deviceManager.setUpnpSubscriptionState(true);
         logger.debug("Registered UPnP participant for UDN {}", udn);
     }
 
-    /**
-     * Unregisters the UPnP participant and notifies the device manager.
-     */
     public void unregister() {
         if (udn != null) {
             upnpIOService.unregisterParticipant(this);
-            deviceManager.setUpnpSubscriptionState(false); // Notify that subscription is inactive
+            deviceManager.setUpnpSubscriptionState(false);
             logger.debug("Unregistered UPnP participant for UDN {}", udn);
         }
     }
@@ -68,7 +54,7 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
         try {
             JsonObject upnpStatus = parseUpnpEvent(variable, value, service);
             if (upnpStatus != null) {
-                deviceManager.updateChannelsFromUpnp(upnpStatus); // Delegate to Device Manager
+                deviceManager.updateChannelsFromUpnp(upnpStatus);
             }
         } catch (Exception e) {
             logger.warn("[{}] Error processing UPnP event: {}", deviceId, e.getMessage(), e);
@@ -78,13 +64,13 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
     @Override
     public void onServiceSubscribed(String service) {
         logger.debug("[{}] Subscribed to UPnP service: {}", deviceId, service);
-        deviceManager.setUpnpSubscriptionState(true); // Mark subscription as active
+        deviceManager.setUpnpSubscriptionState(true);
     }
 
     @Override
     public void onServiceUnsubscribed(String service) {
         logger.warn("[{}] Unsubscribed from UPnP service: {}", deviceId, service);
-        deviceManager.setUpnpSubscriptionState(false); // Mark subscription as inactive
+        deviceManager.setUpnpSubscriptionState(false);
     }
 
     @Override
@@ -94,25 +80,124 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
 
     @Override
     public @Nullable String getServiceType() {
-        return null; // Provide specific service type if applicable
+        return String.join(",",
+                "urn:schemas-upnp-org:service:AVTransport:1",
+                "urn:schemas-upnp-org:service:RenderingControl:1",
+                "urn:schemas-upnp-org:device:MediaRenderer:1");
     }
 
-    /**
-     * Parses a UPnP event into a JsonObject for further processing.
-     * 
-     * @param variable The event variable.
-     * @param value The event value.
-     * @param service The event service.
-     * @return A JsonObject representing the parsed event, or null if invalid.
-     */
     private @Nullable JsonObject parseUpnpEvent(String variable, String value, String service) {
-        // Implement parsing logic here to convert UPnP event data into a JsonObject.
-        // Example:
-        // {
-        //     "status": "play",
-        //     "volume": 50,
-        //     "mute": false
-        // }
-        return null; // Replace with actual parsing logic
+        JsonObject.Builder jsonBuilder = Json.createObjectBuilder();
+
+        try {
+            switch (getServiceName(service)) {
+                case "AVTransport":
+                    handleAVTransportEvent(jsonBuilder, variable, value);
+                    break;
+                case "RenderingControl":
+                    handleRenderingControlEvent(jsonBuilder, variable, value);
+                    break;
+                case "MediaRenderer":
+                    handleMediaRendererEvent(jsonBuilder, variable, value);
+                    break;
+                default:
+                    logger.debug("[{}] Unhandled UPnP service: {}", deviceId, service);
+                    return null;
+            }
+        } catch (Exception e) {
+            logger.warn("[{}] Error parsing UPnP event: {}", deviceId, e.getMessage(), e);
+            return null;
+        }
+
+        return jsonBuilder.build();
+    }
+
+    private String getServiceName(String service) {
+        if (service.contains("AVTransport")) {
+            return "AVTransport";
+        } else if (service.contains("RenderingControl")) {
+            return "RenderingControl";
+        } else if (service.contains("MediaRenderer")) {
+            return "MediaRenderer";
+        }
+        return "Unknown";
+    }
+
+private void handleAVTransportEvent(JsonObject.Builder jsonBuilder, String variable, String value) {
+    switch (variable) {
+        case "TransportState":
+            jsonBuilder.add("status", "PLAYING".equals(value) ? "play" : "pause");
+            break;
+        case "CurrentTrackMetaData":
+            if (!value.isEmpty()) {
+                DIDLParser.MetaData metadata = DIDLParser.parseMetadata(value);
+                if (metadata != null) {
+                    if (metadata.title != null) {
+                        jsonBuilder.add("Title", metadata.title);
+                    }
+                    if (metadata.artist != null) {
+                        jsonBuilder.add("Artist", metadata.artist);
+                    }
+                    if (metadata.album != null) {
+                        jsonBuilder.add("Album", metadata.album);
+                    }
+                    if (metadata.artworkUrl != null) {
+                        jsonBuilder.add("AlbumArt", metadata.artworkUrl);
+                    }
+                }
+            }
+            break;
+        case "CurrentTrackDuration":
+            if (!value.isEmpty() && !"NOT_IMPLEMENTED".equals(value)) {
+                String[] parts = value.split(":");
+                if (parts.length == 3) {
+                    int hours = Integer.parseInt(parts[0]);
+                    int minutes = Integer.parseInt(parts[1]);
+                    int seconds = Integer.parseInt(parts[2]);
+                    int totalSeconds = (hours * 3600) + (minutes * 60) + seconds;
+                    jsonBuilder.add("Duration", totalSeconds);
+                }
+            }
+            break;
+        default:
+            logger.debug("[{}] Unhandled AVTransport variable: {}", deviceId, variable);
+    }
+}
+private void handleRenderingControlEvent(JsonObject.Builder jsonBuilder, String variable, String value) {
+    switch (variable) {
+        case "Volume":
+            jsonBuilder.add("vol", Integer.parseInt(value));
+            break;
+        case "Mute":
+            jsonBuilder.add("mute", "1".equals(value));
+            break;
+        default:
+            logger.debug("[{}] Unhandled RenderingControl variable: {}", deviceId, variable);
+    }
+}
+private void handleMediaRendererEvent(JsonObject.Builder jsonBuilder, String variable, String value) {
+    switch (variable) {
+        case "PlaybackSpeed":
+            jsonBuilder.add("playbackSpeed", value);
+            break;
+        case "TransportStatus":
+            jsonBuilder.add("transportStatus", value);
+            break;
+        case "PlaybackPosition":
+            try {
+                String[] parts = value.split(":");
+                if (parts.length == 3) {
+                    int hours = Integer.parseInt(parts[0]);
+                    int minutes = Integer.parseInt(parts[1]);
+                    int seconds = Integer.parseInt(parts[2]);
+                    int totalSeconds = (hours * 3600) + (minutes * 60) + seconds;
+                    jsonBuilder.add("PlaybackPosition", totalSeconds);
+                }
+            } catch (NumberFormatException e) {
+                logger.warn("[{}] Invalid playback position value: {}", deviceId, value);
+            }
+            break;
+        default:
+            logger.debug("[{}] Unhandled MediaRenderer variable: {}", deviceId, variable);
     }
 }
