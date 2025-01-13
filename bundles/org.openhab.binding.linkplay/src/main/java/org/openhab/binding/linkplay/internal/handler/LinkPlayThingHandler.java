@@ -1,15 +1,3 @@
-/**
- * Copyright (c) 2010-2024 Contributors to the openHAB project
- *
- * See the NOTICE file(s) distributed with this work for additional
- * information.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0
- *
- * SPDX-License-Identifier: EPL-2.0
- */
 package org.openhab.binding.linkplay.internal.handler;
 
 import static org.openhab.binding.linkplay.internal.LinkPlayBindingConstants.*;
@@ -19,9 +7,11 @@ import java.util.concurrent.TimeUnit;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
+import org.openhab.binding.linkplay.internal.device.LinkPlayDeviceManager;
+import org.openhab.binding.linkplay.internal.http.LinkPlayHttpClient;
 import org.openhab.binding.linkplay.internal.http.LinkPlayHttpManager;
+import org.openhab.binding.linkplay.internal.config.LinkPlayConfiguration;
 import org.openhab.binding.linkplay.internal.upnp.LinkPlayUpnpManager;
-import org.openhab.binding.linkplay.internal.handler.LinkPlayGroupManager;
 import org.openhab.core.io.transport.upnp.UpnpIOService;
 import org.openhab.core.thing.ChannelUID;
 import org.openhab.core.thing.Thing;
@@ -33,23 +23,25 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Refactored {@link LinkPlayThingHandler} to delegate responsibilities to HTTP, UPnP, and Group Managers.
+ * Refactored {@link LinkPlayThingHandler} to manage lifecycle and integrate DeviceManager, UPnP, and HTTP managers.
  */
 @NonNullByDefault
 public class LinkPlayThingHandler extends BaseThingHandler {
 
     private final Logger logger = LoggerFactory.getLogger(LinkPlayThingHandler.class);
 
+    private final LinkPlayDeviceManager deviceManager;
     private final LinkPlayHttpManager httpManager;
     private final LinkPlayUpnpManager upnpManager;
     private final LinkPlayGroupManager groupManager;
 
     private @Nullable ScheduledFuture<?> pollingJob;
 
-    public LinkPlayThingHandler(Thing thing, LinkPlayHttpManager httpManager, UpnpIOService upnpIOService) {
+    public LinkPlayThingHandler(Thing thing, LinkPlayHttpClient httpClient, LinkPlayConfiguration config, UpnpIOService upnpIOService) {
         super(thing);
-        this.httpManager = httpManager;
-        this.upnpManager = new LinkPlayUpnpManager(upnpIOService, thing, scheduler);
+        this.httpManager = new LinkPlayHttpManager(httpClient, config);
+        this.deviceManager = new LinkPlayDeviceManager(config.getIpAddress(), config.getUdn(), httpManager, upnpIOService);
+        this.upnpManager = new LinkPlayUpnpManager(upnpIOService, deviceManager, thing.getUID().getId());
         this.groupManager = new LinkPlayGroupManager(httpManager);
     }
 
@@ -64,7 +56,7 @@ public class LinkPlayThingHandler extends BaseThingHandler {
         }
 
         httpManager.setIpAddress(ipAddress);
-        String udn = getThing().getConfiguration().get(CONFIG_DEVICE_ID).toString();
+        String udn = (String) getThing().getConfiguration().get(CONFIG_DEVICE_ID);
         if (udn != null && !udn.isEmpty()) {
             upnpManager.register(udn);
         } else {
@@ -72,67 +64,47 @@ public class LinkPlayThingHandler extends BaseThingHandler {
         }
 
         updateStatus(ThingStatus.ONLINE);
-        startPolling();
+
     }
 
-    @Override
-    public void dispose() {
-        stopPolling();
+@Override
+public void dispose() {
+    logger.debug("Disposing LinkPlayThingHandler for Thing: {}", getThing().getUID());
+
+    // Stop polling
+    stopPolling();
+
+    // Unregister UPnP Manager
+    if (upnpManager != null) {
         upnpManager.unregister();
-        super.dispose();
     }
 
-    private void startPolling() {
-        stopPolling();
-        pollingJob = scheduler.scheduleWithFixedDelay(() -> {
-            httpManager.getPlayerStatus().whenComplete((response, error) -> {
-                if (error != null) {
-                    logger.warn("Failed to poll player status: {}", error.getMessage());
-                } else {
-                    // Update channels based on response
-                    logger.debug("Polling response: {}", response);
-                }
-            });
-        }, 0, 10, TimeUnit.SECONDS);
+    // Dispose Group Manager
+    if (groupManager != null) {
+        groupManager.dispose();
     }
 
-    private void stopPolling() {
-        if (pollingJob != null) {
-            pollingJob.cancel(true);
-            pollingJob = null;
-        }
+    // Dispose HTTP Manager
+    if (httpManager != null) {
+        httpManager.dispose();
     }
 
-    @Override
-    public void handleCommand(ChannelUID channelUID, Command command) {
-        String channelId = channelUID.getIdWithoutGroup();
-        switch (channelId) {
-            case CHANNEL_CONTROL:
-            case CHANNEL_VOLUME:
-            case CHANNEL_MUTE:
-                handlePlaybackCommand(channelUID, command);
-                break;
-
-            case CHANNEL_JOIN:
-            case CHANNEL_LEAVE:
-            case CHANNEL_UNGROUP:
-                groupManager.handleGroupCommand(channelUID, command);
-                break;
-
-            default:
-                logger.warn("[{}] Unhandled channel: {}", getThing().getUID(), channelId);
-        }
+    // Dispose Device Manager
+    if (deviceManager != null) {
+        deviceManager.dispose();
     }
 
-    private void handlePlaybackCommand(ChannelUID channelUID, Command command) {
-        httpManager.sendCommand(channelUID.getId(), command.toString()).whenComplete((response, error) -> {
-            if (error != null) {
-                logger.warn("Failed to send playback command: {}", error.getMessage());
-            } else {
-                logger.debug("Playback command response: {}", response);
-            }
-        });
-    }
+    super.dispose();
 }
 
 
+
+
+    @Override
+    public void handleCommand(ChannelUID channelUID, Command command) {
+        deviceManager.handleCommand(channelUID, command);
+    }
+    }
+
+
+}
