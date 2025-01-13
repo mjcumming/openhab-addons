@@ -99,17 +99,17 @@ The `control` channel accepts standard `Player` item commands:
 
 ### Group Control Channels
 
-| Channel Type ID    | Item Type | Description                        | Read/Write |
-|--------------------|-----------|------------------------------------|------------|
-| groupRole          | String    | Device role (standalone/master/slave) | R      |
-| groupMasterIP      | String    | IP address of the master device    | R          |
-| groupSlaveIPs      | String    | List of slave device IPs           | R          |
-| groupJoin          | String    | Join a group (specify master IP)   | W          |
-| groupLeave         | String    | Leave the current group            | W          |
-| groupUngroup       | String    | Ungroup all slaves (master only)   | W          |
-| groupSlaveKickout  | String    | Remove a specific slave from group | W          |
-| groupVolume        | Dimmer    | Group-wide volume control          | R/W        |
-| groupMute          | Switch    | Group-wide mute control            | R/W        |
+| Channel           | Type      | Description                          | Access |
+|-------------------|-----------|--------------------------------------|---------|
+| role              | String    | Device role (standalone/master/slave) | R      |
+| groupMasterIP     | String    | IP address of the master device    | R          |
+| groupSlaveIPs     | String    | List of slave device IPs           | R          |
+| groupJoin         | String    | Join a group (specify master IP)   | W          |
+| groupLeave        | String    | Leave the current group            | W          |
+| groupUngroup      | String    | Ungroup all slaves (master only)   | W          |
+| groupSlaveKickout | String    | Remove a specific slave from group | W          |
+| groupVolume       | Dimmer    | Group-wide volume control          | R/W        |
+| groupMute         | Switch    | Group-wide mute control            | R/W        |
 
 ## Example Configuration
 

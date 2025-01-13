@@ -26,6 +26,11 @@
 				<label>Device Name</label>
 				<description>Friendly name for the LinkPlay device.</description>
 			</parameter>
+			<parameter name="udn" type="text" required="false">
+				<label>UDN</label>
+				<description>Unique Device Name (UDN) for UPnP identification.</description>
+				<advanced>true</advanced>
+			</parameter>
 			<parameter name="pollingInterval" type="integer" required="false" min="10" max="60" unit="s">
 				<label>Polling Interval</label>
 				<description>Interval in seconds between device status updates.</description>
@@ -44,9 +49,9 @@
 			<channel id="title" typeId="system.media-title"/>
 			<channel id="artist" typeId="system.media-artist"/>
 			<channel id="album" typeId="system.media-title"/>
-			<channel id="albumArt" typeId="system.media-artwork"/>
-			<channel id="duration" typeId="system.media-duration"/>
-			<channel id="position" typeId="system.media-elapsed"/>
+			<channel id="albumArt" typeId="albumArt"/>
+			<channel id="duration" typeId="duration"/>
+			<channel id="position" typeId="position"/>
 			<channel id="volume" typeId="system.volume"/>
 			<channel id="mute" typeId="system.mute"/>
 			<channel id="repeat" typeId="repeat"/>
@@ -211,5 +216,26 @@
 		<item-type>String</item-type>
 		<label>Kick Out</label>
 		<description>Remove a slave from group by IP (if master).</description>
+	</channel-type>
+
+	<channel-type id="albumArt">
+		<item-type>Image</item-type>
+		<label>Album Art</label>
+		<description>Album artwork for the current track</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="duration">
+		<item-type>Number:Time</item-type>
+		<label>Duration</label>
+		<description>Duration of the current track in seconds</description>
+		<state readOnly="true" pattern="%d s"/>
+	</channel-type>
+
+	<channel-type id="position">
+		<item-type>Number:Time</item-type>
+		<label>Position</label>
+		<description>Current playback position in seconds</description>
+		<state readOnly="true" pattern="%d s"/>
 	</channel-type>
 </thing:thing-descriptions>

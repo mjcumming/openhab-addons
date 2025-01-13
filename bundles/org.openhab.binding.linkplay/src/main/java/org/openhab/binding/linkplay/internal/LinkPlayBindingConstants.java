@@ -12,6 +12,9 @@
  */
 package org.openhab.binding.linkplay.internal;
 
+import java.util.Collections;
+import java.util.Set;
+
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.openhab.core.thing.ThingTypeUID;
 
@@ -27,9 +30,22 @@ public class LinkPlayBindingConstants {
 
     // Thing Types
     public static final ThingTypeUID THING_TYPE_DEVICE = new ThingTypeUID(BINDING_ID, "device");
+    public static final Set<ThingTypeUID> SUPPORTED_THING_TYPES_UIDS = Collections.singleton(THING_TYPE_DEVICE);
 
-    // Manufacturer
-    public static final String SUPPORTED_MANUFACTURER = "LinkPlay";
+    // Thing Configuration parameters
+    public static final String CONFIG_IP_ADDRESS = "ipAddress";
+    public static final String CONFIG_UDN = "udn";
+    public static final String CONFIG_POLLING_INTERVAL = "pollingInterval";
+    public static final String CONFIG_DEVICE_NAME = "deviceName";
+    public static final int DEFAULT_POLLING_INTERVAL = 30; // seconds
+
+    // Thing Properties
+    public static final String PROPERTY_UDN = "UDN";
+    public static final String PROPERTY_FIRMWARE = "firmwareVersion";
+    public static final String PROPERTY_MODEL = "model";
+    public static final String PROPERTY_IP = "ipAddress";
+    public static final String PROPERTY_MAC = "macAddress";
+    public static final String PROPERTY_MANUFACTURER = "manufacturer";
 
     // Channel Groups
     public static final String GROUP_PLAYBACK = "playback";
@@ -71,30 +87,16 @@ public class LinkPlayBindingConstants {
     public static final String CHANNEL_GROUP_VOLUME = "groupVolume";
     public static final String CHANNEL_GROUP_MUTE = "groupMute";
 
-    // Configuration properties
-    public static final String CONFIG_IP_ADDRESS = "ipAddress";
-    public static final String CONFIG_DEVICE_ID = "deviceId";
-    public static final String CONFIG_POLLING_INTERVAL = "pollingInterval";
-    public static final String CONFIG_DEVICE_NAME = "deviceName";
-    public static final int DEFAULT_POLLING_INTERVAL = 30; // seconds
-
-    // UPnP related constants
+    // UPnP Discovery Constants
     public static final String UPNP_DEVICE_TYPE = "urn:schemas-upnp-org:device:MediaRenderer:1";
     public static final String UPNP_SERVICE_TYPE_RENDERING_CONTROL = "urn:schemas-upnp-org:service:RenderingControl:1";
     public static final String UPNP_SERVICE_TYPE_AV_TRANSPORT = "urn:schemas-upnp-org:service:AVTransport:1";
     public static final String UPNP_SERVICE_TYPE_CONNECTION_MANAGER = "urn:schemas-upnp-org:service:ConnectionManager:1";
-
-    // HTTP Related Constants
-    public static final String API_URL_PREFIX = "http://%s:8080";
-    public static final String API_ENDPOINT_STATUS = "/status";
-    public static final String API_ENDPOINT_CONTROL = "/control";
-    public static final int DEFAULT_HTTP_TIMEOUT = 5000; // milliseconds
-
-    // UPnP Discovery Constants
     public static final String UPNP_DISCOVERY_THING_TYPE = "urn:schemas-upnp-org:device:MediaRenderer:1";
     public static final String UPNP_MANUFACTURER = "LinkPlay";
     public static final String UPNP_DEVICE_TYPE_PREFIX = "urn:schemas-upnp-org:device:";
 
-    // Property keys
-    public static final String PROPERTY_IP = "ipAddress";
+    private LinkPlayBindingConstants() {
+        // Constants class - prevent instantiation
+    }
 }

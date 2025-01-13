@@ -38,6 +38,11 @@ public class LinkPlayConfiguration {
     public String deviceName = "";
 
     /**
+     * UDN (Unique Device Name) of the LinkPlay device
+     */
+    public String udn = "";
+
+    /**
      * Polling interval in seconds for polling the device state.
      * Default value is 30 seconds.
      */
@@ -47,10 +52,12 @@ public class LinkPlayConfiguration {
     public static final int MAX_POLLING_INTERVAL = 60;
 
     public boolean isValid() {
+        // IP address is required
         if (ipAddress.isEmpty()) {
             return false;
         }
 
+        // Validate IP address format
         String[] octets = ipAddress.split("\\.");
         if (octets.length != 4) {
             return false;
@@ -67,7 +74,14 @@ public class LinkPlayConfiguration {
             return false;
         }
 
+        // Normalize polling interval
         pollingInterval = Math.min(Math.max(pollingInterval, MIN_POLLING_INTERVAL), MAX_POLLING_INTERVAL);
+
+        // Normalize UDN if present
+        if (!udn.isEmpty() && !udn.startsWith("uuid:")) {
+            udn = "uuid:" + udn;
+        }
+
         return true;
     }
 }

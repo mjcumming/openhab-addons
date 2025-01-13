@@ -15,15 +15,20 @@ package org.openhab.binding.linkplay.internal.http;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 
 /**
- * Exception for LinkPlay communication errors
+ * Exception thrown when there is a communication error with the LinkPlay device
  *
  * @author Michael Cumming - Initial contribution
  */
 @NonNullByDefault
-public class LinkPlayCommunicationException extends LinkPlayException {
+public class LinkPlayCommunicationException extends Exception {
+
     private static final long serialVersionUID = 1L;
 
     public LinkPlayCommunicationException(String message) {
         super(message);
+    }
+
+    public LinkPlayCommunicationException(String message, Throwable cause) {
+        super(message, cause);
     }
 }

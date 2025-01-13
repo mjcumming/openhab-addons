@@ -12,17 +12,29 @@
  */
 package org.openhab.binding.linkplay.internal.http;
 
-import java.util.ArrayList;
-import java.util.List;
+import static org.openhab.binding.linkplay.internal.LinkPlayBindingConstants.*;
+
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.X509TrustManager;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jetty.client.HttpClient;
 import org.eclipse.jetty.client.api.ContentResponse;
-import org.eclipse.jetty.http.HttpStatus;
-import org.openhab.binding.linkplay.internal.model.MultiroomInfo;
-import org.openhab.binding.linkplay.internal.model.PlayerStatus;
+import org.openhab.core.io.net.http.HttpClientFactory;
+import org.openhab.core.library.types.NextPreviousType;
+import org.openhab.core.library.types.OnOffType;
+import org.openhab.core.library.types.PercentType;
+import org.openhab.core.library.types.PlayPauseType;
+import org.openhab.core.types.Command;
+import org.osgi.service.component.annotations.Activate;
+import org.osgi.service.component.annotations.Component;
+import org.osgi.service.component.annotations.Deactivate;
+import org.osgi.service.component.annotations.Reference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -30,166 +42,250 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
 /**
- * The {@link LinkPlayHttpClient} is responsible for handling HTTP communication with LinkPlay devices
+ * The {@link LinkPlayHttpClient} handles all HTTP interactions with the LinkPlay device.
  *
  * @author Michael Cumming - Initial contribution
  */
+@Component(service = LinkPlayHttpClient.class)
 @NonNullByDefault
 public class LinkPlayHttpClient {
+
     private final Logger logger = LoggerFactory.getLogger(LinkPlayHttpClient.class);
     private final HttpClient httpClient;
-    private static final int REQUEST_TIMEOUT = 5;
-    private static final int CONNECT_TIMEOUT = 5;
+    private final HttpClient sslHttpClient;
 
-    public LinkPlayHttpClient(HttpClient httpClient) {
-        this.httpClient = httpClient;
+    private static final int CONNECT_TIMEOUT_MS = 5000;
+    private static final int READ_TIMEOUT_MS = 5000;
+    private static final int[] HTTPS_PORTS = { 443, 4443 };
+    private static final int HTTP_PORT = 80;
+
+    @Activate
+    public LinkPlayHttpClient(@Reference HttpClientFactory httpClientFactory) {
+        this.httpClient = httpClientFactory.getCommonHttpClient();
+
+        try {
+            X509TrustManager trustManager = LinkPlaySslUtil.createLearningTrustManager(true, null);
+            SSLContext sslContext = LinkPlaySslUtil.createSslContext(trustManager);
+            this.sslHttpClient = LinkPlaySslUtil.createHttpsClient(sslContext);
+            this.sslHttpClient.start();
+            logger.debug("LinkPlay HTTPS client initialized");
+        } catch (Exception e) {
+            logger.error("Failed to create SSL HTTP client: {}", e.getMessage());
+            throw new IllegalStateException("Failed to create SSL HTTP client", e);
+        }
     }
 
-    private CompletableFuture<String> sendAsyncRequest(String url) {
-        return CompletableFuture.supplyAsync(() -> {
-            try {
-                ContentResponse response = httpClient.newRequest(url).timeout(REQUEST_TIMEOUT, TimeUnit.SECONDS)
-                        .idleTimeout(REQUEST_TIMEOUT, TimeUnit.SECONDS).send();
-                int status = response.getStatus();
-
-                if (status == HttpStatus.OK_200) {
-                    String content = response.getContentAsString();
-                    logger.debug("Response from {}: {}", url, content);
-                    return content;
-                } else if (status == HttpStatus.NOT_FOUND_404) {
-                    throw new LinkPlayApiException(String.format("Endpoint not supported: %s (HTTP 404)", url));
-                } else if (status >= HttpStatus.INTERNAL_SERVER_ERROR_500) {
-                    throw new LinkPlayApiException(String.format("Device error: HTTP %d", status));
-                } else {
-                    throw new LinkPlayApiException(String.format("Unexpected response: HTTP %d", status));
-                }
-            } catch (LinkPlayException e) {
-                throw e;
-            } catch (Exception e) {
-                throw new LinkPlayCommunicationException(
-                        String.format("Connection error: %s - %s", url, e.getMessage()));
+    @Deactivate
+    protected void deactivate() {
+        try {
+            if (sslHttpClient.isStarted()) {
+                sslHttpClient.stop();
+                logger.debug("LinkPlay HTTPS client stopped");
             }
-        });
+        } catch (Exception e) {
+            logger.warn("Error stopping HTTPS client: {}", e.getMessage());
+        }
     }
 
-    private CompletableFuture<String> sendRequest(String ipAddress, String command) {
-        String url = String.format("http://%s%s", ipAddress, command);
-        logger.debug("Sending request to {}", url);
-        return sendAsyncRequest(url);
-    }
-
-    public CompletableFuture<PlayerStatus> getPlayerStatus(String ipAddress) {
-        return sendRequest(ipAddress, "/status").thenApply(response -> {
-            JsonObject json = JsonParser.parseString(response).getAsJsonObject();
-            return parsePlayerStatus(json);
-        });
-    }
-
+    /**
+     * Get extended status information from the device
+     *
+     * @param ipAddress The IP address of the device
+     * @return CompletableFuture containing the JSON response
+     */
     public CompletableFuture<JsonObject> getStatusEx(String ipAddress) {
-        return sendRequest(ipAddress, "/statusEx").thenApply(response -> {
-            return JsonParser.parseString(response).getAsJsonObject();
-        });
+        return sendCommand(ipAddress, "getStatusEx")
+                .thenApply(response -> JsonParser.parseString(response).getAsJsonObject());
     }
 
-    private PlayerStatus parsePlayerStatus(JsonObject json) {
-        PlayerStatus.Builder builder = new PlayerStatus.Builder().withVolume(getIntValue(json, "vol"))
-                .withMute(getBooleanValue(json, "mute")).withPlayStatus(String.valueOf(getIntValue(json, "status")));
-
-        if (json.has("Title")) {
-            builder.withTitle(json.get("Title").getAsString());
-        }
-        if (json.has("Artist")) {
-            builder.withArtist(json.get("Artist").getAsString());
-        }
-        if (json.has("Album")) {
-            builder.withAlbum(json.get("Album").getAsString());
-        }
-
-        return builder.build();
+    /**
+     * Get player status information from the device
+     *
+     * @param ipAddress The IP address of the device
+     * @return CompletableFuture containing the JSON response
+     */
+    public CompletableFuture<JsonObject> getPlayerStatus(String ipAddress) {
+        return sendCommand(ipAddress, "getPlayerStatus")
+                .thenApply(response -> JsonParser.parseString(response).getAsJsonObject());
     }
 
-    private int getIntValue(JsonObject json, String key) {
-        return json.has(key) ? json.get(key).getAsInt() : 0;
-    }
-
-    private boolean getBooleanValue(JsonObject json, String key) {
-        return json.has(key) && json.get(key).getAsInt() == 1;
-    }
-
-    // Command methods
-    public CompletableFuture<Void> sendCommand(String ipAddress, String command) {
-        return sendRequest(ipAddress, "/httpapi.asp?command=" + command).thenAccept(response -> {
-            // Response handling if needed
-        });
-    }
-
-    public CompletableFuture<MultiroomInfo> getMultiroomStatus(String ipAddress) {
-        return sendRequest(ipAddress, "/multiroom/getStatus").thenApply(response -> {
-            JsonObject json = JsonParser.parseString(response).getAsJsonObject();
-            return parseMultiroomInfo(json);
-        });
-    }
-
-    public CompletableFuture<Void> joinGroup(String ipAddress, String masterIP) {
+    /**
+     * Join a multiroom group
+     *
+     * @param ipAddress The IP address of the device
+     * @param masterIP The IP address of the master device to join
+     * @return CompletableFuture containing the response
+     */
+    public CompletableFuture<String> joinGroup(String ipAddress, String masterIP) {
         return sendCommand(ipAddress, String.format("multiroom/join?master=%s", masterIP));
     }
 
-    public CompletableFuture<Void> leaveGroup(String ipAddress) {
+    /**
+     * Leave the current multiroom group
+     *
+     * @param ipAddress The IP address of the device
+     * @return CompletableFuture containing the response
+     */
+    public CompletableFuture<String> leaveGroup(String ipAddress) {
         return sendCommand(ipAddress, "multiroom/leave");
     }
 
-    public CompletableFuture<Void> ungroup(String ipAddress) {
+    /**
+     * Ungroup all devices in the current multiroom group
+     *
+     * @param ipAddress The IP address of the device
+     * @return CompletableFuture containing the response
+     */
+    public CompletableFuture<String> ungroup(String ipAddress) {
         return sendCommand(ipAddress, "multiroom/ungroup");
     }
 
-    public CompletableFuture<Void> kickoutSlave(String ipAddress, String slaveIP) {
+    /**
+     * Kick a slave device out of the multiroom group
+     *
+     * @param ipAddress The IP address of the master device
+     * @param slaveIP The IP address of the slave device to kick out
+     * @return CompletableFuture containing the response
+     */
+    public CompletableFuture<String> kickoutSlave(String ipAddress, String slaveIP) {
         return sendCommand(ipAddress, String.format("multiroom/kickout?slave=%s", slaveIP));
     }
 
-    private MultiroomInfo parseMultiroomInfo(JsonObject json) {
-        MultiroomInfo.Builder builder = new MultiroomInfo.Builder();
+    /**
+     * Set the volume for all devices in the group
+     *
+     * @param ipAddress The IP address of the master device
+     * @param slaveIPs Comma-separated list of slave IP addresses
+     * @param volume The volume level to set (0-100)
+     * @return CompletableFuture containing the response
+     */
+    public CompletableFuture<String> setGroupVolume(String ipAddress, String slaveIPs, int volume) {
+        return sendCommand(ipAddress, String.format("multiroom/setGroupVolume?slaves=%s&volume=%d", slaveIPs, volume));
+    }
 
-        if (json.has("type")) {
-            builder.withRole(json.get("type").getAsString());
+    /**
+     * Set the mute state for all devices in the group
+     *
+     * @param ipAddress The IP address of the master device
+     * @param slaveIPs Comma-separated list of slave IP addresses
+     * @param mute Whether to mute (true) or unmute (false)
+     * @return CompletableFuture containing the response
+     */
+    public CompletableFuture<String> setGroupMute(String ipAddress, String slaveIPs, boolean mute) {
+        return sendCommand(ipAddress,
+                String.format("multiroom/setGroupMute?slaves=%s&mute=%d", slaveIPs, mute ? 1 : 0));
+    }
+
+    /**
+     * Sends a command to the device
+     *
+     * @param ipAddress The IP address of the device
+     * @param command The command to send
+     * @return CompletableFuture containing the response
+     */
+    public CompletableFuture<String> sendCommand(String ipAddress, String command) {
+        if (ipAddress.isEmpty()) {
+            throw new IllegalArgumentException("IP address must not be empty");
         }
-        if (json.has("master_ip")) {
-            builder.withMasterIP(json.get("master_ip").getAsString());
+        return sendRequest(ipAddress, "command=" + command);
+    }
+
+    /**
+     * Sends a command with a value to the device
+     *
+     * @param ipAddress The IP address of the device
+     * @param command The command to send
+     * @param value The command value/parameter
+     * @return CompletableFuture containing the response
+     */
+    public CompletableFuture<String> sendCommand(String ipAddress, String command, Command value) {
+        if (ipAddress.isEmpty()) {
+            throw new IllegalArgumentException("IP address must not be empty");
         }
-        if (json.has("slave_list") && json.get("slave_list").isJsonArray()) {
-            List<String> slaveIPs = new ArrayList<>();
-            json.get("slave_list").getAsJsonArray().forEach(element -> {
-                if (element.isJsonObject()) {
-                    JsonObject slaveObj = element.getAsJsonObject();
-                    if (slaveObj.has("ip")) {
-                        slaveIPs.add(slaveObj.get("ip").getAsString());
-                    }
+        String commandValue = formatCommandValue(command, value);
+        return sendRequest(ipAddress, "command=" + commandValue);
+    }
+
+    private String formatCommandValue(String command, Command value) {
+        // Format the command based on the channel and value type
+        switch (command) {
+            case CHANNEL_VOLUME:
+                if (value instanceof PercentType) {
+                    return "setPlayerCmd:vol:" + ((PercentType) value).intValue();
                 }
-            });
-            builder.withSlaveIPs(slaveIPs);
+                break;
+            case CHANNEL_MUTE:
+                if (value instanceof OnOffType) {
+                    return "setPlayerCmd:mute:" + (OnOffType.ON.equals(value) ? "1" : "0");
+                }
+                break;
+            case CHANNEL_CONTROL:
+                if (value instanceof PlayPauseType) {
+                    return "setPlayerCmd:" + (PlayPauseType.PLAY.equals(value) ? "play" : "pause");
+                } else if (value instanceof NextPreviousType) {
+                    return "setPlayerCmd:" + (NextPreviousType.NEXT.equals(value) ? "next" : "prev");
+                }
+                break;
         }
-
-        return builder.build();
+        logger.warn("Unsupported command combination: {} with value {}", command, value);
+        return command;
     }
 
-    public CompletableFuture<Void> setGroupVolume(String masterIp, List<String> slaveIps, int volume) {
-        List<CompletableFuture<Void>> futures = new ArrayList<>();
-        // Send to master
-        futures.add(sendCommand(masterIp, String.format("setPlayerCmd:vol:%d", volume)));
-        // Send to each slave
-        for (String slaveIp : slaveIps) {
-            futures.add(sendCommand(slaveIp, String.format("setPlayerCmd:vol:%d", volume)));
-        }
-        return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
-    }
+    private CompletableFuture<String> sendRequest(String ipAddress, String params) {
+        return CompletableFuture.supplyAsync(() -> {
+            // Try HTTPS first on different ports
+            for (int port : HTTPS_PORTS) {
+                String httpsUrl = String.format("https://%s:%d/httpapi.asp?%s", ipAddress, port, params);
+                try {
+                    logger.debug("Trying HTTPS request to {}", httpsUrl);
+                    ContentResponse response = sslHttpClient.newRequest(httpsUrl)
+                            .timeout(CONNECT_TIMEOUT_MS + READ_TIMEOUT_MS, TimeUnit.MILLISECONDS).send();
 
-    public CompletableFuture<Void> setGroupMute(String masterIp, List<String> slaveIps, boolean mute) {
-        List<CompletableFuture<Void>> futures = new ArrayList<>();
-        // Send to master
-        futures.add(sendCommand(masterIp, String.format("setPlayerCmd:mute:%d", mute ? 1 : 0)));
-        // Send to each slave
-        for (String slaveIp : slaveIps) {
-            futures.add(sendCommand(slaveIp, String.format("setPlayerCmd:mute:%d", mute ? 1 : 0)));
-        }
-        return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
+                    if (response.getStatus() == 200) {
+                        String content = response.getContentAsString();
+                        logger.debug("Received HTTPS response: {}", content);
+                        if (content.contains("error") || content.contains("fail")) {
+                            throw new LinkPlayApiException("API error response: " + content);
+                        }
+                        return content;
+                    }
+                } catch (LinkPlayApiException e) {
+                    throw new CompletionException(e);
+                } catch (Exception e) {
+                    logger.debug("HTTPS request failed on port {}: {}", port, e.getMessage());
+                }
+            }
+
+            // Fall back to HTTP if HTTPS fails
+            String httpUrl = String.format("http://%s:%d/httpapi.asp?%s", ipAddress, HTTP_PORT, params);
+            logger.debug("Falling back to HTTP request: {}", httpUrl);
+
+            try {
+                ContentResponse response = httpClient.newRequest(httpUrl)
+                        .timeout(CONNECT_TIMEOUT_MS + READ_TIMEOUT_MS, TimeUnit.MILLISECONDS).send();
+
+                int status = response.getStatus();
+                if (status == 200) {
+                    String content = response.getContentAsString();
+                    logger.debug("Received HTTP response: {}", content);
+                    if (content.contains("error") || content.contains("fail")) {
+                        throw new LinkPlayApiException("API error response: " + content);
+                    }
+                    return content;
+                } else {
+                    throw new LinkPlayCommunicationException("HTTP error " + status);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new CompletionException(new LinkPlayCommunicationException("Request interrupted", e));
+            } catch (TimeoutException e) {
+                throw new CompletionException(new LinkPlayCommunicationException("Request timed out", e));
+            } catch (LinkPlayApiException e) {
+                throw new CompletionException(e);
+            } catch (Exception e) {
+                logger.debug("HTTP request failed: {}", e.getMessage());
+                throw new CompletionException(new LinkPlayCommunicationException("Communication error", e));
+            }
+        });
     }
 }

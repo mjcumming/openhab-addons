@@ -15,15 +15,20 @@ package org.openhab.binding.linkplay.internal.http;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 
 /**
- * Exception for LinkPlay API errors
+ * Exception thrown when the LinkPlay API returns an error response
  *
  * @author Michael Cumming - Initial contribution
  */
 @NonNullByDefault
-public class LinkPlayApiException extends LinkPlayException {
+public class LinkPlayApiException extends Exception {
+
     private static final long serialVersionUID = 1L;
 
     public LinkPlayApiException(String message) {
         super(message);
+    }
+
+    public LinkPlayApiException(String message, Throwable cause) {
+        super(message, cause);
     }
 }

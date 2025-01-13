@@ -14,9 +14,12 @@ package org.openhab.binding.linkplay.internal.handler;
 
 import static org.openhab.binding.linkplay.internal.LinkPlayBindingConstants.*;
 
+import java.util.concurrent.CompletionException;
+
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.openhab.binding.linkplay.internal.http.LinkPlayCommunicationException;
 import org.openhab.binding.linkplay.internal.http.LinkPlayHttpClient;
+import org.openhab.binding.linkplay.internal.model.MultiroomInfo;
 import org.openhab.core.library.types.OnOffType;
 import org.openhab.core.library.types.PercentType;
 import org.openhab.core.library.types.StringType;
@@ -44,8 +47,12 @@ public class LinkPlayGroupManager {
     }
 
     public void initialize(String ipAddress) {
-        this.deviceIp = ipAddress;
-        updateGroupState();
+        if (!ipAddress.isEmpty()) {
+            this.deviceIp = ipAddress;
+            updateGroupState();
+        } else {
+            logger.debug("Cannot initialize group manager - IP address is empty");
+        }
     }
 
     public void updateGroupState() {
@@ -53,12 +60,19 @@ public class LinkPlayGroupManager {
             return;
         }
 
-        httpClient.getMultiroomStatus(deviceIp).thenAccept(status -> {
-            String role = status.getRole();
-            String masterIP = status.getMasterIP();
-            String slaveIPs = String.join(",", status.getSlaveIPs());
+        if (deviceIp.isEmpty()) {
+            logger.debug("Cannot update group state - device IP is empty");
+            return;
+        }
 
-            handler.updateGroupChannels(role, masterIP, slaveIPs);
+        httpClient.getStatusEx(deviceIp).thenAccept(status -> {
+            try {
+                MultiroomInfo info = new MultiroomInfo(status);
+                handler.updateGroupChannels(info.getRole(), info.getMasterIP(), info.getSlaveIPs());
+            } catch (Exception e) {
+                logger.debug("Error parsing multiroom status: {}", e.getMessage());
+                handleGroupError("parsing status", e);
+            }
         }).exceptionally(e -> {
             handleGroupError("updating group state", e);
             return null;
@@ -66,6 +80,11 @@ public class LinkPlayGroupManager {
     }
 
     public void handleCommand(ChannelUID channelUID, Command command) {
+        if (deviceIp.isEmpty()) {
+            logger.debug("Cannot handle command - device IP is empty");
+            return;
+        }
+
         String channelId = channelUID.getIdWithoutGroup();
 
         try {
@@ -73,84 +92,100 @@ public class LinkPlayGroupManager {
                 case CHANNEL_MASTER_IP:
                     if (command instanceof StringType) {
                         String masterIP = command.toString();
-                        joinGroup(deviceIp, masterIP);
+                        if (!masterIP.isEmpty()) {
+                            httpClient.joinGroup(deviceIp, masterIP).thenAccept(response -> {
+                                logger.debug("Join group response: {}", response);
+                                updateGroupState();
+                            }).exceptionally(e -> {
+                                handleGroupError("joining group", e);
+                                return null;
+                            });
+                        }
                     }
                     break;
 
-                case CHANNEL_SLAVE_IPS:
-                    if (command instanceof StringType) {
-                        String slaveIP = command.toString();
-                        kickoutSlave(deviceIp, slaveIP);
+                case CHANNEL_JOIN:
+                    if (command instanceof OnOffType) {
+                        if (command == OnOffType.OFF) {
+                            httpClient.leaveGroup(deviceIp).thenAccept(response -> {
+                                logger.debug("Leave group response: {}", response);
+                                updateGroupState();
+                            }).exceptionally(e -> {
+                                handleGroupError("leaving group", e);
+                                return null;
+                            });
+                        }
+                    }
+                    break;
+
+                case CHANNEL_UNGROUP:
+                    if (command instanceof OnOffType && command == OnOffType.ON) {
+                        httpClient.ungroup(deviceIp).thenAccept(response -> {
+                            logger.debug("Ungroup response: {}", response);
+                            updateGroupState();
+                        }).exceptionally(e -> {
+                            handleGroupError("ungrouping", e);
+                            return null;
+                        });
                     }
                     break;
 
                 case CHANNEL_GROUP_VOLUME:
-                    if (command instanceof PercentType && thing.getHandler() instanceof LinkPlayThingHandler handler) {
-                        handleGroupVolume(handler, ((PercentType) command).intValue());
+                    if (command instanceof PercentType) {
+                        int volume = ((PercentType) command).intValue();
+                        httpClient.getStatusEx(deviceIp).thenAccept(status -> {
+                            MultiroomInfo info = new MultiroomInfo(status);
+                            if ("master".equals(info.getRole())) {
+                                httpClient.setGroupVolume(deviceIp, info.getSlaveIPs(), volume).thenAccept(response -> {
+                                    logger.debug("Set group volume response: {}", response);
+                                }).exceptionally(e -> {
+                                    handleGroupError("setting group volume", e);
+                                    return null;
+                                });
+                            } else {
+                                logger.debug("Cannot set group volume - device is not a master");
+                            }
+                        }).exceptionally(e -> {
+                            handleGroupError("getting group status", e);
+                            return null;
+                        });
                     }
                     break;
 
                 case CHANNEL_GROUP_MUTE:
-                    if (command instanceof OnOffType && thing.getHandler() instanceof LinkPlayThingHandler handler) {
-                        handleGroupMute(handler, OnOffType.ON.equals(command));
+                    if (command instanceof OnOffType) {
+                        boolean mute = command == OnOffType.ON;
+                        httpClient.getStatusEx(deviceIp).thenAccept(status -> {
+                            MultiroomInfo info = new MultiroomInfo(status);
+                            if ("master".equals(info.getRole())) {
+                                httpClient.setGroupMute(deviceIp, info.getSlaveIPs(), mute).thenAccept(response -> {
+                                    logger.debug("Set group mute response: {}", response);
+                                }).exceptionally(e -> {
+                                    handleGroupError("setting group mute", e);
+                                    return null;
+                                });
+                            } else {
+                                logger.debug("Cannot set group mute - device is not a master");
+                            }
+                        }).exceptionally(e -> {
+                            handleGroupError("getting group status", e);
+                            return null;
+                        });
                     }
                     break;
-
-                default:
-                    logger.debug("Channel {} not handled in group manager", channelId);
             }
         } catch (Exception e) {
-            handleGroupError("executing group command", e);
+            logger.debug("Error handling command {}: {}", command, e.getMessage());
         }
     }
 
-    private void handleGroupVolume(LinkPlayThingHandler handler, int volume) {
-        httpClient.getMultiroomStatus(deviceIp).thenAccept(status -> {
-            if ("master".equals(status.getRole())) {
-                httpClient.setGroupVolume(deviceIp, status.getSlaveIPs(), volume).thenRun(this::updateGroupState);
-            } else {
-                logger.debug("Group volume command ignored - device is not a master");
-            }
-        }).exceptionally(e -> {
-            handleGroupError("setting group volume", e);
-            return null;
-        });
-    }
-
-    private void handleGroupMute(LinkPlayThingHandler handler, boolean mute) {
-        httpClient.getMultiroomStatus(deviceIp).thenAccept(status -> {
-            if ("master".equals(status.getRole())) {
-                httpClient.setGroupMute(deviceIp, status.getSlaveIPs(), mute).thenRun(this::updateGroupState);
-            } else {
-                logger.debug("Group mute command ignored - device is not a master");
-            }
-        }).exceptionally(e -> {
-            handleGroupError("setting group mute", e);
-            return null;
-        });
-    }
-
-    private void joinGroup(String deviceIp, String masterIP) {
-        httpClient.joinGroup(deviceIp, masterIP).thenRun(this::updateGroupState).exceptionally(e -> {
-            handleGroupError("joining group", e);
-            return null;
-        });
-    }
-
-    private void kickoutSlave(String deviceIp, String slaveIp) {
-        httpClient.kickoutSlave(deviceIp, slaveIp).thenRun(this::updateGroupState).exceptionally(e -> {
-            handleGroupError("kicking out slave", e);
-            return null;
-        });
-    }
-
     private void handleGroupError(String operation, Throwable e) {
-        String errorMessage = e.getMessage();
-        logger.debug("Error {} for device {}: {}", operation, deviceIp,
-                errorMessage != null ? errorMessage : "Unknown error");
-        if (thing.getHandler() instanceof LinkPlayThingHandler handler) {
-            handler.handleCommunicationError(
-                    new LinkPlayCommunicationException(errorMessage != null ? errorMessage : "Unknown error"));
+        Throwable cause = e instanceof CompletionException ? e.getCause() : e;
+        String message = cause != null ? cause.getMessage() : "Unknown error";
+        if (cause instanceof LinkPlayCommunicationException) {
+            logger.debug("Communication error while {}: {}", operation, message);
+        } else {
+            logger.warn("Error while {}: {}", operation, message);
         }
     }
 }

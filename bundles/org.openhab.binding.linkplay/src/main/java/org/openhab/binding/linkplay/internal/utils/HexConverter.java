@@ -12,7 +12,10 @@
  */
 package org.openhab.binding.linkplay.internal.utils;
 
+import java.nio.charset.StandardCharsets;
+
 import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -27,21 +30,33 @@ public class HexConverter {
     private static final Logger logger = LoggerFactory.getLogger(HexConverter.class);
 
     /**
-     * Converts a hex string to its ASCII representation.
+     * Converts a hex string to its UTF-8 string representation.
+     * Handles null input, empty strings, and invalid hex values.
      *
-     * @param hex The hex string to convert.
-     * @return The ASCII representation.
+     * @param hex The hex string to convert (may be null).
+     * @return The UTF-8 string representation, or empty string if conversion fails.
      */
-    public static String hexToAscii(String hex) {
-        StringBuilder ascii = new StringBuilder();
-        try {
-            for (int i = 0; i < hex.length(); i += 2) {
-                String hexByte = hex.substring(i, i + 2);
-                ascii.append((char) Integer.parseInt(hexByte, 16));
-            }
-        } catch (Exception e) {
-            logger.warn("Failed to convert hex to ASCII: {}", e.getMessage(), e);
+    public static String hexToString(@Nullable String hex) {
+        if (hex == null || hex.isEmpty()) {
+            return "";
         }
-        return ascii.toString();
+
+        // Remove any whitespace and validate hex string
+        hex = hex.replaceAll("\\s", "");
+        if (hex.length() % 2 != 0 || !hex.matches("[0-9A-Fa-f]+")) {
+            logger.debug("Invalid hex string: {}", hex);
+            return "";
+        }
+
+        try {
+            byte[] bytes = new byte[hex.length() / 2];
+            for (int i = 0; i < hex.length(); i += 2) {
+                bytes[i / 2] = (byte) Integer.parseInt(hex.substring(i, i + 2), 16);
+            }
+            return new String(bytes, StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            logger.debug("Failed to convert hex to string: {}", e.getMessage());
+            return "";
+        }
     }
 }
