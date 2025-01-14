@@ -17,6 +17,7 @@ import java.util.concurrent.ScheduledExecutorService;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
+import org.openhab.binding.linkplay.internal.config.LinkPlayConfiguration;
 import org.openhab.binding.linkplay.internal.http.LinkPlayHttpClient;
 import org.openhab.core.io.transport.upnp.UpnpIOService;
 import org.openhab.core.thing.ChannelUID;
@@ -39,15 +40,26 @@ import org.slf4j.LoggerFactory;
 public class LinkPlayThingHandler extends BaseThingHandler {
 
     private static final Logger logger = LoggerFactory.getLogger(LinkPlayThingHandler.class);
+
+    // A dedicated scheduler for device tasks (HTTP, etc.)
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
+
     private final UpnpIOService upnpIOService;
     private final LinkPlayHttpClient httpClient;
-    private @NonNullByDefault({}) LinkPlayDeviceManager deviceManager;
+    private final LinkPlayConfiguration config; // The validated config passed from factory
 
-    public LinkPlayThingHandler(Thing thing, UpnpIOService upnpIOService, LinkPlayHttpClient httpClient) {
+    private @Nullable LinkPlayDeviceManager deviceManager;
+
+    /**
+     * Updated constructor that receives an already validated LinkPlayConfiguration.
+     */
+    public LinkPlayThingHandler(Thing thing, UpnpIOService upnpIOService, 
+                                LinkPlayHttpClient httpClient,
+                                LinkPlayConfiguration config) {
         super(thing);
         this.upnpIOService = upnpIOService;
         this.httpClient = httpClient;
+        this.config = config;
     }
 
     @Override
@@ -55,12 +67,13 @@ public class LinkPlayThingHandler extends BaseThingHandler {
         logger.debug("Initializing LinkPlayThingHandler for Thing: {}", getThing().getUID());
 
         try {
-            // Initialize only the device manager - it will handle other managers
-            deviceManager = new LinkPlayDeviceManager(this, scheduler, upnpIOService, httpClient);
+            // Create the device manager, passing it the validated config
+            deviceManager = new LinkPlayDeviceManager(this, scheduler, upnpIOService, httpClient, config);
             deviceManager.initialize();
+
             updateStatus(ThingStatus.ONLINE);
         } catch (Exception e) {
-            logger.error("Failed to initialize LinkPlay device: {}", e.getMessage());
+            logger.error("Failed to initialize LinkPlay device: {}", e.getMessage(), e);
             updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR,
                     "Failed to initialize: " + e.getMessage());
         }
@@ -88,22 +101,23 @@ public class LinkPlayThingHandler extends BaseThingHandler {
     }
 
     /**
-     * Public method for updating channel state, used by the device manager
+     * Public method for updating channel state, used by the device manager.
      */
     public void handleStateUpdate(String channelId, State state) {
         updateState(channelId, state);
     }
 
     /**
-     * Public method for updating thing status, used by the device manager
+     * Public method for updating thing status, used by the device manager.
      */
     public void handleStatusUpdate(ThingStatus status, @Nullable ThingStatusDetail detail,
             @Nullable String description) {
-        updateStatus(status, detail != null ? detail : ThingStatusDetail.NONE, description != null ? description : "");
+        updateStatus(status, detail != null ? detail : ThingStatusDetail.NONE,
+                description != null ? description : "");
     }
 
     /**
-     * Public method for updating thing status, used by the device manager
+     * Public method for updating thing status, used by the device manager.
      */
     public void handleStatusUpdate(ThingStatus status) {
         updateStatus(status);
