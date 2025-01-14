@@ -28,8 +28,11 @@ import org.openhab.core.types.Command;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
+import javax.json.Json;
+import javax.json.JsonObject;
+import javax.json.JsonReader;
+import java.io.StringReader;
+
 
 /**
  * The {@link LinkPlayHttpManager} handles HTTP communication with LinkPlay devices.
@@ -170,17 +173,18 @@ public class LinkPlayHttpManager {
     /**
      * Helper to parse raw JSON string into a JsonObject safely, returning null on failure.
      */
-    private JsonObject parseJsonSafely(String raw) {
-        if (raw.isEmpty()) {
-            return null;
-        }
-        try {
-            return JsonParser.parseString(raw).getAsJsonObject();
-        } catch (Exception e) {
-            logger.warn("Failed to parse JSON: {}", e.getMessage());
-            return null;
-        }
+private JsonObject parseJsonSafely(String raw) {
+    if (raw.isEmpty()) {
+        return null;
     }
+    try (JsonReader reader = Json.createReader(new StringReader(raw))) {
+        return reader.readObject();
+    } catch (Exception e) {
+        logger.warn("Failed to parse JSON: {}", e.getMessage());
+        return null;
+    }
+}
+
 
     /**
      * Called by the constructor or the poll method to get the device IP,
