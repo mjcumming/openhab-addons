@@ -25,22 +25,6 @@
 - Use the Python Linkplay API implementation for reference: https://github.com/Velleman/python-linkplay/tree/main/src/linkplay
 - Implement robust error handling and retry mechanisms.
 
-
-
----
-
-# **.cursorrules for OpenHAB LinkPlay Binding**
-
----
-
-## **General Guidelines**
-- Adhere to the OpenHAB coding guidelines: [OpenHAB Developer Guidelines](https://www.openhab.org/docs/developer/guidelines.html).
-- Prioritize modularity, maintainability, and readability.
-- Use Java for implementation, leveraging the OpenHAB API and libraries.
-- Follow OpenHAB null-safety practices using `@NonNull` annotations.
-
----
-
 ## **Directory Structure and File Roles**
 The codebase is modular and adheres to OpenHAB's structure for bindings.
 
@@ -78,73 +62,246 @@ The codebase is modular and adheres to OpenHAB's structure for bindings.
 - **`OH-INF/i18n/linkplay.properties`**: Localized strings for UI and logs.
 
 ---
+Below is an **expanded design document** covering **key architectural decisions**, **rationale**, and **design patterns** used in the LinkPlay binding. It builds upon the existing `.cursorrules for OpenHAB LinkPlay Binding` by detailing **why** we structured the code in a particular way, **how** the pieces integrate, and **which design patterns** we followed to ensure maintainability, reliability, and conformance with OpenHAB best practices.
+
+---
+
+# **.cursorrules for OpenHAB LinkPlay Binding**
+
+## **Overview**
+
+The LinkPlay binding enables OpenHAB to control and monitor audio devices powered by LinkPlay or Arylic modules. It integrates with:
+- **LinkPlay’s UPnP** services (AVTransport and RenderingControl), used to receive real-time event notifications and control certain aspects of device playback and volume.
+- **LinkPlay’s HTTP APIs**, used for device status queries, multiroom grouping, advanced commands, and fallback if UPnP subscriptions are unavailable.
+
+Our core goals are:
+
+1. **Reliability**: Seamless fallback between UPnP eventing and HTTP polling.
+2. **Maintainability**: Clear separation of concerns (UPnP vs. HTTP vs. device logic).
+3. **Configurability**: User-defined polling intervals, timeouts, and retry limits.
+4. **Robustness**: Built-in retry logic, error handling, and device-offline detection.
+
+This document elaborates on the **why** and **how** behind these design decisions.
+
+---
+
+## **General Guidelines**
+
+- **OpenHAB Standards**  
+  We adhere to the [OpenHAB Developer Guidelines](https://www.openhab.org/docs/developer/guidelines.html) for code structure, logging conventions, OSGi/DS annotations, and null-safety with `@NonNullByDefault`.
+  
+- **Java & Null Safety**  
+  The binding uses Java, leveraging `@NonNullByDefault` and `@Nullable` from Eclipse JDT to reduce nullability errors. 
+
+- **Documentation & Readability**  
+  Each class and method includes Javadoc or inline comments explaining **what** it does and **why**.
+
+---
+
+## **Directory Structure**
+
+Within `org.openhab.binding.linkplay.internal`, the binding is divided into logical sub-packages:
+
+- **`config`**  
+  - *LinkPlayConfiguration.java*  
+    - Encapsulates all device and binding-level configuration (IP address, polling intervals, max retries, etc.).  
+    - Validates inputs and applies defaults (e.g., 10-second polling, 3 retries).
+
+- **`handler`**  
+  - *LinkPlayThingHandler.java*  
+    - The main OpenHAB “entry point” for each discovered or configured device.  
+    - Orchestrates the creation of sub-managers (HTTP, UPnP, group/multiroom) and delegates commands/events.  
+  - *LinkPlayDeviceManager.java*  
+    - Contains the device-specific logic (translating JSON or UPnP events into channel updates).  
+    - Receives callbacks from the HTTP or UPnP managers to keep the device’s state in sync.
+
+- **`http`**  
+  - *LinkPlayHttpClient.java*  
+    - Manages **raw** HTTP requests (both HTTP and HTTPS).  
+    - Detects errors at the transport level and returns raw string responses.  
+  - *LinkPlayHttpManager.java*  
+    - Coordinates **polling**, **retry** logic, and **JSON parsing**.  
+    - Calls `LinkPlayHttpClient` for actual network I/O, then passes *parsed* results (or errors) up to the device manager.  
+  - *LinkPlayApiException.java* and *LinkPlayCommunicationException.java*  
+    - Distinguish **API-level** vs. **transport/network-level** errors.
+
+- **`upnp`**  
+  - *LinkPlayUpnpManager.java*  
+    - Maintains UPnP **event subscriptions** (AVTransport, RenderingControl).  
+    - Translates incoming UPnP events into device logic updates (volume changes, track info, etc.).  
+  - *DIDLParser.java*  
+    - Helper class to parse DIDL-Lite metadata from the `CurrentTrackMetaData` event. 
+
+- **`model`** and **`discovery`**  
+  - Additional classes for multiroom, device discovery, etc.
+
+---
 
 ## **Design and Patterns**
 
-### **Key Design Goals**
-1. **Initialization**:
-   - Register for UPnP events.
-   - Start polling for device status.
-2. **Event Handling**:
-   - Process `AVTransport` and `RenderingControl` UPnP events.
-   - Update channels based on HTTP responses as a fallback.
-3. **Command Handling**:
-   - Map commands to HTTP API calls (e.g., `setPlayerCmd:play`).
-4. **Channel Management**:
-   - Maintain playback, device, and multiroom channel states via polling and UPnP updates.
-5. **Cleanup**:
-   - Properly dispose of UPnP and HTTP resources.
+### **1. Separation of Concerns: UPnP vs. HTTP**
+
+- **Why Two Managers?**  
+  LinkPlay devices support UPnP for real-time eventing **and** a REST-like HTTP API. We want the binding to:
+  1. **Listen** for UPnP events instantly (e.g., volume changed, track ended).  
+  2. **Fallback** on HTTP polling if UPnP fails or is unsupported.  
+  3. **Use HTTP** for advanced commands not exposed via UPnP (multiroom grouping, advanced status, etc.).
+
+- **UPnP Manager**  
+  - Subscribes to `AVTransport` and `RenderingControl`.  
+  - Periodically renews subscriptions.  
+  - Parses and forwards events (TransportState, Volume, Mute, etc.) to `LinkPlayDeviceManager`.
+
+- **HTTP Manager**  
+  - Handles **polling** at a user-defined interval (e.g., 10 seconds).  
+  - Uses **retry** logic for reliability (exponential backoff).  
+  - Parses JSON responses and informs `LinkPlayDeviceManager` of updated device status.  
+  - Invokes multiroom APIs or advanced commands as directed by the device manager.
+
+By **decoupling** these two protocols into **separate** manager classes, the code is clearer, each manager has a singular focus, and we reduce complexity in device logic.
 
 ---
 
-## **UPnP Implementation**
-- Follows modern patterns inspired by the Wemo binding for simplicity and robustness.
-- **Services Supported**:
-  - `AVTransport`: Handles playback-related events.
-  - `RenderingControl`: Handles volume and mute controls.
-  - `MediaRenderer`: General renderer events.
-- **Subscription Management**:
-  - Periodically renew subscriptions and handle expirations.
-  - Clean up subscriptions on `dispose()` to avoid stale states.
-- **Fallback Mechanism**:
-  - Switch to HTTP polling if UPnP subscriptions fail.
+### **2. Centralized JSON Parsing in `LinkPlayHttpManager`**
+
+- **Previous Attempt**  
+  We initially considered returning parsed JSON (`JsonObject`) directly from `LinkPlayHttpClient`.  
+  However, some commands (e.g., `joinGroup`) may return different JSON structures or partial error messages.
+
+- **Chosen Approach**  
+  - **`LinkPlayHttpClient`** now returns **raw `String`** only.  
+  - The **`LinkPlayHttpManager`** is responsible for **all** JSON parsing, using `parseJsonSafely(...)`.  
+  - On parse failures, it calls `deviceManager.handleHttpPollFailure(...)` or logs an `API error`.
+
+**Benefits**  
+1. **Single Source of Truth** for JSON parsing.  
+2. **Simplifies** the client code (only deals with raw responses).  
+3. **Consistent** error handling and fallback logic in one place.
 
 ---
 
-## **HTTP Implementation**
-- **Security**:
-  - Custom SSL/TLS handling via `LinkPlaySslUtil` and PEM files.
-- **Retry Logic**:
-  - Exponential backoff with jitter for transient failures.
-- **Encapsulation**:
-  - `LinkPlayHttpClient`: Handles raw requests.
-  - `LinkPlayHttpManager`: Manages retries and API abstractions.
+### **3. HTTP Polling in the `LinkPlayHttpManager`**
+
+- **Why Not Poll in `LinkPlayDeviceManager`?**  
+  1. The Device Manager’s job is to interpret device data and update channels. It shouldn’t schedule or manage repeated network tasks.  
+  2. By placing polling in `LinkPlayHttpManager`, we can unify **all** HTTP logic (poll intervals, exponential backoff, request management) in one class.
+
+- **Polling Flow**  
+  1. `LinkPlayHttpManager.startPolling()` schedules a job in OpenHAB’s `ThreadPoolManager`.  
+  2. **Every N seconds** (from config), the manager calls `httpClient.getPlayerStatus(...)`.  
+  3. On success, we parse the returned JSON **in** the manager and call `deviceManager.updateChannelsFromHttp(...)`.  
+  4. On failure, we call `deviceManager.handleHttpPollFailure(...)` which may eventually set the device `OFFLINE` if failures persist.
+
+This pattern is common in other OpenHAB bindings (e.g., Samsung TV). The manager that “owns” network requests also “owns” scheduling.
 
 ---
 
-## **Multiroom Implementation**
-- Encapsulated in `LinkPlayGroupManager`.
-- Supports master/slave management and group volume/mute operations.
-- Uses polling for status updates (e.g., role and group membership).
+### **4. `LinkPlayDeviceManager` as the Device-Oriented Orchestrator**
+
+- **Responsibilities**:
+  1. **Accept** data (from HTTP or UPnP).  
+  2. **Interpret** the JSON or event variables to update channels (volume, track title, playback state).  
+  3. **Apply** multiroom or advanced logic if needed (group membership, etc.).  
+  4. **Handle** repeated poll failures by setting the Thing status to `OFFLINE`.
+
+- **Why Not Merge Into `ThingHandler`?**  
+  - The `LinkPlayThingHandler` is an OpenHAB-facing class with lifecycle hooks (`initialize()`, `dispose()`, `handleCommand(...)`).  
+  - By delegating device logic to `LinkPlayDeviceManager`, we keep the handler minimal.  
+  - This separation also makes unit testing easier and keeps the code for device-specific logic in one place.
 
 ---
 
-## **Polling Strategy**
-- Default interval: 10 seconds.
-- Stops polling when UPnP subscriptions are active and stable.
+### **5. Distinction Between `LinkPlayApiException` and `LinkPlayCommunicationException`**
+
+- **Transport vs. API Errors**  
+  - **`LinkPlayCommunicationException`**: Thrown if we cannot **reach** the device (timeout, socket error, DNS failure).  
+  - **`LinkPlayApiException`**: Thrown if the device returns an **error** in its response (e.g., `"fail"`, `"error"`, or invalid command).
+
+**Why Two Exception Classes?**  
+- **Communication Errors** typically mean the device might be offline → we might set the Thing status to `OFFLINE (COMMUNICATION_ERROR)`.  
+- **API Errors** mean the device is reachable but refused or failed a command. We may stay `ONLINE` but log a warning. This nuance is crucial for user feedback and debugging.
 
 ---
 
-## **Testing Requirements**
-1. **Unit Tests**:
-   - Validate UPnP and HTTP logic, including retry mechanisms.
-2. **Integration Tests**:
-   - Simulate multi-device setups and validate lifecycle management.
-3. **Performance Tests**:
-   - Test scalability with concurrent devices.
+### **6. Configuration-Driven Behavior**
+
+- **`LinkPlayConfiguration`**  
+  - Stores `ipAddress`, `pollingInterval`, `maxRetries`, `retryDelayMillis`, and other device parameters.  
+  - **Validation** ensures `ipAddress` is not empty, normalizes UDN with `uuid:` prefix, etc.  
+  - By referencing `LinkPlayConfiguration` in the HTTP/UPnP managers, we can easily modify poll intervals or retry times at runtime if the user updates the Thing config.
+
+- **OpenHAB Binding Patterns**  
+  - Reading from `Thing.getConfiguration()` → `LinkPlayConfiguration.fromConfiguration(...)` ensures all config reading is centralized.  
+  - If config is invalid, we set `OFFLINE (CONFIGURATION_ERROR)` early.
 
 ---
 
+### **7. Lifecycle & Disposal**
+
+- **Creation**  
+  1. **Discovery** or user config provides device IP/UDN.  
+  2. `LinkPlayThingHandler` is constructed, creating a `LinkPlayDeviceManager`.  
+  3. `DeviceManager.initialize()` sets initial `ONLINE` status, calls `httpManager.startPolling()`, and registers with `upnpManager.register(...)`.
+
+- **Running**  
+  1. If UPnP events arrive, `LinkPlayUpnpManager` calls device manager methods (e.g., `updateMute(true)`).  
+  2. If HTTP polling completes, `LinkPlayHttpManager` passes the parsed JSON to `deviceManager.updateChannelsFromHttp(...)`.  
+  3. If repeated HTTP failures occur, `deviceManager` sets the Thing `OFFLINE`.
+
+- **Disposal**  
+  1. `ThingHandler.dispose()` triggers `deviceManager.dispose()`.  
+  2. The device manager calls `httpManager.stopPolling()` and `upnpManager.dispose()`.  
+  3. All threads, subscriptions, and resources are freed.
+
+This ensures no orphaned tasks remain in OpenHAB’s thread pools.
+
+---
+
+## **Design Patterns in Action**
+
+1. **Factory & Strategy**  
+   - The binding employs **factories** for creating handlers (`LinkPlayThingHandlerFactory`) and uses **strategy**-like classes (`LinkPlayHttpManager` vs. `LinkPlayUpnpManager`) depending on the protocol.
+
+2. **Template Method**  
+   - The manager classes (HTTP, UPnP) follow an **initialize → run → dispose** template. They each schedule tasks and handle disposal in a consistent manner.
+
+3. **Command Pattern**  
+   - `handleCommand(channelId, command)` is effectively the **Command Pattern**: The device manager interprets the command and triggers the correct action (HTTP or UPnP call).
+
+4. **Observer Pattern**  
+   - UPnP eventing: The `LinkPlayUpnpManager` is an **observer** of device events (TransportState, Volume). The device manager is **notified** when changes occur.
+
+5. **Decorator / Wrapper**  
+   - The custom exceptions (`LinkPlayApiException`, `LinkPlayCommunicationException`) wrap underlying `Exception`s (e.g., `CompletionException`) to provide more domain-specific error context.
+
+---
+
+## **Conclusion & Benefits**
+
+Through **clear separation of concerns**—UPnP handling, HTTP polling/commands, and device-specific logic—we maintain a **robust, testable, and flexible** OpenHAB binding:
+
+- **UPnP events** provide immediate state changes for volume/track.  
+- **HTTP polling** ensures state accuracy when UPnP isn’t available or fails.  
+- **Configuration** allows end users to tweak polling intervals and retry counts.  
+- **Error handling** is explicit, differentiating unreachable devices vs. command rejections.  
+- **Device manager** logic is consolidated, simplifying maintenance and future feature additions (e.g., multiroom expansions).
+
+By following **OpenHAB** binding guidelines, referencing existing patterns (like the Wemo or Samsung TV bindings), and building on top of LinkPlay’s documented HTTP and UPnP capabilities, this design provides a **modular, maintainable** codebase that can evolve as LinkPlay or Arylic devices add new features.
+
+---
+
+# **References & Further Reading**
+
+1. [OpenHAB Developer Guidelines](https://www.openhab.org/docs/developer/guidelines.html)  
+2. [OpenHAB Binding Development](https://www.openhab.org/docs/developer/bindings/)  
+3. [LinkPlay/Arylic HTTP API Docs](https://developer.arylic.com/httpapi/#http-api)  
+4. [LinkPlay Python Implementation](https://github.com/Velleman/python-linkplay/tree/main/src/linkplay)  
+5. WeMo Binding (UPnP Example) - [openhab-addons GitHub](https://github.com/openhab/openhab-addons/tree/main/bundles/org.openhab.binding.wemo)  
+6. Samsung TV Binding (HTTP + UPnP Example) - [openhab-addons GitHub](https://github.com/openhab/openhab-addons/tree/main/bundles/org.openhab.binding.samsungtv)
+
+---
+
+**End of Document**
 ## **Research and Reference Documents**
 - **LinkPlay API Documentation**: [LinkPlay API Docs](https://developer.arylic.com/httpapi/#http-api)
 - **LinkPlay Python Implementation**: [GitHub Repository](https://github.com/Velleman/python-linkplay/tree/main/src/linkplay)
