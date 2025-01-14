@@ -6,6 +6,7 @@
 - Prioritize code readability and maintainability.
 - Use clear and concise comments to explain code logic.
 
+
 # Language and Framework
 - Use Java for all code within the binding.
 - Leverage the OpenHAB API and related libraries.
@@ -14,6 +15,7 @@
 - Follow the OpenHAB binding development guidelines: https://www.openhab.org/docs/developer/bindings/
 - Organize code into appropriate packages (e.g., `org.openhab.binding.linkplay.internal`).
 - Create separate classes for things, handlers, and discovery.
+- Always use builtin OpenHAB libraries and minimize external libraries (for instance, JSON handling)
 
 # API Implementation
 - Refer to the Linkplay HTTP API documentation: https://developer.arylic.com/httpapi/#http-api
