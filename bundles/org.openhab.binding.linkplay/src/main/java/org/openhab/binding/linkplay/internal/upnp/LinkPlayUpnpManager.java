@@ -1,251 +1,311 @@
+/**
+ * Copyright (c) 2010-2024 Contributors to the openHAB project
+ *
+ * See the NOTICE file(s) distributed with this work for additional
+ * information.
+ *
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0
+ *
+ * SPDX-License-Identifier: EPL-2.0
+ */
 package org.openhab.binding.linkplay.internal.upnp;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
-import org.openhab.binding.linkplay.internal.device.LinkPlayDeviceManager;
+import org.openhab.binding.linkplay.internal.LinkPlayBindingConstants;
+import org.openhab.binding.linkplay.internal.handler.LinkPlayDeviceManager;
+import org.openhab.core.common.ThreadPoolManager;
 import org.openhab.core.io.transport.upnp.UpnpIOParticipant;
 import org.openhab.core.io.transport.upnp.UpnpIOService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.json.JsonObject;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
-
+/**
+ * The {@link LinkPlayUpnpManager} handles UPnP communication with a LinkPlay device.
+ * It manages UPnP subscriptions, renewals, and event handling.
+ *
+ * @author Michael Cumming - Initial contribution
+ */
 @NonNullByDefault
 public class LinkPlayUpnpManager implements UpnpIOParticipant {
 
     private static final Logger logger = LoggerFactory.getLogger(LinkPlayUpnpManager.class);
 
+    // Timing constants
+    private static final Duration SUBSCRIPTION_RENEWAL_PERIOD = Duration.ofMinutes(25);
+    private static final Duration SUBSCRIPTION_RETRY_DELAY = Duration.ofSeconds(10);
+    private static final Duration SUBSCRIPTION_EXPIRY = Duration.ofMinutes(30);
+    private static final int SUBSCRIPTION_DURATION = 1800; // 30 minutes in seconds
+
     private final UpnpIOService upnpIOService;
     private final LinkPlayDeviceManager deviceManager;
     private final String deviceId;
-    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
+    private final ScheduledExecutorService scheduler;
+    private final Map<String, Instant> subscriptionTimes;
+    private @Nullable ScheduledFuture<?> subscriptionRenewalFuture;
 
-    private @Nullable String udn; // Unique Device Name
+    private @Nullable String udn;
+    private volatile boolean isDisposed = false;
 
+    /**
+     * Constructs a new {@link LinkPlayUpnpManager}.
+     *
+     * @param upnpIOService The UPnP I/O service to use
+     * @param deviceManager The device manager this UPnP manager is associated with
+     * @param deviceId The device ID for logging and identification
+     */
     public LinkPlayUpnpManager(UpnpIOService upnpIOService, LinkPlayDeviceManager deviceManager, String deviceId) {
         this.upnpIOService = upnpIOService;
         this.deviceManager = deviceManager;
         this.deviceId = deviceId;
+        this.scheduler = ThreadPoolManager.getScheduledPool(LinkPlayBindingConstants.BINDING_ID + "-upnp");
+        this.subscriptionTimes = new ConcurrentHashMap<>();
     }
 
+    /**
+     * Registers the device for UPnP communication and sets up initial subscriptions.
+     *
+     * @param udn The UPnP Unique Device Name
+     */
     public void register(String udn) {
+        if (isDisposed) {
+            logger.debug("[{}] Ignoring registration request - manager is disposed", deviceId);
+            return;
+        }
+
         this.udn = udn;
         try {
-            upnpIOService.registerParticipant(this, udn);
-            deviceManager.setUpnpSubscriptionState(true);
-            logger.debug("Registered UPnP participant for UDN {}", udn);
+            upnpIOService.registerParticipant(this);
 
-            // Schedule periodic subscription renewal
+            // Add subscriptions for required services
+            addSubscription("AVTransport");
+            addSubscription("RenderingControl");
+
+            deviceManager.setUpnpSubscriptionState(true);
+            logger.debug("[{}] Registered UPnP participant with UDN: {}", deviceId, udn);
+
             scheduleSubscriptionRenewal();
-        } catch (Exception e) {
-            logger.warn("Failed to register UPnP participant: {}", e.getMessage());
+        } catch (RuntimeException e) {
+            logger.warn("[{}] Failed to register UPnP participant: {}", deviceId, e.getMessage());
+            if (logger.isDebugEnabled()) {
+                logger.debug("[{}] Registration error details:", deviceId, e);
+            }
             retryRegistration();
         }
     }
 
+    /**
+     * Unregisters the device from UPnP communication.
+     */
     public void unregister() {
-        if (udn != null) {
-            try {
-                upnpIOService.unregisterParticipant(this);
-                deviceManager.setUpnpSubscriptionState(false);
-                logger.debug("Unregistered UPnP participant for UDN {}", udn);
-            } catch (Exception e) {
-                logger.warn("Failed to unregister UPnP participant: {}", e.getMessage());
-            } finally {
-                scheduler.shutdownNow();
+        logger.debug("[{}] Unregistering UPnP participant", deviceId);
+        try {
+            upnpIOService.unregisterParticipant(this);
+            deviceManager.setUpnpSubscriptionState(false);
+            subscriptionTimes.clear();
+            udn = null;
+            logger.debug("[{}] UPnP participant unregistered", deviceId);
+        } catch (RuntimeException e) {
+            logger.warn("[{}] Failed to unregister UPnP participant: {}", deviceId, e.getMessage());
+            if (logger.isDebugEnabled()) {
+                logger.debug("[{}] Unregistration error details:", deviceId, e);
             }
         }
     }
 
+    /**
+     * Schedules periodic renewal of UPnP subscriptions.
+     */
     private void scheduleSubscriptionRenewal() {
-        scheduler.scheduleAtFixedRate(() -> {
+        ScheduledFuture<?> future = subscriptionRenewalFuture;
+        if (future != null && !future.isCancelled()) {
+            future.cancel(true);
+        }
+
+        subscriptionRenewalFuture = scheduler.scheduleAtFixedRate(() -> {
+            if (isDisposed) {
+                return;
+            }
+
             try {
-                if (udn != null) {
-                    upnpIOService.registerParticipant(this, udn);
-                    logger.debug("Renewed UPnP subscription for UDN {}", udn);
+                Instant now = Instant.now();
+                // Remove expired subscriptions
+                subscriptionTimes.entrySet().removeIf(entry -> {
+                    if (now.isAfter(entry.getValue().plus(SUBSCRIPTION_EXPIRY))) {
+                        logger.debug("[{}] Removing expired subscription for service: {}", deviceId, entry.getKey());
+                        return true;
+                    }
+                    return false;
+                });
+
+                // Renew subscriptions that are due
+                for (Map.Entry<String, Instant> entry : subscriptionTimes.entrySet()) {
+                    String service = entry.getKey();
+                    Instant lastSubscribed = entry.getValue();
+
+                    if (now.isAfter(lastSubscribed.plus(SUBSCRIPTION_RENEWAL_PERIOD))) {
+                        upnpIOService.addSubscription(this, service, SUBSCRIPTION_DURATION);
+                        subscriptionTimes.put(service, now);
+                        logger.debug("[{}] Renewed UPnP subscription for service: {}", deviceId, service);
+                    }
                 }
-            } catch (Exception e) {
-                logger.warn("Failed to renew UPnP subscription: {}", e.getMessage());
+            } catch (RuntimeException e) {
+                logger.warn("[{}] Failed to renew UPnP subscriptions: {}", deviceId, e.getMessage());
                 retryRegistration();
             }
-        }, 25, 25, TimeUnit.MINUTES); // Adjust interval based on UPnP timeout
+        }, SUBSCRIPTION_RENEWAL_PERIOD.toMinutes(), SUBSCRIPTION_RENEWAL_PERIOD.toMinutes(), TimeUnit.MINUTES);
     }
 
+    /**
+     * Retries UPnP registration after a failure.
+     */
     private void retryRegistration() {
-        scheduler.schedule(() -> {
-            if (udn != null) {
-                try {
-                    upnpIOService.registerParticipant(this, udn);
-                    logger.debug("UPnP subscription restored for UDN {}", udn);
-                } catch (Exception e) {
-                    logger.warn("Retrying UPnP registration failed: {}", e.getMessage());
-                }
-            }
-        }, 10, TimeUnit.SECONDS);
-    }
-
-    @Override
-    public void onValueReceived(String variable, String value, String service) {
-        logger.debug("[{}] Received UPnP value: variable={}, value={}, service={}", deviceId, variable, value, service);
-
-        if (variable == null || value == null || service == null) {
-            logger.debug("[{}] Skipping incomplete UPnP event", deviceId);
+        if (isDisposed) {
             return;
         }
 
-        try {
-            JsonObject upnpStatus = parseUpnpEvent(variable, value, service);
-            if (upnpStatus != null) {
-                deviceManager.updateChannelsFromUpnp(upnpStatus);
+        scheduler.schedule(() -> {
+            String localUdn = udn;
+            if (localUdn != null && subscriptionTimes.isEmpty()) {
+                try {
+                    upnpIOService.registerParticipant(this);
+                    logger.debug("[{}] UPnP subscription restored", deviceId);
+                } catch (RuntimeException e) {
+                    logger.warn("[{}] Retrying UPnP registration failed: {}", deviceId, e.getMessage());
+                    if (logger.isDebugEnabled()) {
+                        logger.debug("[{}] Retry error details:", deviceId, e);
+                    }
+                }
             }
-        } catch (Exception e) {
-            logger.warn("[{}] Error processing UPnP event: {}", deviceId, e.getMessage(), e);
+        }, SUBSCRIPTION_RETRY_DELAY.toSeconds(), TimeUnit.SECONDS);
+    }
+
+    @Override
+    public void onValueReceived(@Nullable String variable, @Nullable String value, @Nullable String service) {
+        if (isDisposed || variable == null || value == null || service == null) {
+            return;
+        }
+
+        // Log all UPnP events at trace level for debugging
+        logger.trace("[{}] Received UPnP value: variable={}, value={}, service={}", deviceId, variable, value, service);
+
+        try {
+            switch (service) {
+                case "urn:schemas-upnp-org:service:AVTransport:1" -> {
+                    logger.debug("[{}] Processing AVTransport event: {}={}", deviceId, variable, value);
+                    deviceManager.handleUpnpValue(variable, value, service);
+                }
+                case "urn:schemas-upnp-org:service:RenderingControl:1" -> {
+                    logger.debug("[{}] Processing RenderingControl event: {}={}", deviceId, variable, value);
+                    deviceManager.handleUpnpValue(variable, value, service);
+                }
+                default -> logger.debug("[{}] Ignored UPnP event from unsupported service: {}", deviceId, service);
+            }
+        } catch (RuntimeException e) {
+            logger.warn("[{}] Error handling UPnP value: {}", deviceId, e.getMessage());
+            if (logger.isDebugEnabled()) {
+                logger.debug("[{}] Value handling error details:", deviceId, e);
+            }
         }
     }
 
     @Override
-    public void onServiceSubscribed(String service) {
+    public void onServiceSubscribed(@Nullable String service, boolean succeeded) {
+        if (isDisposed || service == null || !succeeded) {
+            return;
+        }
+
         logger.debug("[{}] Subscribed to UPnP service: {}", deviceId, service);
+        subscriptionTimes.put(service, Instant.now());
         deviceManager.setUpnpSubscriptionState(true);
     }
 
     @Override
-    public void onServiceUnsubscribed(String service) {
-        logger.warn("[{}] Unsubscribed from UPnP service: {}", deviceId, service);
-        deviceManager.setUpnpSubscriptionState(false);
-        retryRegistration();
+    public @Nullable String getUDN() {
+        return udn;
     }
 
-    @Override
-    public boolean supportsDevice(String deviceType) {
-        return deviceType.equals("urn:schemas-upnp-org:device:MediaRenderer:1");
-    }
-
-    @Override
-    public @Nullable String getServiceType() {
-        return String.join(",",
-                "urn:schemas-upnp-org:service:AVTransport:1",
-                "urn:schemas-upnp-org:service:RenderingControl:1",
-                "urn:schemas-upnp-org:device:MediaRenderer:1");
-    }
-
-}
-    private @Nullable JsonObject parseUpnpEvent(String variable, String value, String service) {
-        JsonObject.Builder jsonBuilder = Json.createObjectBuilder();
+    /**
+     * Disposes of the UPnP manager resources.
+     */
+    public void dispose() {
+        isDisposed = true;
+        logger.debug("[{}] Disposing UPnP manager", deviceId);
 
         try {
-            switch (getServiceName(service)) {
-                case "AVTransport":
-                    handleAVTransportEvent(jsonBuilder, variable, value);
-                    break;
-                case "RenderingControl":
-                    handleRenderingControlEvent(jsonBuilder, variable, value);
-                    break;
-                case "MediaRenderer":
-                    handleMediaRendererEvent(jsonBuilder, variable, value);
-                    break;
-                default:
-                    logger.debug("[{}] Unhandled UPnP service: {}", deviceId, service);
-                    return null;
+            ScheduledFuture<?> future = subscriptionRenewalFuture;
+            if (future != null) {
+                future.cancel(true);
+                subscriptionRenewalFuture = null;
             }
+            unregister();
+            subscriptionTimes.clear();
+            scheduler.shutdownNow();
+            logger.debug("[{}] UPnP manager disposed successfully", deviceId);
+        } catch (RuntimeException e) {
+            logger.warn("[{}] Error during UPnP manager disposal: {}", deviceId, e.getMessage());
+            if (logger.isDebugEnabled()) {
+                logger.debug("[{}] Disposal error details:", deviceId, e);
+            }
+        }
+    }
+
+    @Override
+    public void onStatusChanged(boolean status) {
+        if (status) {
+            logger.debug("[{}] UPnP device {} is present", deviceId, getUDN());
+        } else {
+            logger.debug("[{}] UPnP device {} is absent", deviceId, getUDN());
+        }
+    }
+
+    public boolean registerDevice() {
+        if (upnpIOService == null) {
+            logger.warn("[{}] UpnpIOService not available", deviceId);
+            return false;
+        }
+
+        try {
+            upnpIOService.registerParticipant(this);
+            logger.debug("[{}] Successfully registered UPnP device", deviceId);
+            return true;
         } catch (Exception e) {
-            logger.warn("[{}] Error parsing UPnP event: {}", deviceId, e.getMessage(), e);
-            return null;
+            logger.warn("[{}] Failed to register UPnP device: {}", deviceId, e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Subscribes to a UPnP service.
+     *
+     * @param service The service to subscribe to (e.g. "AVTransport" or "RenderingControl")
+     */
+    public void addSubscription(String service) {
+        if (isDisposed) {
+            logger.debug("[{}] Ignoring subscription request - manager is disposed", deviceId);
+            return;
         }
 
-        return jsonBuilder.build();
-    }
-
-    private String getServiceName(String service) {
-        if (service.contains("AVTransport")) {
-            return "AVTransport";
-        } else if (service.contains("RenderingControl")) {
-            return "RenderingControl";
-        } else if (service.contains("MediaRenderer")) {
-            return "MediaRenderer";
+        String fullService = "urn:schemas-upnp-org:service:" + service + ":1";
+        try {
+            upnpIOService.addSubscription(this, fullService, SUBSCRIPTION_DURATION);
+            subscriptionTimes.put(fullService, Instant.now());
+            logger.debug("[{}] Added subscription for service: {}", deviceId, service);
+        } catch (RuntimeException e) {
+            logger.warn("[{}] Failed to add subscription for service {}: {}", deviceId, service, e.getMessage());
+            if (logger.isDebugEnabled()) {
+                logger.debug("[{}] Subscription error details:", deviceId, e);
+            }
         }
-        return "Unknown";
-    }
-
-private void handleAVTransportEvent(JsonObject.Builder jsonBuilder, String variable, String value) {
-    switch (variable) {
-        case "TransportState":
-            jsonBuilder.add("status", "PLAYING".equals(value) ? "play" : "pause");
-            break;
-        case "CurrentTrackMetaData":
-            if (!value.isEmpty()) {
-                DIDLParser.MetaData metadata = DIDLParser.parseMetadata(value);
-                if (metadata != null) {
-                    if (metadata.title != null) {
-                        jsonBuilder.add("Title", metadata.title);
-                    }
-                    if (metadata.artist != null) {
-                        jsonBuilder.add("Artist", metadata.artist);
-                    }
-                    if (metadata.album != null) {
-                        jsonBuilder.add("Album", metadata.album);
-                    }
-                    if (metadata.artworkUrl != null) {
-                        jsonBuilder.add("AlbumArt", metadata.artworkUrl);
-                    }
-                }
-            }
-            break;
-        case "CurrentTrackDuration":
-            if (!value.isEmpty() && !"NOT_IMPLEMENTED".equals(value)) {
-                String[] parts = value.split(":");
-                if (parts.length == 3) {
-                    int hours = Integer.parseInt(parts[0]);
-                    int minutes = Integer.parseInt(parts[1]);
-                    int seconds = Integer.parseInt(parts[2]);
-                    int totalSeconds = (hours * 3600) + (minutes * 60) + seconds;
-                    jsonBuilder.add("Duration", totalSeconds);
-                }
-            }
-            break;
-        default:
-            logger.debug("[{}] Unhandled AVTransport variable: {}", deviceId, variable);
-    }
-}
-
-private void handleRenderingControlEvent(JsonObject.Builder jsonBuilder, String variable, String value) {
-    switch (variable) {
-        case "Volume":
-            jsonBuilder.add("vol", Integer.parseInt(value));
-            break;
-        case "Mute":
-            jsonBuilder.add("mute", "1".equals(value));
-            break;
-        default:
-            logger.debug("[{}] Unhandled RenderingControl variable: {}", deviceId, variable);
-    }
-}
-private void handleMediaRendererEvent(JsonObject.Builder jsonBuilder, String variable, String value) {
-    switch (variable) {
-        case "PlaybackSpeed":
-            jsonBuilder.add("playbackSpeed", value);
-            break;
-        case "TransportStatus":
-            jsonBuilder.add("transportStatus", value);
-            break;
-        case "PlaybackPosition":
-            try {
-                String[] parts = value.split(":");
-                if (parts.length == 3) {
-                    int hours = Integer.parseInt(parts[0]);
-                    int minutes = Integer.parseInt(parts[1]);
-                    int seconds = Integer.parseInt(parts[2]);
-                    int totalSeconds = (hours * 3600) + (minutes * 60) + seconds;
-                    jsonBuilder.add("PlaybackPosition", totalSeconds);
-                }
-            } catch (NumberFormatException e) {
-                logger.warn("[{}] Invalid playback position value: {}", deviceId, value);
-            }
-            break;
-        default:
-            logger.debug("[{}] Unhandled MediaRenderer variable: {}", deviceId, variable);
     }
 }

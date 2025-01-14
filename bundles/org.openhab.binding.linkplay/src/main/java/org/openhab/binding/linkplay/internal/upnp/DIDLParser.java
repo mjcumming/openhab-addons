@@ -14,122 +14,70 @@ package org.openhab.binding.linkplay.internal.upnp;
 
 import java.io.IOException;
 import java.io.StringReader;
+import java.util.Collections;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.Map;
 
-import javax.xml.namespace.NamespaceContext;
-import javax.xml.parsers.DocumentBuilder;
-import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
-import javax.xml.xpath.XPath;
-import javax.xml.xpath.XPathConstants;
-import javax.xml.xpath.XPathExpressionException;
-import javax.xml.xpath.XPathFactory;
+import javax.xml.parsers.SAXParser;
+import javax.xml.parsers.SAXParserFactory;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.w3c.dom.Document;
-import org.w3c.dom.Node;
+import org.xml.sax.Attributes;
 import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
+import org.xml.sax.helpers.DefaultHandler;
 
 /**
- * Parser for UPnP DIDL and LastChange XML content
+ * Parser for DIDL-Lite XML content used in UPnP events
  *
  * @author Michael Cumming - Initial contribution
  */
 @NonNullByDefault
 public class DIDLParser {
+
     private static final Logger logger = LoggerFactory.getLogger(DIDLParser.class);
-
-    private static final NamespaceContext NAMESPACE_CONTEXT = new NamespaceContext() {
-        @Override
-        public String getNamespaceURI(String prefix) {
-            switch (prefix) {
-                case "dc":
-                    return "http://purl.org/dc/elements/1.1/";
-                case "upnp":
-                    return "urn:schemas-upnp-org:metadata-1-0/upnp/";
-                default:
-                    return null;
-            }
-        }
-
-        @Override
-        public String getPrefix(String namespaceURI) {
-            return null;
-        }
-
-        @Override
-        public Iterator<String> getPrefixes(String namespaceURI) {
-            return null;
-        }
-    };
-
-    public static class MetaData {
-        public String title = "";
-        public String artist = "";
-        public String album = "";
-        public String artworkUrl = "";
-
-        @Override
-        public String toString() {
-            return String.format("MetaData [title=%s, artist=%s, album=%s, artworkUrl=%s]", title, artist, album,
-                    artworkUrl);
-        }
-    }
 
     @Nullable
     public static Map<String, String> parseMetadata(String metadata) {
-        if (metadata == null || metadata.isEmpty()) {
+        if (metadata.isEmpty()) {
             return null;
         }
 
+        MetadataHandler handler = new MetadataHandler();
         try {
-            Document doc = parseXML(metadata);
-            Map<String, String> values = new HashMap<>();
-
-            // Extract standard DIDL-Lite fields
-            addIfNotNull(values, "title", extractValue(doc, "//dc:title"));
-            addIfNotNull(values, "artist", extractValue(doc, "//dc:creator"));
-            addIfNotNull(values, "album", extractValue(doc, "//upnp:album"));
-            addIfNotNull(values, "albumArtUri", extractValue(doc, "//upnp:albumArtURI"));
-
-            return values.isEmpty() ? null : values;
-        } catch (Exception e) {
+            SAXParserFactory factory = SAXParserFactory.newInstance();
+            SAXParser saxParser = factory.newSAXParser();
+            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            saxParser.getXMLReader().setFeature("http://xml.org/sax/features/external-general-entities", false);
+            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            saxParser.parse(new InputSource(new StringReader(metadata)), handler);
+            return handler.getValues();
+        } catch (IOException | SAXException | ParserConfigurationException e) {
             logger.debug("Error parsing DIDL-Lite metadata: {}", e.getMessage());
             return null;
         }
     }
 
-    private static void addIfNotNull(Map<String, String> map, String key, @Nullable String value) {
-        if (value != null && !value.isEmpty()) {
-            map.put(key, value);
-        }
-    }
-
     @Nullable
     public static Map<String, String> getAVTransportFromXML(String xml) {
-        if (xml == null || xml.isEmpty()) {
+        if (xml.isEmpty()) {
             return null;
         }
 
+        AVTransportHandler handler = new AVTransportHandler();
         try {
-            Document doc = parseXML(xml);
-            Map<String, String> values = new HashMap<>();
-
-            // Extract AVTransport specific fields
-            addIfNotNull(values, "TransportState", extractValue(doc, "//TransportState"));
-            addIfNotNull(values, "CurrentTrackMetaData", extractValue(doc, "//CurrentTrackMetaData"));
-            addIfNotNull(values, "CurrentTrackDuration", extractValue(doc, "//CurrentTrackDuration"));
-            addIfNotNull(values, "AVTransportURI", extractValue(doc, "//AVTransportURI"));
-            addIfNotNull(values, "NextAVTransportURI", extractValue(doc, "//NextAVTransportURI"));
-
-            return values.isEmpty() ? null : values;
-        } catch (Exception e) {
+            SAXParserFactory factory = SAXParserFactory.newInstance();
+            SAXParser saxParser = factory.newSAXParser();
+            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            saxParser.getXMLReader().setFeature("http://xml.org/sax/features/external-general-entities", false);
+            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            saxParser.parse(new InputSource(new StringReader(xml)), handler);
+            return handler.getValues();
+        } catch (IOException | SAXException | ParserConfigurationException e) {
             logger.debug("Error parsing AVTransport XML: {}", e.getMessage());
             return null;
         }
@@ -137,58 +85,158 @@ public class DIDLParser {
 
     @Nullable
     public static Map<String, String> getRenderingControlFromXML(String xml) {
-        if (xml == null || xml.isEmpty()) {
+        if (xml.isEmpty()) {
             return null;
         }
 
+        RenderingControlHandler handler = new RenderingControlHandler();
         try {
-            Document doc = parseXML(xml);
-            Map<String, String> values = new HashMap<>();
-
-            // Extract RenderingControl specific fields
-            addIfNotNull(values, "Volume", extractValue(doc, "//Volume"));
-            addIfNotNull(values, "Mute", extractValue(doc, "//Mute"));
-            addIfNotNull(values, "PresetNameList", extractValue(doc, "//PresetNameList"));
-            addIfNotNull(values, "CurrentPreset", extractValue(doc, "//CurrentPreset"));
-
-            return values.isEmpty() ? null : values;
-        } catch (Exception e) {
+            SAXParserFactory factory = SAXParserFactory.newInstance();
+            SAXParser saxParser = factory.newSAXParser();
+            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            saxParser.getXMLReader().setFeature("http://xml.org/sax/features/external-general-entities", false);
+            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            saxParser.parse(new InputSource(new StringReader(xml)), handler);
+            return handler.getValues();
+        } catch (IOException | SAXException | ParserConfigurationException e) {
             logger.debug("Error parsing RenderingControl XML: {}", e.getMessage());
             return null;
         }
     }
 
-    private static String getXPathValue(XPath xpath, String expression, Document doc) {
-        try {
-            return (String) xpath.evaluate(expression, doc, XPathConstants.STRING);
-        } catch (Exception e) {
-            return "";
+    private static class MetadataHandler extends DefaultHandler {
+        private final Map<String, String> values = new HashMap<>();
+        private StringBuilder currentValue = new StringBuilder();
+        private String currentElement = "";
+
+        @Override
+        public void startElement(@Nullable String uri, @Nullable String localName, @Nullable String qName,
+                @Nullable Attributes attributes) {
+            if (qName == null) {
+                return;
+            }
+            currentValue.setLength(0);
+            currentElement = qName;
+
+            // Get value from attribute if available
+            if (attributes != null && attributes.getValue("val") != null) {
+                addIfNotEmpty(values, qName, attributes.getValue("val"));
+            }
+        }
+
+        @Override
+        public void endElement(@Nullable String uri, @Nullable String localName, @Nullable String qName) {
+            if (qName == null) {
+                return;
+            }
+            switch (currentElement) {
+                case "dc:title":
+                    addIfNotEmpty(values, "title", currentValue.toString());
+                    break;
+                case "dc:creator":
+                    addIfNotEmpty(values, "artist", currentValue.toString());
+                    break;
+                case "upnp:album":
+                    addIfNotEmpty(values, "album", currentValue.toString());
+                    break;
+                case "upnp:albumArtURI":
+                    addIfNotEmpty(values, "albumArtUri", currentValue.toString());
+                    break;
+            }
+            currentElement = "";
+        }
+
+        public Map<String, String> getValues() {
+            return values.isEmpty() ? Collections.emptyMap() : values;
         }
     }
 
-    @Nullable
-    private static String extractValue(Document doc, String xpathExpression) {
-        try {
-            XPath xPath = XPathFactory.newInstance().newXPath();
-            xPath.setNamespaceContext(NAMESPACE_CONTEXT);
-            Node node = (Node) xPath.evaluate(xpathExpression, doc, XPathConstants.NODE);
-            return node != null ? node.getTextContent() : null;
-        } catch (XPathExpressionException e) {
-            logger.debug("Error evaluating XPath expression '{}': {}", xpathExpression, e.getMessage());
-            return null;
+    private static class AVTransportHandler extends DefaultHandler {
+        private final Map<String, String> values = new HashMap<>();
+        private StringBuilder currentValue = new StringBuilder();
+        private String currentElement = "";
+
+        @Override
+        public void startElement(@Nullable String uri, @Nullable String localName, @Nullable String qName,
+                @Nullable Attributes attributes) {
+            if (qName == null) {
+                return;
+            }
+            currentValue.setLength(0);
+            currentElement = qName;
+
+            // Get value from attribute if available
+            if (attributes != null && attributes.getValue("val") != null) {
+                addIfNotEmpty(values, qName, attributes.getValue("val"));
+            }
+        }
+
+        @Override
+        public void endElement(@Nullable String uri, @Nullable String localName, @Nullable String qName) {
+            if (qName == null) {
+                return;
+            }
+            switch (currentElement) {
+                case "TransportState":
+                case "CurrentTrackMetaData":
+                case "CurrentTrackDuration":
+                case "AVTransportURI":
+                case "NextAVTransportURI":
+                    addIfNotEmpty(values, currentElement, currentValue.toString());
+                    break;
+            }
+            currentElement = "";
+        }
+
+        public Map<String, String> getValues() {
+            return values.isEmpty() ? Collections.emptyMap() : values;
         }
     }
 
-    private static Document parseXML(String xml) throws ParserConfigurationException, SAXException, IOException {
-        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-        // Disable external entity processing
-        factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-        factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
-        factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
-        factory.setXIncludeAware(false);
-        factory.setExpandEntityReferences(false);
+    private static class RenderingControlHandler extends DefaultHandler {
+        private final Map<String, String> values = new HashMap<>();
+        private StringBuilder currentValue = new StringBuilder();
+        private String currentElement = "";
 
-        DocumentBuilder builder = factory.newDocumentBuilder();
-        return builder.parse(new InputSource(new StringReader(xml)));
+        @Override
+        public void startElement(@Nullable String uri, @Nullable String localName, @Nullable String qName,
+                @Nullable Attributes attributes) {
+            if (qName == null) {
+                return;
+            }
+            currentValue.setLength(0);
+            currentElement = qName;
+
+            // Get value from attribute if available
+            if (attributes != null && attributes.getValue("val") != null) {
+                addIfNotEmpty(values, qName, attributes.getValue("val"));
+            }
+        }
+
+        @Override
+        public void endElement(@Nullable String uri, @Nullable String localName, @Nullable String qName) {
+            if (qName == null) {
+                return;
+            }
+            switch (currentElement) {
+                case "Volume":
+                case "Mute":
+                case "PresetNameList":
+                case "CurrentPreset":
+                    addIfNotEmpty(values, currentElement, currentValue.toString());
+                    break;
+            }
+            currentElement = "";
+        }
+
+        public Map<String, String> getValues() {
+            return values.isEmpty() ? Collections.emptyMap() : values;
+        }
+    }
+
+    private static void addIfNotEmpty(Map<String, String> map, String key, String value) {
+        if (!value.trim().isEmpty()) {
+            map.put(key, value.trim());
+        }
     }
 }

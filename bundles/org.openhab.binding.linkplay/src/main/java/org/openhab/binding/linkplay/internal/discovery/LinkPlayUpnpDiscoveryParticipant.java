@@ -78,9 +78,6 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
     private static final ServiceId SERVICE_ID_AV_TRANSPORT = new UDAServiceId("AVTransport");
     private static final ServiceId SERVICE_ID_RENDERING_CONTROL = new UDAServiceId("RenderingControl");
 
-    private static final String PROPERTY_HAS_AVTRANSPORT = "hasAVTransport";
-    private static final String PROPERTY_HAS_RENDERING_CONTROL = "hasRenderingControl";
-
     @Activate
     protected void activate(ComponentContext context) {
         logger.debug("LinkPlay UPnP Discovery service activated");

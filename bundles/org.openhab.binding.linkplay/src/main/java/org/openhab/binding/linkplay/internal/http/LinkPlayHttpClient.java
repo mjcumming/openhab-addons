@@ -45,8 +45,8 @@ import com.google.gson.JsonParser;
  *
  * @author Michael Cumming - Initial contribution
  */
-@Component(service = LinkPlayHttpClient.class)
 @NonNullByDefault
+@Component(service = LinkPlayHttpClient.class)
 public class LinkPlayHttpClient {
 
     private final Logger logger = LoggerFactory.getLogger(LinkPlayHttpClient.class);
@@ -58,7 +58,7 @@ public class LinkPlayHttpClient {
     private static final int HTTP_PORT = 80;
 
     @Activate
-    public LinkPlayHttpClient(@Reference HttpClientFactory httpClientFactory) {
+    public LinkPlayHttpClient(final @Reference HttpClientFactory httpClientFactory) {
         logger.debug("Initializing LinkPlay HTTP client");
         this.httpClient = httpClientFactory.getCommonHttpClient();
 

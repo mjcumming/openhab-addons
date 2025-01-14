@@ -20,6 +20,7 @@ import java.util.regex.Pattern;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
+import org.openhab.binding.linkplay.internal.config.LinkPlayConfiguration;
 import org.openhab.binding.linkplay.internal.handler.LinkPlayThingHandler;
 import org.openhab.binding.linkplay.internal.http.LinkPlayHttpClient;
 import org.openhab.core.config.core.Configuration;
@@ -51,13 +52,13 @@ public class LinkPlayHandlerFactory extends BaseThingHandlerFactory {
     private final Logger logger = LoggerFactory.getLogger(LinkPlayHandlerFactory.class);
     private final Map<ThingUID, LinkPlayThingHandler> handlers = new HashMap<>();
     private final UpnpIOService upnpIOService;
-    private final LinkPlayHttpClient linkplayClient;
+    private final LinkPlayHttpClient httpClient;
 
     @Activate
     public LinkPlayHandlerFactory(final @Reference UpnpIOService upnpIOService,
-            final @Reference LinkPlayHttpClient linkplayClient) {
+            final @Reference LinkPlayHttpClient httpClient) {
         this.upnpIOService = upnpIOService;
-        this.linkplayClient = linkplayClient;
+        this.httpClient = httpClient;
     }
 
     @Override
@@ -75,13 +76,18 @@ public class LinkPlayHandlerFactory extends BaseThingHandlerFactory {
         }
 
         Configuration config = thing.getConfiguration();
-        String udn = (String) config.get(CONFIG_UDN);
-        String ipAddress = (String) config.get(CONFIG_IP_ADDRESS);
+        LinkPlayConfiguration linkplayConfig = LinkPlayConfiguration.fromConfiguration(config);
 
-        logger.debug("Creating LinkPlay handler for thing '{}' with UDN '{}' at IP {}", thing.getUID(), udn, ipAddress);
+        if (!linkplayConfig.isValid()) {
+            logger.error("Invalid configuration for thing {}", thing.getUID());
+            return null;
+        }
+
+        logger.debug("Creating LinkPlay handler for thing '{}' with UDN '{}' at IP {}", thing.getUID(),
+                linkplayConfig.getUdn(), linkplayConfig.getIpAddress());
 
         try {
-            LinkPlayThingHandler handler = new LinkPlayThingHandler(thing, upnpIOService, linkplayClient);
+            LinkPlayThingHandler handler = new LinkPlayThingHandler(thing, upnpIOService, httpClient);
             handlers.put(thing.getUID(), handler);
             return handler;
         } catch (Exception e) {
