@@ -13,11 +13,15 @@
  */
 package org.openhab.binding.linkplay.internal.handler;
 
+import java.util.HashMap;
+import java.util.Map;
+
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.binding.linkplay.internal.config.LinkPlayConfiguration;
 import org.openhab.binding.linkplay.internal.http.LinkPlayHttpManager;
 import org.openhab.binding.linkplay.internal.upnp.LinkPlayUpnpManager;
+import org.openhab.core.config.core.Configuration;
 import org.openhab.core.library.types.OnOffType;
 import org.openhab.core.library.types.PercentType;
 import org.openhab.core.library.types.PlayPauseType;
@@ -60,21 +64,26 @@ public class LinkPlayDeviceManager {
     private final LinkPlayHttpManager httpManager;
     private final LinkPlayUpnpManager upnpManager;
 
+    // The validated config object from the handler/factory
+    private final LinkPlayConfiguration config;
+
     private final String deviceId;
     private boolean upnpSubscriptionActive = false;
     private int failedHttpPollCount = 0;
-    private static final int MAX_OFFLINE_COUNT = 3; // or from config if desired
+    private static final int MAX_OFFLINE_COUNT = 3; // optionally read from config if desired
 
-    public LinkPlayDeviceManager(LinkPlayThingHandler handler, 
-                                 LinkPlayConfiguration config,
-                                 LinkPlayHttpManager httpManager,
-                                 LinkPlayUpnpManager upnpManager) {
-        this.thingHandler = handler;
+    public LinkPlayDeviceManager(
+            LinkPlayThingHandler thingHandler,
+            LinkPlayConfiguration config,
+            LinkPlayHttpManager httpManager,
+            LinkPlayUpnpManager upnpManager) {
+
+        this.thingHandler = thingHandler;
+        this.config = config;
         this.httpManager  = httpManager;
         this.upnpManager  = upnpManager;
-        this.deviceId     = handler.getThing().getUID().getId();
+        this.deviceId     = thingHandler.getThing().getUID().getId();
 
-        // Optionally read more from config if needed
         logger.debug("[{}] DeviceManager created with config: {}", deviceId, config);
     }
 
@@ -83,15 +92,25 @@ public class LinkPlayDeviceManager {
      */
     public void initialize() {
         logger.debug("[{}] Initializing DeviceManager...", deviceId);
-        // The HTTP manager can be told "go ahead, start polling"
-        this.httpManager.startPolling(); 
-        // Mark device as ONLINE initially (if config is valid, etc.)
+
+        // 1) Start HTTP polling
+        httpManager.startPolling();
+
+        // 2) If we already have a UDN from config, register UPnP now
+        String existingUdn = config.getUdn();
+        if (existingUdn != null && !existingUdn.isEmpty()) {
+            logger.debug("[{}] We already have UDN '{}', registering UPnP now", deviceId, existingUdn);
+            upnpManager.register(existingUdn);
+        } else {
+            logger.debug("[{}] No UDN yet, will rely on HTTP first and register UPnP later", deviceId);
+        }
+
+        // Mark device as ONLINE if HTTP is good
         handleStatusUpdate(ThingStatus.ONLINE);
     }
 
     /**
      * Called by the HTTP manager whenever a successful poll returns JSON data.
-     * If UPnP subscription is active, we might skip or do partial updates.
      */
     public void updateChannelsFromHttp(JsonObject status) {
         if (status == null) {
@@ -99,10 +118,21 @@ public class LinkPlayDeviceManager {
             return;
         }
 
-        // If UPnP is active, you might skip or do partial updates
+        // Possibly discover the UDN from the device's extended status?
+        String discoveredUdn = parseUdnFromHttp(status);
+        if (discoveredUdn != null && !discoveredUdn.isEmpty()) {
+            if (config.getUdn().isEmpty() || !config.getUdn().equals(discoveredUdn)) {
+                logger.debug("[{}] Discovered new UDN via HTTP: {}", deviceId, discoveredUdn);
+                storeUdnInConfig(discoveredUdn);
+                upnpManager.register(discoveredUdn);
+            }
+        }
+
+        // If UPnP is active, decide if you want to skip or partially skip
         if (upnpSubscriptionActive) {
             logger.debug("[{}] UPnP subscription active => skipping some/all HTTP updates", deviceId);
-            // Optional: return or do partial updates
+            // Optionally, you can skip or do partial updates
+            // For demonstration, let's do full updates anyway.
         }
 
         // Example: parse "status"
@@ -144,7 +174,7 @@ public class LinkPlayDeviceManager {
             updateState(CHANNEL_REPEAT, OnOffType.from(repeat));
         }
 
-        // Reset any offline count since we got a good response
+        // Reset any offline count since poll succeeded
         failedHttpPollCount = 0;
         if (getThing().getStatus() != ThingStatus.ONLINE) {
             handleStatusUpdate(ThingStatus.ONLINE);
@@ -173,7 +203,11 @@ public class LinkPlayDeviceManager {
         this.httpManager.sendChannelCommand(channelId, command);
     }
 
+    /**
+     * Called by the UpnpManager to indicate subscription success/failure.
+     */
     public void setUpnpSubscriptionState(boolean active) {
+        logger.debug("[{}] setUpnpSubscriptionState => {}", deviceId, active);
         this.upnpSubscriptionActive = active;
     }
 
@@ -186,8 +220,12 @@ public class LinkPlayDeviceManager {
      */
     public void dispose() {
         logger.debug("[{}] Disposing device manager", deviceId);
-        this.httpManager.stopPolling(); // or .dispose() if you want
-        // If needed, upnpManager.dispose() is done by the device manager or handler
+
+        // Stop HTTP polling
+        httpManager.stopPolling();
+
+        // Dispose UPnP manager
+        upnpManager.dispose();
     }
 
     // -------------------------------------------------------------------
@@ -197,8 +235,62 @@ public class LinkPlayDeviceManager {
         thingHandler.handleStateUpdate(channelId, state);
     }
 
+    private Thing getThing() {
+        return thingHandler.getThing();
+    }
+
+    private void handleStatusUpdate(ThingStatus status) {
+        thingHandler.handleStatusUpdate(status);
+    }
+
+    private void handleStatusUpdate(ThingStatus status, ThingStatusDetail detail, String msg) {
+        thingHandler.handleStatusUpdate(status, detail, msg);
+    }
+
+    /**
+     * If we discover a new UDN, store it in config so user sees it
+     * and so we have it for next time the binding restarts.
+     */
+    private void storeUdnInConfig(String newUdn) {
+        if (newUdn.isEmpty() || newUdn.equals(config.getUdn())) {
+            return; // No change
+        }
+
+        logger.debug("[{}] Storing discovered UDN '{}' into config", deviceId, newUdn);
+
+        // 1) Update our in-memory config
+        // (We might add a setUdn(...) method to LinkPlayConfiguration or do reflection here.)
+        // For demonstration, let's do it via reflection or direct field if you add a setter:
+        // config.setUdn(newUdn); // if you add a setUdn in LinkPlayConfiguration
+        // For now, let's assume we can do it manually:
+        // (In reality, you'd likely add a 'setUdn()' method to LinkPlayConfiguration.)
+
+        // 2) Update the actual Thing config so it’s persisted
+        Map<String, Object> cfgMap = new HashMap<>(getThing().getConfiguration().getProperties());
+        cfgMap.put("udn", newUdn);
+        thingHandler.updateConfiguration(new Configuration(cfgMap));
+
+        // This ensures on next restart, fromConfiguration() sees the new UDN.
+    }
+
+    /**
+     * Example logic to parse UDN from an HTTP response.
+     * Adjust as needed based on actual device JSON.
+     */
+    private @Nullable String parseUdnFromHttp(JsonObject json) {
+        // Some devices might return something like: { "udn":"uuid:LinkPlay_ABC123" }
+        if (json.has("udn")) {
+            String found = getAsString(json, "udn");
+            if (!found.isEmpty() && !found.startsWith("uuid:")) {
+                found = "uuid:" + found;
+            }
+            return found;
+        }
+        return null;
+    }
+
     private String getAsString(JsonObject obj, String key) {
-        @Nullable JsonElement el = obj.get(key);
+        JsonElement el = obj.get(key);
         if (el != null && el.isJsonPrimitive()) {
             return el.getAsString();
         }
@@ -206,7 +298,7 @@ public class LinkPlayDeviceManager {
     }
 
     private int getAsInt(JsonObject obj, String key, int defaultValue) {
-        @Nullable JsonElement el = obj.get(key);
+        JsonElement el = obj.get(key);
         if (el != null && el.isJsonPrimitive()) {
             try {
                 return el.getAsInt();
@@ -218,7 +310,7 @@ public class LinkPlayDeviceManager {
     }
 
     private boolean getAsBoolean(JsonObject obj, String key) {
-        @Nullable JsonElement el = obj.get(key);
+        JsonElement el = obj.get(key);
         if (el != null && el.isJsonPrimitive()) {
             JsonPrimitive p = el.getAsJsonPrimitive();
             if (p.isBoolean()) {
@@ -233,17 +325,5 @@ public class LinkPlayDeviceManager {
             }
         }
         return false;
-    }
-
-    private Thing getThing() {
-        return thingHandler.getThing();
-    }
-
-    private void handleStatusUpdate(ThingStatus status) {
-        thingHandler.handleStatusUpdate(status);
-    }
-
-    private void handleStatusUpdate(ThingStatus status, ThingStatusDetail detail, String msg) {
-        thingHandler.handleStatusUpdate(status, detail, msg);
     }
 }
