@@ -75,7 +75,9 @@ public class LinkPlayHandlerFactory extends BaseThingHandlerFactory {
             return null;
         }
 
+        // Pull the config from the Thing
         Configuration config = thing.getConfiguration();
+        // Convert to LinkPlayConfiguration, which does IP/UDN checks, etc.
         LinkPlayConfiguration linkplayConfig = LinkPlayConfiguration.fromConfiguration(config);
 
         if (!linkplayConfig.isValid()) {
@@ -83,11 +85,12 @@ public class LinkPlayHandlerFactory extends BaseThingHandlerFactory {
             return null;
         }
 
-        logger.debug("Creating LinkPlay handler for thing '{}' with UDN '{}' at IP {}", thing.getUID(),
-                linkplayConfig.getUdn(), linkplayConfig.getIpAddress());
+        logger.debug("Creating LinkPlay handler for thing '{}' with UDN '{}' at IP {}",
+                thing.getUID(), linkplayConfig.getUdn(), linkplayConfig.getIpAddress());
 
         try {
-            LinkPlayThingHandler handler = new LinkPlayThingHandler(thing, upnpIOService, httpClient);
+            // Pass the validated config object into the handler
+            LinkPlayThingHandler handler = new LinkPlayThingHandler(thing, upnpIOService, httpClient, linkplayConfig);
             handlers.put(thing.getUID(), handler);
             return handler;
         } catch (Exception e) {
@@ -104,7 +107,7 @@ public class LinkPlayHandlerFactory extends BaseThingHandlerFactory {
                     String.format("Thing type %s is not supported by the linkplay binding", thingTypeUID));
         }
 
-        // Validate basic configuration format
+        // Validate basic config
         if (!configuration.containsKey(CONFIG_IP_ADDRESS)) {
             throw new IllegalArgumentException("IP address is required");
         }
@@ -114,7 +117,10 @@ public class LinkPlayHandlerFactory extends BaseThingHandlerFactory {
             throw new IllegalArgumentException("Invalid IP address format: " + ipAddress);
         }
 
+        // Create a default UID if none is provided
         ThingUID deviceUID = thingUID != null ? thingUID : new ThingUID(thingTypeUID, ipAddress.replace('.', '_'));
+
+        // Add IP to the thing properties
         Map<String, String> properties = new HashMap<>();
         properties.put(PROPERTY_IP, ipAddress);
 
