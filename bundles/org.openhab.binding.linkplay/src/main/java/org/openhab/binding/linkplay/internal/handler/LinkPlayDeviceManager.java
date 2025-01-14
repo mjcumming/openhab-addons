@@ -34,9 +34,11 @@ import org.openhab.core.types.State;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonPrimitive;
+import javax.json.Json;
+import javax.json.JsonObject;
+import javax.json.JsonReader;
+import java.io.StringReader;
+
 
 /**
  * Revised LinkPlayDeviceManager that relies on the HttpManager for
@@ -289,41 +291,32 @@ public class LinkPlayDeviceManager {
         return null;
     }
 
-    private String getAsString(JsonObject obj, String key) {
-        JsonElement el = obj.get(key);
-        if (el != null && el.isJsonPrimitive()) {
-            return el.getAsString();
-        }
-        return "";
-    }
+private String getAsString(JsonObject obj, String key) {
+    return obj.containsKey(key) ? obj.getString(key, "") : "";
+}
 
-    private int getAsInt(JsonObject obj, String key, int defaultValue) {
-        JsonElement el = obj.get(key);
-        if (el != null && el.isJsonPrimitive()) {
-            try {
-                return el.getAsInt();
-            } catch (NumberFormatException ignore) {
-                // fall through
-            }
+private int getAsInt(JsonObject obj, String key, int defaultValue) {
+    if (obj.containsKey(key)) {
+        try {
+            return obj.getInt(key, defaultValue);
+        } catch (Exception e) {
+            logger.debug("Invalid integer value for key '{}': {}", key, e.getMessage());
         }
-        return defaultValue;
     }
+    return defaultValue;
+}
 
-    private boolean getAsBoolean(JsonObject obj, String key) {
-        JsonElement el = obj.get(key);
-        if (el != null && el.isJsonPrimitive()) {
-            JsonPrimitive p = el.getAsJsonPrimitive();
-            if (p.isBoolean()) {
-                return p.getAsBoolean();
-            }
-            if (p.isString()) {
-                String s = p.getAsString();
-                return s.equals("true") || s.equals("1");
-            }
-            if (p.isNumber()) {
-                return (p.getAsInt() == 1);
-            }
+private boolean getAsBoolean(JsonObject obj, String key) {
+    if (obj.containsKey(key)) {
+        try {
+            return obj.getBoolean(key);
+        } catch (Exception e) {
+            // Fallback for numeric or string representations
+            String value = obj.getString(key, "false");
+            return value.equalsIgnoreCase("true") || value.equals("1");
         }
-        return false;
     }
+    return false;
+}
+
 }
