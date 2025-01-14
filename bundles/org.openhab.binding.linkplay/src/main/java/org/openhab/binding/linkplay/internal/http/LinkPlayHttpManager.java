@@ -14,6 +14,8 @@ package org.openhab.binding.linkplay.internal.http;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
@@ -38,13 +40,18 @@ import com.google.gson.JsonParser;
 public class LinkPlayHttpManager {
 
     private static final Logger logger = LoggerFactory.getLogger(LinkPlayHttpManager.class);
-    private static final String THREAD_POOL_NAME = LinkPlayBindingConstants.BINDING_ID + "-http";
+    private static final String THREAD_POOL_NAME = ThreadPoolManager.getPoolName(LinkPlayBindingConstants.BINDING_ID);
+    private static final int DEFAULT_POLLING_INTERVAL_SECONDS = 10;
     private static final int DEFAULT_MAX_RETRIES = 3;
-    private static final long DEFAULT_RETRY_DELAY_MS = 1000;
+    private static final long DEFAULT_RETRY_DELAY_MS = 2000;
 
     private final LinkPlayHttpClient httpClient;
+    private final String deviceId;
     private final int maxRetries;
     private final long retryDelayMillis;
+    private @Nullable ScheduledFuture<?> pollingJob;
+    private final ScheduledExecutorService scheduler = ThreadPoolManager.getScheduledPool(THREAD_POOL_NAME);
+    private final LinkPlayDeviceManager deviceManager;
 
     /**
      * Constructs a new {@link LinkPlayHttpManager} with the given IP address.
@@ -53,7 +60,7 @@ public class LinkPlayHttpManager {
      * @param httpClient The HTTP client to use for communication
      * @param ipAddress The IP address of the LinkPlay device
      */
-    public LinkPlayHttpManager(LinkPlayHttpClient httpClient, String ipAddress) {
+    public LinkPlayHttpManager(LinkPlayHttpClient httpClient, String ipAddress, LinkPlayDeviceManager deviceManager) {
         if (ipAddress.isEmpty()) {
             throw new IllegalArgumentException("IP address cannot be empty");
         }
@@ -62,6 +69,8 @@ public class LinkPlayHttpManager {
         this.retryDelayMillis = DEFAULT_RETRY_DELAY_MS;
         logger.debug("Initialized LinkPlayHttpManager with default settings - maxRetries={}, retryDelay={}ms",
                 maxRetries, retryDelayMillis);
+        this.deviceId = ipAddress;
+        this.deviceManager = deviceManager;
     }
 
     /**
@@ -206,19 +215,39 @@ public class LinkPlayHttpManager {
     }
 
     /**
-     * Disposes of the HTTP manager and releases resources.
+     * Initializes HTTP communication and starts polling
      */
-    public void dispose() {
-        logger.debug("Disposing LinkPlayHttpManager");
-        try {
-            // Since httpClient is an OSGi component, we don't need to dispose it
-            // It will be handled by the OSGi framework
-            logger.debug("LinkPlayHttpManager disposed successfully");
-        } catch (RuntimeException e) {
-            logger.warn("Error during HTTP manager disposal: {}", e.getMessage());
-            if (logger.isDebugEnabled()) {
-                logger.debug("Disposal error details:", e);
-            }
+    public void initialize() {
+        logger.debug("[{}] Initializing HTTP manager", deviceId);
+        startPolling();
+    }
+
+    public void startPolling() {
+        if (pollingJob == null || pollingJob.isCancelled()) {
+            pollingJob = scheduler.scheduleWithFixedDelay(this::poll, 0, DEFAULT_POLLING_INTERVAL_SECONDS,
+                    TimeUnit.SECONDS);
+            logger.debug("[{}] Started HTTP polling", deviceId);
         }
+    }
+
+    public void stopPolling() {
+        if (pollingJob != null) {
+            pollingJob.cancel(true);
+            pollingJob = null;
+            logger.debug("[{}] Stopped HTTP polling", deviceId);
+        }
+    }
+
+    private void poll() {
+        httpClient.getPlayerStatus(deviceId)
+            .thenAccept(status -> deviceManager.updateChannelsFromHttp(status))
+            .exceptionally(e -> {
+                logger.warn("[{}] Polling failed: {}", deviceId, e.getMessage());
+                return null;
+            });
+    }
+
+    public void dispose() {
+        stopPolling();
     }
 }

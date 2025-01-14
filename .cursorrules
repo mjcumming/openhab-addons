@@ -25,7 +25,7 @@
 - Use the Python Linkplay API implementation for reference: https://github.com/Velleman/python-linkplay/tree/main/src/linkplay
 - Implement robust error handling and retry mechanisms.
 
-Here is the updated `.cursorrules` file with all the requested details, structured comprehensively for developers working on the LinkPlay binding.
+
 
 ---
 

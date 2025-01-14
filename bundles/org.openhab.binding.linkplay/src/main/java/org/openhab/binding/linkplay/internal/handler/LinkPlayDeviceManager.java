@@ -18,8 +18,6 @@ import static org.openhab.binding.linkplay.internal.LinkPlayBindingConstants.PRO
 
 import java.util.Optional;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
@@ -56,7 +54,6 @@ import com.google.gson.JsonPrimitive;
 public class LinkPlayDeviceManager {
 
     private static final Logger logger = LoggerFactory.getLogger(LinkPlayDeviceManager.class);
-    private static final int DEFAULT_POLLING_INTERVAL_SECONDS = 10;
 
     // Channel IDs from LinkPlayBindingConstants
     protected static final String CHANNEL_CONTROL = LinkPlayBindingConstants.CHANNEL_CONTROL;
@@ -69,13 +66,11 @@ public class LinkPlayDeviceManager {
 
     private final String ipAddress;
     private final String deviceId;
-    private final ScheduledExecutorService scheduler;
     private final LinkPlayThingHandler thingHandler;
     protected final LinkPlayHttpManager httpManager;
     protected final LinkPlayUpnpManager upnpManager;
     protected final LinkPlayGroupManager groupManager;
 
-    private @Nullable ScheduledFuture<?> pollingJob;
     private boolean upnpSubscriptionActive = false;
     private static final int MAX_OFFLINE_COUNT = 3;
     private int failedPollCount = 0;
@@ -89,7 +84,6 @@ public class LinkPlayDeviceManager {
         Thing thing = thingHandler.getThing();
         this.ipAddress = thing.getConfiguration().get("ipAddress").toString();
         this.deviceId = thing.getUID().getId();
-        this.scheduler = scheduler;
 
         // Create managers
         this.httpManager = new LinkPlayHttpManager(httpClient, ipAddress);
@@ -106,7 +100,7 @@ public class LinkPlayDeviceManager {
         logger.debug("[{}] Initializing device manager", deviceId);
 
         try {
-            // Initialize UPnP first
+            // Initialize UPnP
             String udn = thingHandler.getThing().getConfiguration().get(PROPERTY_UDN).toString();
             if (udn != null && !udn.isEmpty()) {
                 upnpManager.register(udn);
@@ -115,8 +109,7 @@ public class LinkPlayDeviceManager {
                 logger.warn("[{}] No UDN configured, UPnP features will be disabled", deviceId);
             }
 
-            // Start HTTP polling
-            startPolling();
+            // Initialize HTTP communication
             handleStatusUpdate(ThingStatus.ONLINE);
             logger.debug("[{}] Device manager initialized successfully", deviceId);
         } catch (RuntimeException e) {
@@ -210,46 +203,6 @@ public class LinkPlayDeviceManager {
                 handleStatusUpdate(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
                         "Device not reachable after " + MAX_OFFLINE_COUNT + " attempts");
             }
-        }
-    }
-
-    /**
-     * Starts periodic polling to retrieve device status.
-     */
-    private void startPolling() {
-        stopPolling();
-
-        pollingJob = scheduler.scheduleWithFixedDelay(() -> {
-            try {
-                httpManager.sendCommandWithRetry(ipAddress, "getPlayerStatus").thenAccept(response -> {
-                    updateDeviceStatusBasedOnHttp(true);
-                    logger.debug("[{}] Polling response: {}", deviceId, response);
-                    try {
-                        JsonObject jsonResponse = JsonParser.parseString(response).getAsJsonObject();
-                        updateChannelsFromHttp(jsonResponse);
-                    } catch (Exception e) {
-                        logger.warn("[{}] Failed to parse player status response: {}", deviceId, e.getMessage());
-                    }
-                }).exceptionally(error -> {
-                    logger.warn("[{}] Failed to poll player status: {}", deviceId, error.getMessage());
-                    updateDeviceStatusBasedOnHttp(false);
-                    return null;
-                });
-            } catch (RuntimeException e) {
-                logger.warn("[{}] Error during polling execution: {}", deviceId, e.getMessage());
-                updateDeviceStatusBasedOnHttp(false);
-            }
-        }, 0, DEFAULT_POLLING_INTERVAL_SECONDS, TimeUnit.SECONDS);
-    }
-
-    /**
-     * Stops the polling job if it exists.
-     */
-    private void stopPolling() {
-        ScheduledFuture<?> job = pollingJob;
-        if (job != null && !job.isCancelled()) {
-            job.cancel(true);
-            pollingJob = null;
         }
     }
 
@@ -484,8 +437,6 @@ public class LinkPlayDeviceManager {
         String bridgeId = Optional.ofNullable(thing.getBridgeUID()).map(uid -> uid.toString()).orElse("None");
         String firmware = thing.getProperties().getOrDefault("firmwareVersion", "Unknown");
         String statusDetail = thing.getStatusInfo().getStatusDetail().toString();
-        String pollingStatus = Optional.ofNullable(pollingJob).map(job -> !job.isCancelled() ? "Active" : "Inactive")
-                .orElse("Inactive");
 
         return String.format("""
                 Device Diagnostics:
@@ -494,12 +445,11 @@ public class LinkPlayDeviceManager {
                 - Thing Status: %s
                 - Thing Status Detail: %s
                 - UPnP Subscription: %s
-                - Polling Active: %s
                 - Failed Poll Count: %d
                 - Bridge: %s
                 - Firmware: %s
                 """, deviceId, ipAddress, thing.getStatus(), statusDetail,
-                upnpSubscriptionActive ? "Active" : "Inactive", pollingStatus, failedPollCount, bridgeId, firmware);
+                upnpSubscriptionActive ? "Active" : "Inactive", failedPollCount, bridgeId, firmware);
     }
 
     /**
@@ -507,22 +457,26 @@ public class LinkPlayDeviceManager {
      */
     public void dispose() {
         logger.debug("[{}] Disposing device manager", deviceId);
+        
+        // First dispose UPnP manager to stop events
         try {
-            stopPolling();
-            groupManager.dispose();
-            upnpManager.unregister();
-            httpManager.dispose();
-
-            failedPollCount = 0;
-            upnpSubscriptionActive = false;
-
-            logger.debug("[{}] Device manager disposed successfully", deviceId);
-        } catch (RuntimeException e) {
-            logger.warn("[{}] Error during device manager disposal: {}", deviceId, e.getMessage());
-            if (logger.isDebugEnabled()) {
-                logger.debug("[{}] Disposal error details:", deviceId, e);
+            if (upnpManager != null) {
+                upnpManager.dispose();
             }
+        } catch (Exception e) {
+            logger.warn("[{}] Error disposing UPnP manager: {}", deviceId, e.getMessage());
         }
+
+        // Then dispose HTTP manager
+        try {
+            if (httpManager != null) {
+                httpManager.dispose();
+            }
+        } catch (Exception e) {
+            logger.warn("[{}] Error disposing HTTP manager: {}", deviceId, e.getMessage());
+        }
+
+        logger.debug("[{}] Device manager disposed", deviceId);
     }
 
     /**
