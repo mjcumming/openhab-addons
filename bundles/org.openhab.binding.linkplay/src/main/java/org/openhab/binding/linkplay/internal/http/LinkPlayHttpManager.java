@@ -10,20 +10,21 @@
  *
  * SPDX-License-Identifier: EPL-2.0
  */
+
 package org.openhab.binding.linkplay.internal.http;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
-import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
-import org.eclipse.jdt.annotation.Nullable;
+import org.eclipse.jetty.client.api.ContentResponse;
 import org.openhab.binding.linkplay.internal.LinkPlayBindingConstants;
 import org.openhab.binding.linkplay.internal.config.LinkPlayConfiguration;
+import org.openhab.binding.linkplay.internal.handler.LinkPlayDeviceManager;
 import org.openhab.core.common.ThreadPoolManager;
-import org.openhab.core.types.State;
+import org.openhab.core.types.Command;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -36,218 +37,168 @@ import com.google.gson.JsonParser;
  *
  * @author Michael Cumming - Initial contribution
  */
+/**
 @NonNullByDefault
 public class LinkPlayHttpManager {
 
     private static final Logger logger = LoggerFactory.getLogger(LinkPlayHttpManager.class);
-    private static final String THREAD_POOL_NAME = ThreadPoolManager.getPoolName(LinkPlayBindingConstants.BINDING_ID);
-    private static final int DEFAULT_POLLING_INTERVAL_SECONDS = 10;
-    private static final int DEFAULT_MAX_RETRIES = 3;
-    private static final long DEFAULT_RETRY_DELAY_MS = 2000;
 
     private final LinkPlayHttpClient httpClient;
-    private final String deviceId;
-    private final int maxRetries;
-    private final long retryDelayMillis;
-    private @Nullable ScheduledFuture<?> pollingJob;
-    private final ScheduledExecutorService scheduler = ThreadPoolManager.getScheduledPool(THREAD_POOL_NAME);
     private final LinkPlayDeviceManager deviceManager;
+    private final int maxRetries;
+    private final long retryDelayMs;
+    private final int pollingIntervalSeconds;
 
-    /**
-     * Constructs a new {@link LinkPlayHttpManager} with the given IP address.
-     * Creates and manages its own HTTP client with default configuration.
-     *
-     * @param httpClient The HTTP client to use for communication
-     * @param ipAddress The IP address of the LinkPlay device
-     */
-    public LinkPlayHttpManager(LinkPlayHttpClient httpClient, String ipAddress, LinkPlayDeviceManager deviceManager) {
-        if (ipAddress.isEmpty()) {
-            throw new IllegalArgumentException("IP address cannot be empty");
-        }
-        this.httpClient = httpClient;
-        this.maxRetries = DEFAULT_MAX_RETRIES;
-        this.retryDelayMillis = DEFAULT_RETRY_DELAY_MS;
-        logger.debug("Initialized LinkPlayHttpManager with default settings - maxRetries={}, retryDelay={}ms",
-                maxRetries, retryDelayMillis);
-        this.deviceId = ipAddress;
+    private ScheduledFuture<?> pollingJob;
+
+    public LinkPlayHttpManager(LinkPlayHttpClient client,
+                               LinkPlayDeviceManager deviceManager,
+                               LinkPlayConfiguration config) {
+        this.httpClient = client;
         this.deviceManager = deviceManager;
+
+        // Use config-based values
+        this.maxRetries = config.getMaxRetries() > 0 ? config.getMaxRetries() : 3;
+        this.retryDelayMs = config.getRetryDelayMillis() > 0 ? config.getRetryDelayMillis() : 2000;
+        // If your config has a pollingInterval field:
+        this.pollingIntervalSeconds = Math.max(config.getPollingInterval(), 10); // fallback to 10 if <10
+
+        logger.debug("LinkPlayHttpManager created: maxRetries={}, retryDelayMs={}, pollInterval={}s",
+                maxRetries, retryDelayMs, pollingIntervalSeconds);
     }
 
     /**
-     * Constructs a new {@link LinkPlayHttpManager}.
-     *
-     * @param httpClient The HTTP client to use for communication
-     * @param config The binding configuration containing retry settings
+     * Starts periodic polling using the configured interval.
      */
-    protected LinkPlayHttpManager(LinkPlayHttpClient httpClient, LinkPlayConfiguration config) {
-        this.httpClient = httpClient;
-        this.maxRetries = config.getMaxRetries() > 0 ? config.getMaxRetries() : DEFAULT_MAX_RETRIES;
-        this.retryDelayMillis = config.getRetryDelayMillis() > 0 ? config.getRetryDelayMillis()
-                : DEFAULT_RETRY_DELAY_MS;
-
-        logger.debug("Initialized LinkPlayHttpManager with maxRetries={}, retryDelay={}ms", maxRetries,
-                retryDelayMillis);
-    }
-
-    /**
-     * Sends a command to the LinkPlay device with retry logic.
-     *
-     * @param ipAddress The IP address of the LinkPlay device
-     * @param command The command to send
-     * @return A CompletableFuture containing the response as a String
-     * @throws IllegalArgumentException if ipAddress or command is empty
-     */
-    public CompletableFuture<String> sendCommandWithRetry(String ipAddress, String command) {
-        if (ipAddress.isEmpty()) {
-            return CompletableFuture.failedFuture(new IllegalArgumentException("IP address cannot be empty"));
-        }
-        if (command.isEmpty()) {
-            return CompletableFuture.failedFuture(new IllegalArgumentException("Command cannot be empty"));
-        }
-
-        logger.debug("Sending command '{}' to device at {}", command, ipAddress);
-        return sendWithRetry(() -> httpClient.sendCommand(ipAddress, command), maxRetries, retryDelayMillis)
-                .exceptionally(error -> {
-                    handleCommunicationError(error);
-                    throw new CompletionException(
-                            new LinkPlayCommunicationException("Failed to send command: " + error.getMessage(), error));
-                });
-    }
-
-    /**
-     * Generic retry logic with exponential backoff.
-     *
-     * @param task The task to execute
-     * @param retriesLeft The number of retries remaining
-     * @param delayMillis The initial delay between retries
-     * @return A CompletableFuture containing the task result
-     */
-    private <T> CompletableFuture<T> sendWithRetry(RetryableTask<T> task, int retriesLeft, long delayMillis) {
-        return task.execute().exceptionally(error -> {
-            handleCommunicationError(error);
-
-            if (retriesLeft <= 0) {
-                throw new CompletionException(error);
-            }
-
-            long nextDelay = calculateExponentialBackoff(retriesLeft, delayMillis);
-            logger.debug("Retrying request after {} ms ({} retries left)", nextDelay, retriesLeft);
-
-            return CompletableFuture.supplyAsync(() -> {
-                try {
-                    return sendWithRetry(task, retriesLeft - 1, delayMillis).get();
-                } catch (Exception e) {
-                    throw new CompletionException(e);
-                }
-            }, CompletableFuture.delayedExecutor(nextDelay, TimeUnit.MILLISECONDS,
-                    ThreadPoolManager.getScheduledPool(THREAD_POOL_NAME))).join();
-        });
-    }
-
-    /**
-     * Calculates exponential backoff with jitter.
-     *
-     * @param retriesLeft The number of retries remaining
-     * @param baseDelay The base delay in milliseconds
-     * @return The calculated delay with jitter
-     */
-    private long calculateExponentialBackoff(int retriesLeft, long baseDelay) {
-        double jitterFactor = 0.5 + Math.random(); // Random factor between 0.5 and 1.5
-        long exponentialDelay = baseDelay * (1L << (maxRetries - retriesLeft));
-        return (long) (exponentialDelay * jitterFactor);
-    }
-
-    /**
-     * Handles communication errors by logging them.
-     *
-     * @param error The error that occurred
-     */
-    protected void handleCommunicationError(Throwable error) {
-        String message = error.getMessage();
-        if (message == null) {
-            message = "Communication error: " + error.getClass().getSimpleName();
-        }
-        logger.warn("HTTP communication error: {}", message);
-    }
-
-    /**
-     * Updates a channel state with the given value.
-     * This implementation only logs the update attempt.
-     *
-     * @param channelId The ID of the channel to update
-     * @param state The new state value
-     */
-    protected void updateChannelState(String channelId, State state) {
-        logger.debug("Channel state update requested - channelId: {}, state: {}", channelId, state);
-    }
-
-    /**
-     * Parses an HTTP response into a JSON object.
-     *
-     * @param response The HTTP response string
-     * @return The parsed JSON object or null if parsing fails
-     */
-    protected @Nullable JsonObject parseHttpResponse(String response) {
-        if (response.isEmpty()) {
-            logger.debug("Empty response received");
-            return null;
-        }
-
-        try {
-            return JsonParser.parseString(response).getAsJsonObject();
-        } catch (Exception e) {
-            logger.warn("Failed to parse HTTP response: {}", e.getMessage());
-            if (logger.isDebugEnabled()) {
-                logger.debug("Parse error details:", e);
-            }
-            return null;
-        }
-    }
-
-    /**
-     * Functional interface for retryable tasks.
-     *
-     * @param <T> The task result type
-     */
-    @FunctionalInterface
-    private interface RetryableTask<T> {
-        CompletableFuture<T> execute();
-    }
-
-    /**
-     * Initializes HTTP communication and starts polling
-     */
-    public void initialize() {
-        logger.debug("[{}] Initializing HTTP manager", deviceId);
-        startPolling();
-    }
-
     public void startPolling() {
-        if (pollingJob == null || pollingJob.isCancelled()) {
-            pollingJob = scheduler.scheduleWithFixedDelay(this::poll, 0, DEFAULT_POLLING_INTERVAL_SECONDS,
-                    TimeUnit.SECONDS);
-            logger.debug("[{}] Started HTTP polling", deviceId);
+        if (pollingJob != null && !pollingJob.isCancelled()) {
+            logger.debug("Polling is already running");
+            return;
         }
+
+        pollingJob = ThreadPoolManager.getScheduledPool(LinkPlayBindingConstants.BINDING_ID + "-http")
+                .scheduleWithFixedDelay(this::poll, 0, pollingIntervalSeconds, TimeUnit.SECONDS);
+        logger.debug("Started HTTP polling every {}s", pollingIntervalSeconds);
     }
 
     public void stopPolling() {
         if (pollingJob != null) {
             pollingJob.cancel(true);
             pollingJob = null;
-            logger.debug("[{}] Stopped HTTP polling", deviceId);
+            logger.debug("Stopped HTTP polling");
         }
     }
 
+    /**
+     * Periodic poll method, retrieves player status from device,
+     * parses JSON, and notifies deviceManager.
+     */
     private void poll() {
-        httpClient.getPlayerStatus(deviceId)
-            .thenAccept(status -> deviceManager.updateChannelsFromHttp(status))
-            .exceptionally(e -> {
-                logger.warn("[{}] Polling failed: {}", deviceId, e.getMessage());
+        httpClient.getPlayerStatus(getDeviceIp())
+            .thenAccept(rawString -> {
+                // parse JSON here
+                JsonObject json = parseJsonSafely(rawString);
+                if (json == null) {
+                    // If parse fails or returns null, treat as poll failure
+                    deviceManager.handleHttpPollFailure(new RuntimeException("Invalid JSON from poll"));
+                } else {
+                    deviceManager.updateChannelsFromHttp(json);
+                }
+            })
+            .exceptionally(error -> {
+                deviceManager.handleHttpPollFailure(error);
                 return null;
             });
+    }
+
+    /**
+     * Used by the device manager's handleCommand(...) to forward commands.
+     */
+    public void sendChannelCommand(String channelId, Command command) {
+        String ipAddress = getDeviceIp();
+        // Convert (channelId, command) into a "command string" and call httpClient
+        // Or you can do further logic here:
+        String cmd;
+        switch (channelId) {
+            case LinkPlayBindingConstants.CHANNEL_CONTROL:
+                cmd = formatControlCommand(command);
+                break;
+            case LinkPlayBindingConstants.CHANNEL_VOLUME:
+                cmd = formatVolumeCommand(command);
+                break;
+            // etc. for other channels
+            default:
+                logger.debug("No mapping found for channel {} => command={}", channelId, command);
+                return;
+        }
+
+        // Actually send to device with optional retries
+        // (If you want advanced retry logic, you can replicate the sendWithRetry approach.)
+        httpClient.sendCommand(ipAddress, cmd)
+                  .thenAccept(rawResponse -> {
+                      // parse response if needed, maybe update device manager if it includes status
+                      logger.debug("Command response: {}", rawResponse);
+                  })
+                  .exceptionally(ex -> {
+                      deviceManager.handleHttpPollFailure(ex);
+                      return null;
+                  });
+    }
+
+    private String formatControlCommand(Command cmd) {
+        // e.g. "setPlayerCmd:play" or "pause" etc.
+        if (cmd.toString().equalsIgnoreCase("play")) {
+            return "setPlayerCmd:play";
+        } else if (cmd.toString().equalsIgnoreCase("pause")) {
+            return "setPlayerCmd:pause";
+        }
+        logger.debug("Unhandled control command: {}", cmd);
+        return "setPlayerCmd:pause";
+    }
+
+    private String formatVolumeCommand(Command cmd) {
+        // e.g. "setPlayerCmd:vol:NN"
+        try {
+            int volume = Integer.parseInt(cmd.toString());
+            return "setPlayerCmd:vol:" + volume;
+        } catch (NumberFormatException e) {
+            logger.warn("Volume command not an int: {}", cmd);
+            return "setPlayerCmd:vol:50";
+        }
+    }
+
+    /**
+     * Helper to parse raw JSON string into a JsonObject safely, returning null on failure.
+     */
+    private JsonObject parseJsonSafely(String raw) {
+        if (raw.isEmpty()) {
+            return null;
+        }
+        try {
+            return JsonParser.parseString(raw).getAsJsonObject();
+        } catch (Exception e) {
+            logger.warn("Failed to parse JSON: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Called by the constructor or the poll method to get the device IP,
+     * if you have it in config or from the device manager. 
+     * 
+     * For demonstration, returns deviceManager's device if needed,
+     * or you might store an ipAddress field in HttpManager.
+     */
+    private String getDeviceIp() {
+        // For example, if DeviceManager had an 'ipAddress' property accessible:
+        // return deviceManager.getIpAddress();
+        // 
+        // If not, you might store it in your LinkPlayConfiguration at creation time.
+        return deviceManager.getThing().getConfiguration().get("ipAddress").toString();
     }
 
     public void dispose() {
         stopPolling();
     }
 }
+
