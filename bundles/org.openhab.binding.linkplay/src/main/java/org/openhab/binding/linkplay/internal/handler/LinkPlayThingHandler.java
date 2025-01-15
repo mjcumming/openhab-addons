@@ -36,6 +36,7 @@ import org.openhab.core.thing.ChannelGroup;
  * The {@link LinkPlayThingHandler} is responsible for handling commands and status updates for LinkPlay devices.
  * It manages the lifecycle of a LinkPlay device and integrates with the Device Manager.
  *
+ * author Michael Cumming - Initial contribution
  */
 @NonNullByDefault
 public class LinkPlayThingHandler extends BaseThingHandler {
