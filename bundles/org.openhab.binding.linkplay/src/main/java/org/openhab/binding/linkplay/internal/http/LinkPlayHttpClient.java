@@ -4,15 +4,16 @@
  * See the NOTICE file(s) distributed with this work for additional
  * information.
  *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0
+ * This program and the accompanying materials are made available
+ * under the terms of the Eclipse Public License 2.0
+ * which is available at http://www.eclipse.org/legal/epl-2.0
  *
  * SPDX-License-Identifier: EPL-2.0
  */
 package org.openhab.binding.linkplay.internal.http;
 
-import static org.openhab.binding.linkplay.internal.LinkPlayBindingConstants.*;
+import static org.openhab.binding.linkplay.internal.LinkPlayBindingConstants.CHANNEL_VOLUME;
+import static org.openhab.binding.linkplay.internal.LinkPlayBindingConstants.CONFIG_IP_ADDRESS;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -35,42 +36,63 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * The {@link LinkPlayHttpClient} handles all HTTP interactions with the LinkPlay device.
- *
+ * The {@link LinkPlayHttpClient} is responsible for low-level HTTP interactions with a LinkPlay device.
+ * <p>
+ * Key features:
+ *  - Tries multiple HTTPS ports (443, 4443), then falls back to HTTP on port 80.
+ *  - Uses a custom SSL context (mutual TLS) if needed.
+ *  - Provides async methods returning {@link CompletableFuture} for concurrency.
+ *  - Does minimal error-checking in responses (e.g. "error" or "fail").
+ * 
  * @author Michael Cumming - Initial contribution
  */
 @NonNullByDefault
 @Component(service = LinkPlayHttpClient.class)
 public class LinkPlayHttpClient {
 
-    private final Logger logger = LoggerFactory.getLogger(LinkPlayHttpClient.class);
+    private static final Logger logger = LoggerFactory.getLogger(LinkPlayHttpClient.class);
 
-    private final HttpClient httpClient;
-    private final HttpClient sslHttpClient;
-
-    // Default timeouts
-    private static final int TIMEOUT_MS = 2000;
+    // Default fallback ports
     private static final int[] HTTPS_PORTS = { 443, 4443 };
     private static final int HTTP_PORT = 80;
 
+    // Timeout for each request
+    private static final int TIMEOUT_MS = 2000;
+
+    private final HttpClient httpClient;     // for plain HTTP
+    private final HttpClient sslHttpClient;  // for HTTPS
+
+    /**
+     * Constructor sets up two Jetty HttpClients:
+     *  - A standard one from openHAB's HttpClientFactory (no TLS).
+     *  - A custom TLS-enabled client from {@link LinkPlaySslUtil}.
+     */
     @Activate
-    public LinkPlayHttpClient(final @Reference HttpClientFactory httpClientFactory) {
-        logger.debug("Initializing LinkPlay HTTP client");
+    public LinkPlayHttpClient(@Reference HttpClientFactory httpClientFactory) {
+        logger.debug("Initializing LinkPlay HTTP client (plain + SSL)...");
+
+        // Plain HTTP client from openHAB's shared "commonHttpClient"
         this.httpClient = httpClientFactory.getCommonHttpClient();
 
-        // Create a separate SSL context + client for HTTPS
+        // Build an SSL context trusting all or a specific embedded cert
         try {
             X509TrustManager trustManager = LinkPlaySslUtil.createLearningTrustManager(true, null);
             SSLContext sslContext = LinkPlaySslUtil.createSslContext(trustManager);
+
+            // Create a specialized Jetty client for HTTPS
             this.sslHttpClient = LinkPlaySslUtil.createHttpsClient(sslContext);
             this.sslHttpClient.start();
-            logger.debug("LinkPlay HTTPS client initialized");
+
+            logger.debug("LinkPlay HTTPS client successfully initialized");
         } catch (Exception e) {
-            logger.error("Failed to create SSL HTTP client: {}", e.getMessage());
+            logger.error("Failed to create SSL HTTP client => {}", e.getMessage());
             throw new IllegalStateException("Failed to create SSL HTTP client", e);
         }
     }
 
+    /**
+     * Deactivate closes the SSL HTTP client if it's running.
+     */
     @Deactivate
     protected void deactivate() {
         try {
@@ -79,61 +101,57 @@ public class LinkPlayHttpClient {
                 logger.debug("LinkPlay HTTPS client stopped");
             }
         } catch (Exception e) {
-            logger.warn("Error stopping HTTPS client: {}", e.getMessage());
+            logger.warn("Error stopping LinkPlay HTTPS client => {}", e.getMessage());
         }
     }
 
-    /**
-     * Returns a raw string response with extended status from the device.
-     */
+    // ------------------------------------------------------------------------
+    // Commonly used endpoints
+    // ------------------------------------------------------------------------
+
     public CompletableFuture<String> getStatusEx(String ipAddress) {
         return sendCommand(ipAddress, "getStatusEx");
     }
 
-    /**
-     * Returns a raw string response with player status from the device.
-     */
     public CompletableFuture<String> getPlayerStatus(String ipAddress) {
         return sendCommand(ipAddress, "getPlayerStatus");
     }
 
-    public CompletableFuture<String> joinGroup(String ipAddress, String masterIP) {
-        return sendCommand(ipAddress, String.format("multiroom/join?master=%s", masterIP));
+    // Multiroom commands
+    public CompletableFuture<String> joinGroup(String ip, String masterIP) {
+        return sendCommand(ip, String.format("multiroom/join?master=%s", masterIP));
     }
 
-    public CompletableFuture<String> leaveGroup(String ipAddress) {
-        return sendCommand(ipAddress, "multiroom/leave");
+    public CompletableFuture<String> leaveGroup(String ip) {
+        return sendCommand(ip, "multiroom/leave");
     }
 
-    public CompletableFuture<String> ungroup(String ipAddress) {
-        return sendCommand(ipAddress, "multiroom/ungroup");
+    public CompletableFuture<String> ungroup(String ip) {
+        return sendCommand(ip, "multiroom/ungroup");
     }
 
-    public CompletableFuture<String> kickoutSlave(String ipAddress, String slaveIP) {
-        return sendCommand(ipAddress, String.format("multiroom/kickout?slave=%s", slaveIP));
+    public CompletableFuture<String> kickoutSlave(String ip, String slaveIP) {
+        return sendCommand(ip, String.format("multiroom/kickout?slave=%s", slaveIP));
     }
 
-    public CompletableFuture<String> setGroupVolume(String ipAddress, String slaveIPs, int volume) {
-        return sendCommand(ipAddress, String.format("multiroom/setGroupVolume?slaves=%s&volume=%d", slaveIPs, volume));
-    }
-
-    public CompletableFuture<String> setGroupMute(String ipAddress, String slaveIPs, boolean mute) {
-        return sendCommand(ipAddress,
-                String.format("multiroom/setGroupMute?slaves=%s&mute=%d", slaveIPs, mute ? 1 : 0));
-    }
+    // ------------------------------------------------------------------------
+    // Generic command endpoints
+    // ------------------------------------------------------------------------
 
     /**
-     * Sends a command, returning a raw response string (no JSON parsing).
+     * Send a command "command=..." to the device, returning a future with raw response text.
      */
     public CompletableFuture<String> sendCommand(String ipAddress, String command) {
         if (ipAddress.isEmpty()) {
             throw new IllegalArgumentException("IP address must not be empty");
         }
+        // "command=" is how LinkPlay's HTTP API is typically structured
         return sendRequest(ipAddress, "command=" + command);
     }
 
     /**
-     * Example of sending a command with a value (like volume, mute, etc.).
+     * For commands that carry a dynamic value (e.g. volume), we can pass openHAB commands
+     * (PercentType, OnOffType, etc.) and convert them to the LinkPlay param string.
      */
     public CompletableFuture<String> sendCommand(String ipAddress, String command, Command value) {
         if (ipAddress.isEmpty()) {
@@ -144,23 +162,30 @@ public class LinkPlayHttpClient {
     }
 
     private String formatCommandValue(String command, Command value) {
-        // same logic as before, just returning a string
         if (CHANNEL_VOLUME.equals(command) && value instanceof PercentType) {
             return "setPlayerCmd:vol:" + ((PercentType) value).intValue();
         }
-        // More logic for Mute, Control, etc.
-        // ...
+        // Extend with other logic for "mute", "control", etc. if needed
         return command;
     }
 
+    // ------------------------------------------------------------------------
+    // Internal request logic
+    // ------------------------------------------------------------------------
+
+    /**
+     * Actually performs the request: tries each HTTPS port in turn, then falls back to HTTP if all fail.
+     * If we get a 200 OK, we return the response content; otherwise we throw an exception.
+     */
     private CompletableFuture<String> sendRequest(String ipAddress, String params) {
         return CompletableFuture.supplyAsync(() -> {
-            // Try HTTPS first
+            // Attempt HTTPS on known ports
             for (int port : HTTPS_PORTS) {
                 String url = String.format("https://%s:%d/httpapi.asp?%s", ipAddress, port, params);
                 try {
-                    logger.debug("Sending HTTPS request to {}", url);
-                    ContentResponse response = sslHttpClient.newRequest(url).timeout(TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                    logger.debug("Trying HTTPS request => {}", url);
+                    ContentResponse response = sslHttpClient.newRequest(url)
+                            .timeout(TIMEOUT_MS, TimeUnit.MILLISECONDS)
                             .send();
 
                     if (response.getStatus() == 200) {
@@ -170,16 +195,19 @@ public class LinkPlayHttpClient {
                         }
                         return content;
                     }
+                    logger.debug("HTTPS request => {} returned status code {}", url, response.getStatus());
                 } catch (Exception e) {
-                    logger.debug("HTTPS request failed on port {}: {}", port, e.getMessage());
+                    logger.debug("HTTPS request => {} failed: {}", url, e.getMessage());
                 }
             }
 
-            // Fall back to HTTP
+            // Fallback to HTTP
             String url = String.format("http://%s:%d/httpapi.asp?%s", ipAddress, HTTP_PORT, params);
             try {
-                logger.debug("Falling back to HTTP request: {}", url);
-                ContentResponse response = httpClient.newRequest(url).timeout(TIMEOUT_MS, TimeUnit.MILLISECONDS).send();
+                logger.debug("Falling back to HTTP => {}", url);
+                ContentResponse response = httpClient.newRequest(url)
+                        .timeout(TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                        .send();
 
                 if (response.getStatus() == 200) {
                     String content = response.getContentAsString();
@@ -188,7 +216,7 @@ public class LinkPlayHttpClient {
                     }
                     return content;
                 }
-                throw new LinkPlayCommunicationException("HTTP error " + response.getStatus());
+                throw new LinkPlayCommunicationException("HTTP error code: " + response.getStatus());
             } catch (Exception e) {
                 throw new CompletionException(new LinkPlayCommunicationException("Request failed", e));
             }

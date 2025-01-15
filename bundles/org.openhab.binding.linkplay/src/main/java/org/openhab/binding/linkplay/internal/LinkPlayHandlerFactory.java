@@ -38,93 +38,130 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * The {@link LinkPlayHandlerFactory} is responsible for creating things and thing handlers.
- *
+ * The {@link LinkPlayHandlerFactory} is responsible for creating and
+ * initializing new LinkPlay Things & ThingHandlers as requested by openHAB.
+ * <p>
+ * Typical flow:
+ *  1) Discovery or the user defines a new Thing with IP/UDN config.
+ *  2) openHAB calls createThing(...) if needed, or calls createHandler(...).
+ *  3) We validate the config, build a {@link LinkPlayThingHandler}, and return it.
+ * <p>
+ * We maintain a map of active handlers for possible reference or disposal.
+ *  - This is optional but can be useful for tracking or cleanup.
+ * 
  * @author Michael Cumming - Initial contribution
  */
 @NonNullByDefault
 @Component(configurationPid = "binding.linkplay", service = ThingHandlerFactory.class)
 public class LinkPlayHandlerFactory extends BaseThingHandlerFactory {
 
+    private static final Logger logger = LoggerFactory.getLogger(LinkPlayHandlerFactory.class);
+
+    // Regex to ensure IP is in basic IPv4 format: x.x.x.x
     private static final Pattern IP_PATTERN = Pattern.compile("^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}$");
+    // Regex to ensure UDN is something like "uuid:ABC123_..." 
     private static final Pattern UDN_PATTERN = Pattern.compile("^uuid:[0-9a-zA-Z_-]+$");
 
-    private final Logger logger = LoggerFactory.getLogger(LinkPlayHandlerFactory.class);
+    // We store references to each active LinkPlayThingHandler, keyed by ThingUID
     private final Map<ThingUID, LinkPlayThingHandler> handlers = new HashMap<>();
+
     private final UpnpIOService upnpIOService;
     private final LinkPlayHttpClient httpClient;
 
+    /**
+     * Constructor called by OSGi with references to needed services.
+     */
     @Activate
-    public LinkPlayHandlerFactory(final @Reference UpnpIOService upnpIOService,
-            final @Reference LinkPlayHttpClient httpClient) {
+    public LinkPlayHandlerFactory(
+            @Reference UpnpIOService upnpIOService,
+            @Reference LinkPlayHttpClient httpClient) {
         this.upnpIOService = upnpIOService;
         this.httpClient = httpClient;
     }
 
+    /**
+     * Returns 'true' if we support the given thingTypeUID, which is checked before creation.
+     */
     @Override
     public boolean supportsThingType(ThingTypeUID thingTypeUID) {
         return SUPPORTED_THING_TYPES_UIDS.contains(thingTypeUID);
     }
 
+    /**
+     * Creates the actual ThingHandler instance for a discovered or user-defined Thing.
+     * This is invoked by openHAB once the Thing is known to exist (from createThing(...) or from discovery).
+     */
     @Override
     protected @Nullable ThingHandler createHandler(Thing thing) {
         ThingTypeUID thingTypeUID = thing.getThingTypeUID();
 
+        // Double-check the type is actually supported
         if (!SUPPORTED_THING_TYPES_UIDS.contains(thingTypeUID)) {
-            logger.debug("Unsupported thing type {} - cannot create handler", thingTypeUID);
+            logger.debug("Cannot create handler for unsupported thing type {}", thingTypeUID);
             return null;
         }
 
-        // Pull the config from the Thing
+        // Extract config from the Thing's config map
         Configuration config = thing.getConfiguration();
-        // Convert to LinkPlayConfiguration, which does IP/UDN checks, etc.
+
+        // Convert to a domain-specific config object that verifies IP/UDN
         LinkPlayConfiguration linkplayConfig = LinkPlayConfiguration.fromConfiguration(config);
 
+        // If config is invalid, we do not create a handler
         if (!linkplayConfig.isValid()) {
-            logger.error("Invalid configuration for thing {}", thing.getUID());
+            logger.error("Invalid configuration for LinkPlay thing {}", thing.getUID());
             return null;
         }
 
-        logger.debug("Creating LinkPlay handler for thing '{}' with UDN '{}' at IP {}", thing.getUID(),
-                linkplayConfig.getUdn(), linkplayConfig.getIpAddress());
+        logger.debug("Creating LinkPlayThingHandler for thing '{}' => UDN='{}', IP='{}'",
+                thing.getUID(), linkplayConfig.getUdn(), linkplayConfig.getIpAddress());
 
         try {
-            // Pass the validated config object into the handler
+            // Create the actual device handler with the validated config
             LinkPlayThingHandler handler = new LinkPlayThingHandler(thing, upnpIOService, httpClient, linkplayConfig);
+            // Store it in the local map for reference (optional but can be useful)
             handlers.put(thing.getUID(), handler);
             return handler;
         } catch (Exception e) {
-            logger.error("Handler creation failed for thing {}: {}", thing.getUID(), e.getMessage());
+            logger.error("Failed to create LinkPlayThingHandler for thing {} => {}", thing.getUID(), e.getMessage());
             return null;
         }
     }
 
+    /**
+     * Overridden to let you create the physical Thing in code, e.g. from a manual addition or partial discovery.
+     * You set default UID if none is provided, fill properties, etc.
+     */
     @Override
     public @Nullable Thing createThing(ThingTypeUID thingTypeUID, Configuration configuration,
             @Nullable ThingUID thingUID, @Nullable ThingUID bridgeUID) {
+        // Confirm we actually handle this type
         if (!SUPPORTED_THING_TYPES_UIDS.contains(thingTypeUID)) {
             throw new IllegalArgumentException(
-                    String.format("Thing type %s is not supported by the linkplay binding", thingTypeUID));
+                    "Thing type " + thingTypeUID + " is not supported by the linkplay binding");
         }
 
-        // Validate basic config
+        // We require 'ipAddress' at a minimum
         if (!configuration.containsKey(CONFIG_IP_ADDRESS)) {
-            throw new IllegalArgumentException("IP address is required");
+            throw new IllegalArgumentException("IP address is required for a LinkPlay device");
         }
 
         String ipAddress = (String) configuration.get(CONFIG_IP_ADDRESS);
+        // Basic IP address validation
         if (!IP_PATTERN.matcher(ipAddress).matches()) {
             throw new IllegalArgumentException("Invalid IP address format: " + ipAddress);
         }
 
-        // Create a default UID if none is provided
-        ThingUID deviceUID = thingUID != null ? thingUID : new ThingUID(thingTypeUID, ipAddress.replace('.', '_'));
+        // If the user didn't specify a ThingUID, build a default one using IP
+        ThingUID finalThingUID = (thingUID != null) 
+                ? thingUID 
+                : new ThingUID(thingTypeUID, ipAddress.replace('.', '_'));
 
-        // Add IP to the thing properties
+        // Prepare the property map for the new Thing
         Map<String, String> properties = new HashMap<>();
         properties.put(PROPERTY_IP, ipAddress);
 
-        // Handle UDN if present
+        // Optionally handle UDN if present
         String udn = (String) configuration.get(CONFIG_UDN);
         if (udn != null && !udn.isEmpty()) {
             String normalizedUDN = udn.startsWith("uuid:") ? udn : "uuid:" + udn;
@@ -134,22 +171,32 @@ public class LinkPlayHandlerFactory extends BaseThingHandlerFactory {
             }
         }
 
-        Thing thing = super.createThing(thingTypeUID, configuration, deviceUID, bridgeUID);
-        if (thing != null) {
-            thing.setProperties(properties);
+        // Let the base factory create the actual Thing instance
+        Thing createdThing = super.createThing(thingTypeUID, configuration, finalThingUID, bridgeUID);
+
+        // If createdThing is not null, attach these properties
+        if (createdThing != null) {
+            createdThing.setProperties(properties);
         }
-        return thing;
+        return createdThing;
     }
 
+    /**
+     * Called when openHAB removes or replaces a Thing, so we can properly dispose of the handler
+     * and remove it from our local map.
+     */
     @Override
     protected void removeHandler(ThingHandler thingHandler) {
         if (thingHandler instanceof LinkPlayThingHandler handler) {
             ThingUID thingUID = handler.getThing().getUID();
+            // Remove from local map
             handlers.remove(thingUID);
+
+            // Dispose the handler to shut down polling, etc.
             try {
                 handler.dispose();
             } catch (Exception e) {
-                logger.warn("Error disposing handler for thing {}: {}", thingUID, e.getMessage());
+                logger.warn("Error disposing handler for thing {} => {}", thingUID, e.getMessage());
             }
         }
     }
