@@ -25,10 +25,7 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jetty.client.HttpClient;
 import org.eclipse.jetty.client.api.ContentResponse;
 import org.openhab.core.io.net.http.HttpClientFactory;
-import org.openhab.core.library.types.NextPreviousType;
-import org.openhab.core.library.types.OnOffType;
 import org.openhab.core.library.types.PercentType;
-import org.openhab.core.library.types.PlayPauseType;
 import org.openhab.core.types.Command;
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
@@ -163,8 +160,8 @@ public class LinkPlayHttpClient {
                 String url = String.format("https://%s:%d/httpapi.asp?%s", ipAddress, port, params);
                 try {
                     logger.debug("Sending HTTPS request to {}", url);
-                    ContentResponse response = sslHttpClient.newRequest(url)
-                            .timeout(TIMEOUT_MS, TimeUnit.MILLISECONDS).send();
+                    ContentResponse response = sslHttpClient.newRequest(url).timeout(TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                            .send();
 
                     if (response.getStatus() == 200) {
                         String content = response.getContentAsString();
@@ -182,9 +179,7 @@ public class LinkPlayHttpClient {
             String url = String.format("http://%s:%d/httpapi.asp?%s", ipAddress, HTTP_PORT, params);
             try {
                 logger.debug("Falling back to HTTP request: {}", url);
-                ContentResponse response = httpClient.newRequest(url)
-                        .timeout(TIMEOUT_MS, TimeUnit.MILLISECONDS)
-                        .send();
+                ContentResponse response = httpClient.newRequest(url).timeout(TIMEOUT_MS, TimeUnit.MILLISECONDS).send();
 
                 if (response.getStatus() == 200) {
                     String content = response.getContentAsString();

@@ -19,6 +19,7 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.binding.linkplay.internal.config.LinkPlayConfiguration;
 import org.openhab.binding.linkplay.internal.http.LinkPlayHttpClient;
+import org.openhab.core.config.core.Configuration;
 import org.openhab.core.io.transport.upnp.UpnpIOService;
 import org.openhab.core.thing.ChannelUID;
 import org.openhab.core.thing.Thing;
@@ -53,9 +54,8 @@ public class LinkPlayThingHandler extends BaseThingHandler {
     /**
      * Updated constructor that receives an already validated LinkPlayConfiguration.
      */
-    public LinkPlayThingHandler(Thing thing, UpnpIOService upnpIOService, 
-                                LinkPlayHttpClient httpClient,
-                                LinkPlayConfiguration config) {
+    public LinkPlayThingHandler(Thing thing, UpnpIOService upnpIOService, LinkPlayHttpClient httpClient,
+            LinkPlayConfiguration config) {
         super(thing);
         this.upnpIOService = upnpIOService;
         this.httpClient = httpClient;
@@ -67,10 +67,9 @@ public class LinkPlayThingHandler extends BaseThingHandler {
         logger.debug("Initializing LinkPlayThingHandler for Thing: {}", getThing().getUID());
 
         try {
-            // Create the device manager, passing it the validated config
-            deviceManager = new LinkPlayDeviceManager(this, scheduler, upnpIOService, httpClient, config);
-            deviceManager.initialize();
-
+            LinkPlayDeviceManager manager = new LinkPlayDeviceManager(this, config, httpClient, upnpIOService);
+            deviceManager = manager;
+            manager.initialize();
             updateStatus(ThingStatus.ONLINE);
         } catch (Exception e) {
             logger.error("Failed to initialize LinkPlay device: {}", e.getMessage(), e);
@@ -83,8 +82,10 @@ public class LinkPlayThingHandler extends BaseThingHandler {
     public void dispose() {
         logger.debug("Disposing LinkPlayThingHandler for Thing: {}", getThing().getUID());
 
-        if (deviceManager != null) {
-            deviceManager.dispose();
+        LinkPlayDeviceManager manager = deviceManager;
+        if (manager != null) {
+            manager.dispose();
+            deviceManager = null;
         }
         scheduler.shutdownNow();
         super.dispose();
@@ -93,8 +94,10 @@ public class LinkPlayThingHandler extends BaseThingHandler {
     @Override
     public void handleCommand(ChannelUID channelUID, Command command) {
         logger.debug("Received command: {} for channel: {}", command, channelUID.getIdWithoutGroup());
-        if (deviceManager != null) {
-            deviceManager.handleCommand(channelUID.getIdWithoutGroup(), command);
+
+        final LinkPlayDeviceManager manager = deviceManager;
+        if (manager != null) {
+            manager.handleCommand(channelUID.getIdWithoutGroup(), command);
         } else {
             logger.warn("Cannot handle command - device manager not initialized");
         }
@@ -112,8 +115,7 @@ public class LinkPlayThingHandler extends BaseThingHandler {
      */
     public void handleStatusUpdate(ThingStatus status, @Nullable ThingStatusDetail detail,
             @Nullable String description) {
-        updateStatus(status, detail != null ? detail : ThingStatusDetail.NONE,
-                description != null ? description : "");
+        updateStatus(status, detail != null ? detail : ThingStatusDetail.NONE, description != null ? description : "");
     }
 
     /**
@@ -121,5 +123,16 @@ public class LinkPlayThingHandler extends BaseThingHandler {
      */
     public void handleStatusUpdate(ThingStatus status) {
         updateStatus(status);
+    }
+
+    /**
+     * Updates the UDN in the Thing configuration.
+     * This is called when we discover the UDN from the device.
+     */
+    public void updateUdnInConfig(String udn) {
+        Configuration config = editConfiguration();
+        config.put("udn", udn);
+        updateConfiguration(config);
+        logger.debug("Updated UDN in configuration to: {}", udn);
     }
 }

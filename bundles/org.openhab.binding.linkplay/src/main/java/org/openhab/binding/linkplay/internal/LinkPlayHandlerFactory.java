@@ -85,8 +85,8 @@ public class LinkPlayHandlerFactory extends BaseThingHandlerFactory {
             return null;
         }
 
-        logger.debug("Creating LinkPlay handler for thing '{}' with UDN '{}' at IP {}",
-                thing.getUID(), linkplayConfig.getUdn(), linkplayConfig.getIpAddress());
+        logger.debug("Creating LinkPlay handler for thing '{}' with UDN '{}' at IP {}", thing.getUID(),
+                linkplayConfig.getUdn(), linkplayConfig.getIpAddress());
 
         try {
             // Pass the validated config object into the handler

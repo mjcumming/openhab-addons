@@ -66,7 +66,7 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
     private @Nullable String udn;
     private volatile boolean isDisposed = false;
 
-    private static final String SERVICE_AVTRANSPORT       = "urn:schemas-upnp-org:service:AVTransport:1";
+    private static final String SERVICE_AVTRANSPORT = "urn:schemas-upnp-org:service:AVTransport:1";
     private static final String SERVICE_RENDERING_CONTROL = "urn:schemas-upnp-org:service:RenderingControl:1";
 
     public LinkPlayUpnpManager(UpnpIOService upnpIOService, LinkPlayDeviceManager deviceManager, String deviceId) {
@@ -251,8 +251,9 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
                 break;
             case "CurrentTrackMetaData":
                 if (!value.isEmpty()) {
+                    @Nullable
                     Map<String, String> metadata = DIDLParser.parseMetadata(value);
-                    if (metadata != null) {
+                    if (metadata != null && !metadata.isEmpty()) {
                         deviceManager.updateMetadata(metadata);
                     }
                 }
@@ -304,15 +305,17 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
 
     @Override
     public @Nullable String getUDN() {
-        return udn;
+        String localUdn = udn;
+        return localUdn != null ? localUdn : null;
     }
 
     public void dispose() {
         isDisposed = true;
         logger.debug("[{}] Disposing UPnP manager", deviceId);
         try {
-            if (subscriptionRenewalFuture != null) {
-                subscriptionRenewalFuture.cancel(true);
+            ScheduledFuture<?> future = subscriptionRenewalFuture;
+            if (future != null) {
+                future.cancel(true);
                 subscriptionRenewalFuture = null;
             }
             unregister();
@@ -325,12 +328,14 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
 
     @Override
     public void onStatusChanged(boolean status) {
-        logger.debug("[{}] UPnP device {} is {}", deviceId, getUDN(), (status ? "present" : "absent"));
+        String localUdn = getUDN();
+        logger.debug("[{}] UPnP device {} is {}", deviceId, localUdn != null ? localUdn : "<unknown>",
+                (status ? "present" : "absent"));
         // We do not set device offline or online here; HTTP logic does that.
     }
 
-    @Override
-    public boolean supportsService(@Nullable String service) {
-        return service != null && (service.equals(SERVICE_AVTRANSPORT) || service.equals(SERVICE_RENDERING_CONTROL));
+    public boolean supportsService(String service) {
+        // Removed redundant null check as 'service' is @NonNull
+        return service.equals(SERVICE_AVTRANSPORT) || service.equals(SERVICE_RENDERING_CONTROL);
     }
 }

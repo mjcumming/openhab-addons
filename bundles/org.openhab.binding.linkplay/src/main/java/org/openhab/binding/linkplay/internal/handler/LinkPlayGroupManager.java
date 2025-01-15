@@ -15,6 +15,7 @@ package org.openhab.binding.linkplay.internal.handler;
 import static org.openhab.binding.linkplay.internal.LinkPlayBindingConstants.*;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.binding.linkplay.internal.http.LinkPlayHttpManager;
 import org.openhab.binding.linkplay.internal.model.MultiroomInfo;
 import org.openhab.core.library.types.OnOffType;
@@ -25,8 +26,8 @@ import org.openhab.core.types.Command;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 
 /**
  * The {@link LinkPlayGroupManager} handles multiroom functionality for LinkPlay devices.
@@ -38,12 +39,12 @@ import com.google.gson.JsonParser;
 public class LinkPlayGroupManager {
 
     private final Logger logger = LoggerFactory.getLogger(LinkPlayGroupManager.class);
-    private @NonNullByDefault({}) String ipAddress;
+    private String ipAddress = ""; // Initialized to an empty string
     private final LinkPlayHttpManager httpManager;
 
     public LinkPlayGroupManager(LinkPlayHttpManager httpManager) {
         this.httpManager = httpManager;
-    }
+    } // Closed the constructor
 
     public void initialize(String ipAddress) {
         if (!ipAddress.isEmpty()) {
@@ -63,14 +64,21 @@ public class LinkPlayGroupManager {
             return;
         }
 
-        httpManager.sendCommandWithRetry(ipAddress, "getStatusEx").thenAccept(this::handleStatusUpdate)
-                .exceptionally(e -> {
-                    handleGroupError("triggering group state update", e);
-                    return null;
-                });
+        try {
+            @Nullable
+            JsonObject response = httpManager.sendCommand("getStatusEx");
+            if (response == null) {
+                logger.warn("Received null response from sendCommand 'getStatusEx'");
+                return;
+            }
+            handleStatusUpdate(response);
+        } catch (Exception e) {
+            handleGroupError("triggering group state update", e);
+        }
     }
 
     /**
+     * Handle received commands for the group management channels.
      * Handle received commands for the group management channels.
      */
     public void handleCommand(ChannelUID channelUID, Command command) {
@@ -115,78 +123,89 @@ public class LinkPlayGroupManager {
         if (command instanceof StringType) {
             String masterIp = command.toString();
             if (!masterIp.isEmpty()) {
-                httpManager.sendCommandWithRetry(ipAddress, "joinGroup:" + masterIp).thenAccept(response -> {
+                try {
+                    JsonObject response = httpManager.sendCommand("joinGroup:" + masterIp);
                     logger.debug("Join group response: {}", response);
                     triggerGroupStateUpdate();
-                }).exceptionally(e -> {
+                } catch (Exception e) {
                     handleGroupError("joining group", e);
-                    return null;
-                });
+                }
             }
         }
     }
 
     private void handleLeaveCommand() {
-        httpManager.sendCommandWithRetry(ipAddress, "leaveGroup").thenAccept(response -> {
+        try {
+            JsonObject response = httpManager.sendCommand("leaveGroup");
             logger.debug("Leave group response: {}", response);
             triggerGroupStateUpdate();
-        }).exceptionally(e -> {
+        } catch (Exception e) {
             handleGroupError("leaving group", e);
-            return null;
-        });
+        }
     }
 
     private void handleUngroupCommand() {
-        httpManager.sendCommandWithRetry(ipAddress, "ungroup").thenAccept(response -> {
+        try {
+            JsonObject response = httpManager.sendCommand("ungroup");
             logger.debug("Ungroup response: {}", response);
             triggerGroupStateUpdate();
-        }).exceptionally(e -> {
+        } catch (Exception e) {
             handleGroupError("ungrouping", e);
-            return null;
-        });
+        }
     }
 
     private void handleKickoutCommand(Command command) {
         if (command instanceof StringType) {
             String slaveIp = command.toString();
-            httpManager.sendCommandWithRetry(ipAddress, "kickoutSlave:" + slaveIp).thenAccept(response -> {
+            try {
+                JsonObject response = httpManager.sendCommand("kickoutSlave:" + slaveIp);
                 logger.debug("Kickout response: {}", response);
                 triggerGroupStateUpdate();
-            }).exceptionally(e -> {
+            } catch (Exception e) {
                 handleGroupError("kicking out slave", e);
-                return null;
-            });
+            }
         }
     }
 
     private void handleGroupVolumeCommand(Command command) {
         if (command instanceof PercentType) {
             int volume = ((PercentType) command).intValue();
-            httpManager.sendCommandWithRetry(ipAddress, "getStatusEx").thenAccept(response -> {
-                try {
-                    JsonObject status = JsonParser.parseString(response).getAsJsonObject();
-                    MultiroomInfo info = new MultiroomInfo(status);
-                    info.getSlaveIPList().forEach(slaveIp -> {
-                        httpManager.sendCommandWithRetry(slaveIp, "setPlayerCmd:vol:" + volume).thenAccept(r -> {
-                            logger.debug("Set volume response for {}: {}", slaveIp, r);
-                        }).exceptionally(e -> {
-                            handleGroupError("setting volume for " + slaveIp, e);
-                            return null;
-                        });
-                    });
-                    httpManager.sendCommandWithRetry(ipAddress, "setPlayerCmd:vol:" + volume).thenAccept(r -> {
-                        logger.debug("Set volume response for master {}: {}", ipAddress, r);
-                    }).exceptionally(e -> {
-                        handleGroupError("setting volume for master", e);
-                        return null;
-                    });
-                } catch (Exception e) {
-                    handleGroupError("parsing status for volume control", e);
+            try {
+                @Nullable
+                JsonObject status = httpManager.sendCommand("getStatusEx");
+                if (status == null) {
+                    logger.warn("Received null response from sendCommand 'getStatusEx' in handleGroupVolumeCommand");
+                    return;
                 }
-            }).exceptionally(e -> {
-                handleGroupError("retrieving group state for volume", e);
-                return null;
-            });
+                JsonObject nonNullStatus = status; // Assign to a non-null variable
+                MultiroomInfo info = new MultiroomInfo(nonNullStatus);
+                for (String slaveIp : info.getSlaveIPList()) {
+                    try {
+                        @Nullable
+                        JsonObject slaveResponse = httpManager.sendCommand("setPlayerCmd:vol:" + volume);
+                        if (slaveResponse == null) {
+                            logger.warn("Received null response from sendCommand 'setPlayerCmd:vol:{}' for slave {}",
+                                    volume, slaveIp);
+                            continue;
+                        }
+                        JsonObject nonNullSlaveResponse = slaveResponse; // Assign to a non-null variable
+                        logger.debug("Set volume response for {}: {}", slaveIp, nonNullSlaveResponse);
+                    } catch (Exception e) {
+                        handleGroupError("setting volume for " + slaveIp, e);
+                    }
+                }
+                @Nullable
+                JsonObject masterResponse = httpManager.sendCommand("setPlayerCmd:vol:" + volume);
+                if (masterResponse == null) {
+                    logger.warn("Received null response from sendCommand 'setPlayerCmd:vol:{}' for master {}", volume,
+                            ipAddress);
+                    return;
+                }
+                JsonObject nonNullMasterResponse = masterResponse; // Assign to a non-null variable
+                logger.debug("Set volume response for master {}: {}", ipAddress, nonNullMasterResponse);
+            } catch (Exception e) {
+                handleGroupError("volume control operation", e);
+            }
         }
     }
 
@@ -194,43 +213,66 @@ public class LinkPlayGroupManager {
         if (command instanceof OnOffType) {
             boolean mute = command == OnOffType.ON;
             int muteValue = mute ? 1 : 0;
-            httpManager.sendCommandWithRetry(ipAddress, "getStatusEx").thenAccept(response -> {
-                try {
-                    JsonObject status = JsonParser.parseString(response).getAsJsonObject();
-                    MultiroomInfo info = new MultiroomInfo(status);
-                    info.getSlaveIPList().forEach(slaveIp -> {
-                        httpManager.sendCommandWithRetry(slaveIp, "setPlayerCmd:mute:" + muteValue).thenAccept(r -> {
-                            logger.debug("Set mute response for {}: {}", slaveIp, r);
-                        }).exceptionally(e -> {
-                            handleGroupError("setting mute for " + slaveIp, e);
-                            return null;
-                        });
-                    });
-                    httpManager.sendCommandWithRetry(ipAddress, "setPlayerCmd:mute:" + muteValue).thenAccept(r -> {
-                        logger.debug("Set mute response for master {}: {}", ipAddress, r);
-                    }).exceptionally(e -> {
-                        handleGroupError("setting mute for master", e);
-                        return null;
-                    });
-                } catch (Exception e) {
-                    handleGroupError("parsing status for mute control", e);
+            try {
+                @Nullable
+                JsonObject status = httpManager.sendCommand("getStatusEx");
+                if (status == null) {
+                    logger.warn("Received null response from sendCommand 'getStatusEx' in handleGroupMuteCommand");
+                    return;
                 }
-            }).exceptionally(e -> {
-                handleGroupError("retrieving group state for mute", e);
-                return null;
-            });
+                JsonObject nonNullStatus = status; // Assign to a non-null variable
+                MultiroomInfo info = new MultiroomInfo(nonNullStatus);
+                for (String slaveIp : info.getSlaveIPList()) {
+                    try {
+                        @Nullable
+                        JsonObject slaveResponse = httpManager.sendCommand("setPlayerCmd:mute:" + muteValue);
+                        if (slaveResponse == null) {
+                            logger.warn("Received null response from sendCommand 'setPlayerCmd:mute:{}' for slave {}",
+                                    muteValue, slaveIp);
+                            continue;
+                        }
+                        JsonObject nonNullSlaveResponse = slaveResponse; // Assign to a non-null variable
+                        logger.debug("Set mute response for {}: {}", slaveIp, nonNullSlaveResponse);
+                    } catch (Exception e) {
+                        handleGroupError("setting mute for " + slaveIp, e);
+                    }
+                }
+                @Nullable
+                JsonObject masterResponse = httpManager.sendCommand("setPlayerCmd:mute:" + muteValue);
+                if (masterResponse == null) {
+                    logger.warn("Received null response from sendCommand 'setPlayerCmd:mute:{}' for master {}",
+                            muteValue, ipAddress);
+                    return;
+                }
+                JsonObject nonNullMasterResponse = masterResponse; // Assign to a non-null variable
+                logger.debug("Set mute response for master {}: {}", ipAddress, nonNullMasterResponse);
+            } catch (Exception e) {
+                handleGroupError("mute control operation", e);
+            }
         }
     }
 
-    private void handleStatusUpdate(String response) {
+    /**
+     * Handle status update from JSON response
+     */
+    private void handleStatusUpdate(JsonObject json) {
         try {
-            JsonObject status = JsonParser.parseString(response).getAsJsonObject();
-            updateGroupState(status);
+            if (json.has("multiroom")) {
+                JsonElement multiroomElement = json.get("multiroom");
+                if (multiroomElement.isJsonObject()) {
+                    JsonObject multiroom = multiroomElement.getAsJsonObject();
+                    MultiroomInfo info = new MultiroomInfo(multiroom);
+                    updateGroupState(info);
+                }
+            }
         } catch (Exception e) {
             handleGroupError("parsing status update", e);
         }
     }
 
+    /**
+     * Handle group error without redundant null check.
+     */
     private void handleGroupError(String operation, Throwable error) {
         logger.warn("[{}] Error {} : {}", ipAddress, operation, error.getMessage());
         if (logger.isDebugEnabled()) {
@@ -238,13 +280,10 @@ public class LinkPlayGroupManager {
         }
     }
 
-    private void updateGroupState(JsonObject status) {
+    private void updateGroupState(MultiroomInfo multiroomInfo) {
         try {
-            MultiroomInfo multiroomInfo = new MultiroomInfo(status);
-
             logger.debug("[{}] Group state updated - Role: {}, Master IP: {}, Slaves: {}", ipAddress,
                     multiroomInfo.getRole(), multiroomInfo.getMasterIP(), multiroomInfo.getSlaveIPs());
-
         } catch (Exception e) {
             handleGroupError("updating group state", e);
         }
