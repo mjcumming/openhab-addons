@@ -42,12 +42,12 @@ import org.slf4j.LoggerFactory;
  * initializing new LinkPlay Things & ThingHandlers as requested by openHAB.
  * <p>
  * Typical flow:
- *  1) Discovery or the user defines a new Thing with IP/UDN config.
- *  2) openHAB calls createThing(...) if needed, or calls createHandler(...).
- *  3) We validate the config, build a {@link LinkPlayThingHandler}, and return it.
+ * 1) Discovery or the user defines a new Thing with IP/UDN config.
+ * 2) openHAB calls createThing(...) if needed, or calls createHandler(...).
+ * 3) We validate the config, build a {@link LinkPlayThingHandler}, and return it.
  * <p>
  * We maintain a map of active handlers for possible reference or disposal.
- *  - This is optional but can be useful for tracking or cleanup.
+ * - This is optional but can be useful for tracking or cleanup.
  * 
  * @author Michael Cumming - Initial contribution
  */
@@ -59,7 +59,7 @@ public class LinkPlayHandlerFactory extends BaseThingHandlerFactory {
 
     // Regex to ensure IP is in basic IPv4 format: x.x.x.x
     private static final Pattern IP_PATTERN = Pattern.compile("^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}$");
-    // Regex to ensure UDN is something like "uuid:ABC123_..." 
+    // Regex to ensure UDN is something like "uuid:ABC123_..."
     private static final Pattern UDN_PATTERN = Pattern.compile("^uuid:[0-9a-zA-Z_-]+$");
 
     // We store references to each active LinkPlayThingHandler, keyed by ThingUID
@@ -72,9 +72,7 @@ public class LinkPlayHandlerFactory extends BaseThingHandlerFactory {
      * Constructor called by OSGi with references to needed services.
      */
     @Activate
-    public LinkPlayHandlerFactory(
-            @Reference UpnpIOService upnpIOService,
-            @Reference LinkPlayHttpClient httpClient) {
+    public LinkPlayHandlerFactory(@Reference UpnpIOService upnpIOService, @Reference LinkPlayHttpClient httpClient) {
         this.upnpIOService = upnpIOService;
         this.httpClient = httpClient;
     }
@@ -113,8 +111,8 @@ public class LinkPlayHandlerFactory extends BaseThingHandlerFactory {
             return null;
         }
 
-        logger.debug("Creating LinkPlayThingHandler for thing '{}' => UDN='{}', IP='{}'",
-                thing.getUID(), linkplayConfig.getUdn(), linkplayConfig.getIpAddress());
+        logger.debug("Creating LinkPlayThingHandler for thing '{}' => UDN='{}', IP='{}'", thing.getUID(),
+                linkplayConfig.getUdn(), linkplayConfig.getIpAddress());
 
         try {
             // Create the actual device handler with the validated config
@@ -153,8 +151,7 @@ public class LinkPlayHandlerFactory extends BaseThingHandlerFactory {
         }
 
         // If the user didn't specify a ThingUID, build a default one using IP
-        ThingUID finalThingUID = (thingUID != null) 
-                ? thingUID 
+        ThingUID finalThingUID = (thingUID != null) ? thingUID
                 : new ThingUID(thingTypeUID, ipAddress.replace('.', '_'));
 
         // Prepare the property map for the new Thing

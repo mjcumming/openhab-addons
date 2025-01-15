@@ -33,7 +33,7 @@ import org.slf4j.LoggerFactory;
 /**
  * The {@link LinkPlayUpnpManager} handles UPnP discovery, subscriptions, and event callbacks.
  * It retains all existing logic for subscription renewal and dispatches metadata updates.
- *  
+ * 
  * @author Michael Cumming - Initial contribution
  */
 @NonNullByDefault
@@ -233,7 +233,8 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
 
             case "CurrentTrackMetaData":
                 if (!value.isEmpty()) {
-                    @Nullable Map<String, String> metadata = DIDLParser.parseMetadata(value);
+                    @Nullable
+                    Map<String, String> metadata = DIDLParser.parseMetadata(value);
                     if (metadata != null && !metadata.isEmpty()) {
                         deviceManager.updateMetadata(metadata);
                     }

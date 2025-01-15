@@ -148,7 +148,7 @@ public class LinkPlayDeviceManager {
 
         // Shuffle / Repeat
         // LinkPlay doc suggests "random" might be used for shuffle, "loop" for repeat modes
-        // We interpret nonzero "loop" as repeat=ON. 
+        // We interpret nonzero "loop" as repeat=ON.
         if (status.has("loop")) {
             int loopVal = getAsInt(status, "loop", 0);
             boolean repeating = (loopVal != 0);

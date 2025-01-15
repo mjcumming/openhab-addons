@@ -49,9 +49,9 @@ import org.slf4j.LoggerFactory;
  * "MediaRenderer" or "MediaServer" devices, then do an HTTP check to confirm.
  * <p>
  * This approach follows openHAB best practices:
- *  - Listen for broad UPnP announcements
- *  - Filter by basic device type/services
- *  - Perform additional HTTP fingerprint check (getStatusEx) to ensure it's LinkPlay
+ * - Listen for broad UPnP announcements
+ * - Filter by basic device type/services
+ * - Perform additional HTTP fingerprint check (getStatusEx) to ensure it's LinkPlay
  * 
  * @author Michael Cumming - Initial contribution
  */
@@ -62,10 +62,8 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
     private final Logger logger = LoggerFactory.getLogger(LinkPlayUpnpDiscoveryParticipant.class);
 
     // We only look at these UPnP device types
-    private static final Set<String> SUPPORTED_DEVICE_TYPES = Set.of(
-        "urn:schemas-upnp-org:device:MediaRenderer:1",
-        "urn:schemas-upnp-org:device:MediaServer:1"
-    );
+    private static final Set<String> SUPPORTED_DEVICE_TYPES = Set.of("urn:schemas-upnp-org:device:MediaRenderer:1",
+            "urn:schemas-upnp-org:device:MediaServer:1");
 
     private static final int DISCOVERY_RESULT_TTL_SECONDS = 300;
 
@@ -101,13 +99,13 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
     @Override
     public @Nullable ThingUID getThingUID(RemoteDevice device) {
         String manufacturer = device.getDetails().getManufacturerDetails().getManufacturer();
-        String deviceType   = device.getType().getType();
-        String modelName    = device.getDetails().getModelDetails().getModelName();
-        String modelDesc    = device.getDetails().getModelDetails().getModelDescription();
-        String deviceUDN    = device.getIdentity().getUdn().getIdentifierString();
+        String deviceType = device.getType().getType();
+        String modelName = device.getDetails().getModelDetails().getModelName();
+        String modelDesc = device.getDetails().getModelDetails().getModelDescription();
+        String deviceUDN = device.getIdentity().getUdn().getIdentifierString();
 
-        logger.trace("UPnP device discovered => manufacturer={}, type={}, model={}, desc={}, UDN={}",
-                manufacturer, deviceType, modelName, modelDesc, deviceUDN);
+        logger.trace("UPnP device discovered => manufacturer={}, type={}, model={}, desc={}, UDN={}", manufacturer,
+                deviceType, modelName, modelDesc, deviceUDN);
 
         // If we cannot confirm it's a LinkPlay or MediaRenderer device, return null
         if (!isLinkPlayDevice(device)) {
@@ -118,7 +116,8 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
         String normalizedUDN = deviceUDN.startsWith("uuid:") ? deviceUDN : "uuid:" + deviceUDN;
         normalizedUDN = normalizedUDN.replaceAll("[^a-zA-Z0-9_]", ""); // clean out special chars
 
-        logger.debug("Found possible LinkPlay device => Mfr={}, Model={}, UDN={}", manufacturer, modelName, normalizedUDN);
+        logger.debug("Found possible LinkPlay device => Mfr={}, Model={}, UDN={}", manufacturer, modelName,
+                normalizedUDN);
         return new ThingUID(THING_TYPE_DEVICE, normalizedUDN);
     }
 
@@ -147,9 +146,9 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
 
         // Grab more details for the discovery result
         String manufacturer = device.getDetails().getManufacturerDetails().getManufacturer();
-        String modelName    = device.getDetails().getModelDetails().getModelName();
+        String modelName = device.getDetails().getModelDetails().getModelName();
         String friendlyName = device.getDetails().getFriendlyName();
-        String deviceUDN    = device.getIdentity().getUdn().getIdentifierString();
+        String deviceUDN = device.getIdentity().getUdn().getIdentifierString();
         String normalizedUDN = deviceUDN.startsWith("uuid:") ? deviceUDN : "uuid:" + deviceUDN;
 
         Map<String, Object> properties = new HashMap<>();
@@ -160,12 +159,8 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
         properties.put(PROPERTY_UDN, normalizedUDN);
 
         String label = String.format("%s (%s)", friendlyName, ipAddress);
-        return DiscoveryResultBuilder.create(thingUID)
-                .withLabel(label)
-                .withProperties(properties)
-                .withRepresentationProperty(PROPERTY_UDN)
-                .withTTL(DISCOVERY_RESULT_TTL_SECONDS)
-                .build();
+        return DiscoveryResultBuilder.create(thingUID).withLabel(label).withProperties(properties)
+                .withRepresentationProperty(PROPERTY_UDN).withTTL(DISCOVERY_RESULT_TTL_SECONDS).build();
     }
 
     /**
@@ -185,8 +180,8 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
         Service<?, ?> avTransportService = device.findService(SERVICE_ID_AV_TRANSPORT);
         Service<?, ?> renderingControlService = device.findService(SERVICE_ID_RENDERING_CONTROL);
         boolean hasRequiredServices = avTransportService != null && renderingControlService != null;
-        logger.debug("Device {} => AVTransport={}, RenderingControl={}",
-                device.getDetails().getFriendlyName(), avTransportService != null, renderingControlService != null);
+        logger.debug("Device {} => AVTransport={}, RenderingControl={}", device.getDetails().getFriendlyName(),
+                avTransportService != null, renderingControlService != null);
 
         return hasRequiredServices;
     }

@@ -33,7 +33,7 @@ import org.xml.sax.helpers.DefaultHandler;
 /**
  * Parser for DIDL-Lite and related UPnP XML content.
  * <p>
- * This class provides static methods to parse specific 
+ * This class provides static methods to parse specific
  * DIDL-Lite or AVTransport/RenderingControl XML data structures,
  * returning key-value pairs for relevant metadata fields.
  * 

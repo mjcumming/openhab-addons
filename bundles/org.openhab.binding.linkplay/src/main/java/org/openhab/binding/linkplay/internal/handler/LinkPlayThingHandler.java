@@ -30,7 +30,6 @@ import org.openhab.core.types.Command;
 import org.openhab.core.types.State;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.openhab.core.thing.ChannelGroup;
 
 /**
  * The {@link LinkPlayThingHandler} is responsible for handling commands and status updates for LinkPlay devices.

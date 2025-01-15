@@ -13,7 +13,6 @@
 package org.openhab.binding.linkplay.internal.http;
 
 import static org.openhab.binding.linkplay.internal.LinkPlayBindingConstants.CHANNEL_VOLUME;
-import static org.openhab.binding.linkplay.internal.LinkPlayBindingConstants.CONFIG_IP_ADDRESS;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -39,10 +38,10 @@ import org.slf4j.LoggerFactory;
  * The {@link LinkPlayHttpClient} is responsible for low-level HTTP interactions with a LinkPlay device.
  * <p>
  * Key features:
- *  - Tries multiple HTTPS ports (443, 4443), then falls back to HTTP on port 80.
- *  - Uses a custom SSL context (mutual TLS) if needed.
- *  - Provides async methods returning {@link CompletableFuture} for concurrency.
- *  - Does minimal error-checking in responses (e.g. "error" or "fail").
+ * - Tries multiple HTTPS ports (443, 4443), then falls back to HTTP on port 80.
+ * - Uses a custom SSL context (mutual TLS) if needed.
+ * - Provides async methods returning {@link CompletableFuture} for concurrency.
+ * - Does minimal error-checking in responses (e.g. "error" or "fail").
  * 
  * @author Michael Cumming - Initial contribution
  */
@@ -59,13 +58,13 @@ public class LinkPlayHttpClient {
     // Timeout for each request
     private static final int TIMEOUT_MS = 2000;
 
-    private final HttpClient httpClient;     // for plain HTTP
-    private final HttpClient sslHttpClient;  // for HTTPS
+    private final HttpClient httpClient; // for plain HTTP
+    private final HttpClient sslHttpClient; // for HTTPS
 
     /**
      * Constructor sets up two Jetty HttpClients:
-     *  - A standard one from openHAB's HttpClientFactory (no TLS).
-     *  - A custom TLS-enabled client from {@link LinkPlaySslUtil}.
+     * - A standard one from openHAB's HttpClientFactory (no TLS).
+     * - A custom TLS-enabled client from {@link LinkPlaySslUtil}.
      */
     @Activate
     public LinkPlayHttpClient(@Reference HttpClientFactory httpClientFactory) {
@@ -184,8 +183,7 @@ public class LinkPlayHttpClient {
                 String url = String.format("https://%s:%d/httpapi.asp?%s", ipAddress, port, params);
                 try {
                     logger.debug("Trying HTTPS request => {}", url);
-                    ContentResponse response = sslHttpClient.newRequest(url)
-                            .timeout(TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                    ContentResponse response = sslHttpClient.newRequest(url).timeout(TIMEOUT_MS, TimeUnit.MILLISECONDS)
                             .send();
 
                     if (response.getStatus() == 200) {
@@ -205,9 +203,7 @@ public class LinkPlayHttpClient {
             String url = String.format("http://%s:%d/httpapi.asp?%s", ipAddress, HTTP_PORT, params);
             try {
                 logger.debug("Falling back to HTTP => {}", url);
-                ContentResponse response = httpClient.newRequest(url)
-                        .timeout(TIMEOUT_MS, TimeUnit.MILLISECONDS)
-                        .send();
+                ContentResponse response = httpClient.newRequest(url).timeout(TIMEOUT_MS, TimeUnit.MILLISECONDS).send();
 
                 if (response.getStatus() == 200) {
                     String content = response.getContentAsString();
