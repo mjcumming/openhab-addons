@@ -1,12 +1,3 @@
-Below is an **updated** README that reflects the **current functionality** of your LinkPlay binding and **follows openHAB’s documentation style**. Please adapt or refine as needed based on your actual feature set. This version:
-
-- Explains LinkPlay-based devices and references partial brand/model lists.
-- Describes the multiroom (group) features and how the binding handles master/slave devices.
-- Mentions how a slave device does not publish its own UPnP events once grouped (which is typical LinkPlay behavior).
-- Aligns with openHAB’s standard headings and descriptions (discovery, thing configuration, channels, etc.).
-
----
-
 ## LinkPlay Binding
 
 This binding integrates audio devices built upon the **LinkPlay** platform. Many brands embed LinkPlay modules in their products (Arylic, WiiM, Audio Pro, and more), enabling multiroom audio, streaming services, AirPlay, and DLNA/UPnP capabilities.
