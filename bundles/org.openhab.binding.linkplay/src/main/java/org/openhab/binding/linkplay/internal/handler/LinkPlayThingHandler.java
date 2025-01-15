@@ -30,12 +30,12 @@ import org.openhab.core.types.Command;
 import org.openhab.core.types.State;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.openhab.core.thing.ChannelGroup;
 
 /**
  * The {@link LinkPlayThingHandler} is responsible for handling commands and status updates for LinkPlay devices.
  * It manages the lifecycle of a LinkPlay device and integrates with the Device Manager.
  *
- * @author Michael Cumming - Initial contribution
  */
 @NonNullByDefault
 public class LinkPlayThingHandler extends BaseThingHandler {
@@ -107,7 +107,19 @@ public class LinkPlayThingHandler extends BaseThingHandler {
      * Public method for updating channel state, used by the device manager.
      */
     public void handleStateUpdate(String channelId, State state) {
-        updateState(channelId, state);
+        // Check if the channel is part of a group
+        Channel channel = thing.getChannel(channelId);
+        if (channel != null && channel.isGrouped()) {
+            String groupId = channel.getGroupId();
+            // Log for debugging
+            logger.debug("Updating state for group {} channel {}", groupId, channelId);
+            // Update the individual channel
+            updateState(channelId, state);
+        } else {
+            // Update the individual channel
+            logger.debug("Updating state for channel {}", channelId);
+            updateState(channelId, state);
+        }
     }
 
     /**

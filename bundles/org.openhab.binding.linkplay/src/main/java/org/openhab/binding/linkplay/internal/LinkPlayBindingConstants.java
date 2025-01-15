@@ -96,6 +96,11 @@ public class LinkPlayBindingConstants {
     public static final String UPNP_MANUFACTURER = "LinkPlay";
     public static final String UPNP_DEVICE_TYPE_PREFIX = "urn:schemas-upnp-org:device:";
 
+    // Helper method for creating full channel IDs
+    public static String getChannelID(String group, String channel) {
+        return group + "#" + channel;
+    }
+
     private LinkPlayBindingConstants() {
         // Constants class - prevent instantiation
     }

@@ -34,7 +34,7 @@
 			<parameter name="pollingInterval" type="integer" required="false" min="10" max="60" unit="s">
 				<label>Polling Interval</label>
 				<description>Interval in seconds between device status updates.</description>
-				<default>10</default>
+				<default>30</default> 
 				<advanced>true</advanced>
 			</parameter>
 			<parameter name="maxRetries" type="integer" required="false">
@@ -59,7 +59,7 @@
 			<channel id="control" typeId="system.media-control"/>
 			<channel id="title" typeId="system.media-title"/>
 			<channel id="artist" typeId="system.media-artist"/>
-			<channel id="album" typeId="system.media-title"/>
+			<channel id="album" typeId="system.media-album"/>
 			<channel id="albumArt" typeId="albumArt"/>
 			<channel id="duration" typeId="duration"/>
 			<channel id="position" typeId="position"/>
@@ -110,20 +110,16 @@
 	<channel-type id="repeat">
 		<item-type>String</item-type>
 		<label>Repeat</label>
-		<description>Repeat mode for playback.</description>
-		<state>
-			<options>
-				<option value="off">Off</option>
-				<option value="one">One</option>
-				<option value="all">All</option>
-			</options>
-		</state>
+		<description>Playback repeat mode (OFF, ONE, ALL).</description>
+		<state>OFF</state>
+		<state>ONE</state>
+		<state>ALL</state>
 	</channel-type>
 
 	<channel-type id="shuffle">
 		<item-type>Switch</item-type>
 		<label>Shuffle</label>
-		<description>Shuffle mode for playback.</description>
+		<description>Enable or disable shuffle mode.</description>
 	</channel-type>
 
 	<channel-type id="source">
