@@ -1,119 +1,174 @@
-# LinkPlay Binding
+## LinkPlay Binding
 
-This binding integrates LinkPlay-based audio devices with group (multiroom) capabilities. It provides control of audio playback, volume, source selection, and group functionality.
+This binding integrates audio devices built upon the **LinkPlay** platform. Many brands embed LinkPlay modules in their products (Arylic, WiiM, Audio Pro, and more), enabling multiroom audio, streaming services, AirPlay, and DLNA/UPnP capabilities.
+
+### **Supported Devices**
+
+> **Examples** (not exhaustive):
+>
+> - **Arylic**: S50 Pro+, A50, Up2Stream (Amp/Pro/mini) boards  
+> - **WiiM**: WiiM Mini, WiiM Pro  
+> - **Audio Pro**: A10, A26, A36, Addon C-series, Link 1, etc.  
+> - **Others**: August WS300, Auna, Bauhn, Bem, Cowin, Dayton Audio, DOSS, Edifier, Energy Sistem, FABRIQ, GGMM…  
+>
+> Since LinkPlay is an “under the hood” technology, many manufacturers do not explicitly mention it. If your device supports multiroom streaming and LinkPlay apps (4STREAM, WiiM Home, etc.), it likely works with this binding.
+
+---
 
 ## Features
 
-- Basic playback control (play/pause/next/previous)
-- Volume control (including mute)
-- Group functionality (master/slave configuration)
-- Source selection (WiFi/Bluetooth/Line-in)
-- UPnP device discovery
-- Event-based status updates
-- Extensive device status information
+1. **Playback Control**  
+   \- **Play, Pause, Stop, Next/Previous** track.  
+2. **Volume & Mute**  
+   \- Per-device volume (0–100%) and mute toggles.  
+3. **Multiroom Management**  
+   \- Master/slave group configuration.  
+   \- The master device sees and controls volume/mute for each slave.  
+   \- **Note:** Once a device is in slave mode, it no longer broadcasts its own UPnP events—control is via the master.  
+4. **Source Selection**  
+   \- Wi-Fi (DLNA/AirPlay/Spotify), Bluetooth, Line-In, Optical, etc.  
+5. **Metadata & Device Info**  
+   \- Title, Artist, Album, Firmware version, IP address, Wi-Fi signal, etc.  
+6. **UPnP Device Discovery**  
+   \- Automatic detection of LinkPlay-based media renderers on your network.
 
-## Supported Things
-
-- `device` - A LinkPlay-based audio device
+---
 
 ## Discovery
 
-The binding supports automatic discovery of LinkPlay devices through:
+By default, the binding listens for **UPnP/SSDP** announcements to discover LinkPlay devices.  
+- They appear in the **Inbox** with a generated UID based on the device UDN.  
+- The label is derived from the device’s friendly name.  
+- If you have multiple LinkPlay devices, each will appear with its IP address and basic properties.
 
-- **UPnP (DLNA) discovery**: Automatically detects devices on your network that support UPnP.
-
-Discovered devices will appear in the inbox with:
-
-- Thing ID: Generated from the device's unique identifier
-- Label: Device name from the network
-- Properties: IP address, device ID, and firmware version
+---
 
 ## Thing Configuration
 
-### Manual Configuration
+You can add devices manually (e.g. in a `*.things` file or via the UI) if discovery is unsuccessful or you prefer static IP addresses.
 
-| Parameter       | Description                                      | Required | Default |
-|------------------|--------------------------------------------------|----------|---------|
-| `ipAddress`      | IP address of the device                        | Yes      |         |
-| `deviceName`     | Friendly name for the LinkPlay device           | No       |         |
-| `pollingInterval`| Interval in seconds between device status updates (Advanced) | No | 10      |
+| Parameter          | Description                                          | Required | Default |
+|--------------------|------------------------------------------------------|----------|---------|
+| `ipAddress`        | IP address of the device                             | Yes      | —       |
+| `deviceName`       | Friendly name for the LinkPlay device               | No       | —       |
+| `udn`              | Unique Device Name (UPnP) — if known                 | No       | —       |
+| `pollingInterval`  | Interval (seconds) for periodic status polling       | No       | 10      |
 
-### Configuration Notes
+**Notes**:  
+- The binding uses `ipAddress` plus periodic polling to stay updated on device status (volume, track, etc.).  
+- The `udn` can be discovered automatically from the HTTP status in many cases, but if you already know it, you can supply it.
 
-- Polling interval is used to refresh device status at regular intervals.
-- Configurations can be updated in the `thing` file or via the UI.
+---
 
 ## Channels
 
-### Media Control Channels
+The binding provides channels for both local device playback control and multiroom grouping. Below is an outline of major channels:
 
-| Channel Type ID | Item Type | Description                    | Read/Write |
-|-----------------|-----------|--------------------------------|------------|
-| control         | Player    | Media control                 | R/W        |
-| title           | String    | Title of the current track    | R          |
-| artist          | String    | Artist of the current track   | R          |
-| album           | String    | Album of the current track    | R          |
-| volume          | Dimmer    | Volume control (0-100%)       | R/W        |
-| mute            | Switch    | Mute/unmute the audio         | R/W        |
+### Playback-Related
 
-#### Control Commands
+| Channel ID     | Item Type  | Description                                   |
+|----------------|------------|-----------------------------------------------|
+| **control**    | Player     | Basic playback commands (play/pause/etc.)     |
+| **title**      | String     | Current track title (if available)           |
+| **artist**     | String     | Current track artist (if available)          |
+| **album**      | String     | Current track album (if available)           |
+| **albumArt**   | String     | (URL) Album art from UPnP events             |
+| **volume**     | Dimmer     | Volume (0–100)                                |
+| **mute**       | Switch     | Mute/unmute                                   |
+| **repeat**     | Switch     | Repeat on/off (simple mode)                  |
+| **shuffle**    | Switch     | Shuffle on/off                                |
+| **source**     | String     | Source selection (wifi, bluetooth, line-in)   |
 
-The `control` channel accepts standard `Player` item commands:
+### Device/System Info
 
-- PLAY: Start playback
-- PAUSE: Pause playback
-- NEXT: Skip to the next track
-- PREVIOUS: Skip to the previous track
-- STOP: Stop playback
+| Channel ID       | Item Type | Description                              |
+|------------------|----------|------------------------------------------|
+| **deviceName**   | String   | Friendly name from device config         |
+| **firmware**     | String   | Firmware version                         |
+| **ipAddress**    | String   | Current IP address of the device         |
+| **macAddress**   | String   | MAC address (if available)              |
+| **wifiSignal**   | Number   | Wi-Fi signal strength (dBm or 0–100)     |
 
-### Playback Control Channels
+### Multiroom / Grouping
 
-| Channel Type ID | Item Type | Description                    | Read/Write |
-|-----------------|-----------|--------------------------------|------------|
-| repeat          | String    | Repeat mode (off/all/single)  | R/W        |
-| shuffle         | Switch    | Shuffle mode                  | R/W        |
-| source          | String    | Input source selection        | R/W        |
+| Channel ID         | Item Type | Description                                                 |
+|--------------------|----------|-------------------------------------------------------------|
+| **role**           | String   | `standalone`, `master`, or `slave`                          |
+| **masterIP**       | String   | IP of master (shown on a slave device)                      |
+| **slaveIPs**       | String   | IP addresses of any slaves (only meaningful on the master)  |
+| **join**           | String   | Provide a master IP to join that group                      |
+| **leave**          | Switch   | Leave the current group (if slave)                          |
+| **ungroup**        | Switch   | Disband entire group (if master)                            |
+| **kickout**        | String   | Remove a specified slave IP from the group (master only)    |
+| **groupVolume**    | Dimmer   | Group-wide volume (master device controlling slaves)        |
+| **groupMute**      | Switch   | Group-wide mute (master device controlling slaves)          |
 
-#### Repeat Mode Options
+---
 
-- `off`: No repeat
-- `all`: Repeat all tracks
-- `single`: Repeat the current track
+## Multiroom Behavior
 
-#### Source Options
+- **Master**: The device hosting the audio stream. All slaves sync to this.  
+- **Slave**: A device that has joined the master’s group. **It no longer sends its own UPnP events**; the master is responsible for controlling it.  
+- **Actions**:  
+  - **Join**: Provide the master IP. The device becomes a slave.  
+  - **Leave**: If a device is currently a slave, it can leave the group.  
+  - **Ungroup**: Break up the entire group from the master side.  
+  - **Kickout**: The master can forcibly remove a particular slave from the group.  
 
-- `wifi`: Network streaming
-- `bluetooth`: Bluetooth input
-- `line-in`: Analog input
-- `optical`: Digital optical input
+Within openHAB, you might link these group channels to rules or UI elements to let you dynamically form or dissolve multiroom groups.
 
-### Device Metadata Channels
+---
 
-| Channel Type ID | Item Type | Description                    | Read/Write |
-|-----------------|-----------|--------------------------------|------------|
-| deviceName      | String    | Friendly name of the device    | R          |
-| firmware        | String    | Firmware version of the device| R          |
-| macAddress      | String    | MAC address of the device      | R          |
-| ipAddress       | String    | IP address of the device       | R          |
-| wifiSignal      | Percent   | WiFi signal strength           | R          |
+## Example Setup
 
-### Group Control Channels
+### Things File
 
-| Channel           | Type      | Description                          | Access |
-|-------------------|-----------|--------------------------------------|---------|
-| role              | String    | Device role (standalone/master/slave) | R      |
-| groupMasterIP     | String    | IP address of the master device    | R          |
-| groupSlaveIPs     | String    | List of slave device IPs           | R          |
-| groupJoin         | String    | Join a group (specify master IP)   | W          |
-| groupLeave        | String    | Leave the current group            | W          |
-| groupUngroup      | String    | Ungroup all slaves (master only)   | W          |
-| groupSlaveKickout | String    | Remove a specific slave from group | W          |
-| groupVolume       | Dimmer    | Group-wide volume control          | R/W        |
-| groupMute         | Switch    | Group-wide mute control            | R/W        |
+```java
+Thing linkplay:device:bedroom  [ ipAddress="192.168.1.101", deviceName="Bedroom Speaker", pollingInterval=15 ]
+Thing linkplay:device:kitchen  [ ipAddress="192.168.1.102", deviceName="Kitchen Speaker" ]
+```
 
-## Example Configuration
+### Items File
 
-### Example Thing Configuration
+```java
+// Basic playback
+Player  Bedroom_Control  "Bedroom Control"  { channel="linkplay:device:bedroom:control" }
+Dimmer  Bedroom_Volume  "Bedroom Volume"   { channel="linkplay:device:bedroom:volume" }
+Switch  Bedroom_Mute    "Bedroom Mute"     { channel="linkplay:device:bedroom:mute" }
 
-```plaintext
-Thing linkplay:device:living [ ipAddress="192.168.1.100", pollingInterval=15 ]
+// Multiroom
+Switch  Bedroom_Leave   "Leave Group"      { channel="linkplay:device:bedroom:leave" }
+String  Bedroom_Join    "Join Group"       { channel="linkplay:device:bedroom:join" }
+...
+```
+
+### Usage Notes
+
+- If you **join** the kitchen speaker to the bedroom speaker (master), the kitchen device becomes a slave.  
+- The bedroom device’s “slaveIPs” channel might then reflect the kitchen speaker’s IP.  
+- The kitchen device’s “role” channel will show “slave,” and it might not broadcast its own playback data.
+
+---
+
+## Limitations & Notes
+
+- **UPnP Subscription**: In a multiroom group, only the master device’s events are relevant. Slaves no longer publish separate UPnP events.  
+- **Volume Differences**: You can still set an individual slave’s volume, but group volume typically overrides it if changed from the master.  
+- **Inconsistent Firmware**: Some LinkPlay-based products have older firmware that may not support all commands.  
+- **Partial API Coverage**: The LinkPlay HTTP API is extensive. This binding implements the core features (media control, multiroom, volume, etc.). Additional endpoints (e.g., advanced Wi-Fi config) might not be exposed directly.
+
+---
+
+## Further Reading
+
+- [Official openHAB Binding Docs](https://www.openhab.org/docs/developer/bindings/)  
+- [LinkPlay Developer Docs](https://developer.arylic.com/)  
+- Community discussion in [Arylic / LinkPlay forums and user groups]
+
+---
+
+## Conclusion
+
+This binding supports a **wide range** of LinkPlay-based audio devices. It provides multiroom grouping, basic playback, volume/mute, and source control. If your device is not discovered automatically, you can add it manually via `ipAddress`. For multiroom grouping, you can use the group channels to **join** or **ungroup** devices at runtime.
+
+Please **report issues or suggestions** in the openHAB community forums or GitHub repository to help refine LinkPlay support further.

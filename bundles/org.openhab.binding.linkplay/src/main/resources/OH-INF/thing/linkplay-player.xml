@@ -1,248 +1,250 @@
-<?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?> 
 <thing:thing-descriptions bindingId="linkplay"
-	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-	xmlns:thing="https://openhab.org/schemas/thing-description/v1.0.0"
-	xsi:schemaLocation="https://openhab.org/schemas/thing-description/v1.0.0 https://openhab.org/schemas/thing-description-1.0.0.xsd">
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:thing="https://openhab.org/schemas/thing-description/v1.0.0"
+    xsi:schemaLocation="https://openhab.org/schemas/thing-description/v1.0.0 https://openhab.org/schemas/thing-description-1.0.0.xsd">
 
-	<!-- Thing Type -->
-	<thing-type id="device">
-		<label>LinkPlay Audio Device</label>
-		<description>A LinkPlay-based audio device.</description>
+    <!-- Thing Type Definition -->
+    <thing-type id="device">
+        <label>LinkPlay Audio Device</label>
+        <description>A LinkPlay-based audio device.</description>
 
-		<channel-groups>
-			<channel-group id="playback" typeId="playback"/>
-			<channel-group id="system" typeId="system"/>
-			<channel-group id="network" typeId="network"/>
-			<channel-group id="multiroom" typeId="multiroom"/>
-		</channel-groups>
+        <channel-groups>
+            <channel-group id="playback" typeId="playback"/>
+            <channel-group id="system" typeId="system"/>
+            <channel-group id="network" typeId="network"/>
+            <channel-group id="multiroom" typeId="multiroom"/>
+        </channel-groups>
 
-		<config-description>
-			<parameter name="ipAddress" type="text" required="true">
-				<context>network-address</context>
-				<label>IP Address</label>
-				<description>IP address of the LinkPlay device.</description>
-			</parameter>
-			<parameter name="deviceName" type="text" required="false">
-				<label>Device Name</label>
-				<description>Friendly name for the LinkPlay device.</description>
-			</parameter>
-			<parameter name="udn" type="text" required="false">
-				<label>UDN</label>
-				<description>Unique Device Name (UDN) for UPnP identification.</description>
-				<advanced>true</advanced>
-			</parameter>
-			<parameter name="pollingInterval" type="integer" required="false" min="10" max="60" unit="s">
-				<label>Polling Interval</label>
-				<description>Interval in seconds between device status updates.</description>
-				<default>30</default> 
-				<advanced>true</advanced>
-			</parameter>
-			<parameter name="maxRetries" type="integer" required="false">
-				<label>Max Retries</label>
-				<description>Maximum number of retries for HTTP commands.</description>
-				<default>3</default>
-			</parameter>
-			<parameter name="retryDelayMillis" type="integer" required="false">
-				<label>Retry Delay</label>
-				<description>Delay between HTTP retries in milliseconds.</description>
-				<default>1000</default>
-			</parameter>
+        <config-description>
+            <parameter name="ipAddress" type="text" required="true">
+                <context>network-address</context>
+                <label>IP Address</label>
+                <description>IP address of the LinkPlay device.</description>
+            </parameter>
+            <parameter name="deviceName" type="text" required="false">
+                <label>Device Name</label>
+                <description>Friendly name for the LinkPlay device.</description>
+            </parameter>
+            <parameter name="udn" type="text" required="false">
+                <label>UDN</label>
+                <description>Unique Device Name (UDN) for UPnP identification.</description>
+                <advanced>true</advanced>
+            </parameter>
+            <parameter name="pollingInterval" type="integer" required="false" min="10" max="60" unit="s">
+                <label>Polling Interval</label>
+                <description>Interval in seconds between device status updates.</description>
+                <default>10</default>
+                <advanced>true</advanced>
+            </parameter>
+            <parameter name="maxRetries" type="integer" required="false">
+                <label>Max Retries</label>
+                <description>Maximum number of retries for HTTP commands.</description>
+                <default>3</default>
+            </parameter>
+            <parameter name="retryDelayMillis" type="integer" required="false">
+                <label>Retry Delay</label>
+                <description>Delay between HTTP retries in milliseconds.</description>
+                <default>1000</default>
+            </parameter>
+        </config-description>
+    </thing-type>
 
-		</config-description>
-	</thing-type>
+    <!-- Channel Group Types -->
+    <channel-group-type id="playback">
+        <label>Playback</label>
+        <description>Media playback controls and information</description>
+        <channels>
+            <channel id="control" typeId="system.media-control"/>
+            <channel id="title" typeId="system.media-title"/>
+            <channel id="artist" typeId="system.media-artist"/>
+            <channel id="album" typeId="system.media-title"/>
+            <channel id="albumArt" typeId="albumArt"/>
+            <channel id="duration" typeId="duration"/>
+            <channel id="position" typeId="position"/>
+            <channel id="volume" typeId="system.volume"/>
+            <channel id="mute" typeId="system.mute"/>
+            <channel id="repeat" typeId="repeat"/>
+            <channel id="shuffle" typeId="shuffle"/>
+            <channel id="source" typeId="source"/>
+        </channels>
+    </channel-group-type>
 
-	<!-- Channel Group Type Definitions -->
-	<channel-group-type id="playback">
-		<label>Playback</label>
-		<description>Media playback controls and information</description>
-		<channels>
-			<channel id="control" typeId="system.media-control"/>
-			<channel id="title" typeId="system.media-title"/>
-			<channel id="artist" typeId="system.media-artist"/>
-			<channel id="album" typeId="system.media-album"/>
-			<channel id="albumArt" typeId="albumArt"/>
-			<channel id="duration" typeId="duration"/>
-			<channel id="position" typeId="position"/>
-			<channel id="volume" typeId="system.volume"/>
-			<channel id="mute" typeId="system.mute"/>
-			<channel id="repeat" typeId="repeat"/>
-			<channel id="shuffle" typeId="shuffle"/>
-			<channel id="source" typeId="source"/>
-		</channels>
-	</channel-group-type>
+    <channel-group-type id="system">
+        <label>System</label>
+        <description>Device system information</description>
+        <channels>
+            <channel id="deviceName" typeId="deviceName"/>
+            <channel id="firmware" typeId="firmware"/>
+        </channels>
+    </channel-group-type>
 
-	<channel-group-type id="system">
-		<label>System</label>
-		<description>Device system information</description>
-		<channels>
-			<channel id="deviceName" typeId="deviceName"/>
-			<channel id="firmware" typeId="firmware"/>
-		</channels>
-	</channel-group-type>
+    <channel-group-type id="network">
+        <label>Network</label>
+        <description>Network-related information</description>
+        <channels>
+            <channel id="ipAddress" typeId="ipAddress"/>
+            <channel id="macAddress" typeId="macAddress"/>
+            <channel id="wifiSignal" typeId="wifiSignal"/>
+        </channels>
+    </channel-group-type>
 
-	<channel-group-type id="network">
-		<label>Network</label>
-		<description>Network-related information</description>
-		<channels>
-			<channel id="ipAddress" typeId="ipAddress"/>
-			<channel id="macAddress" typeId="macAddress"/>
-			<channel id="wifiSignal" typeId="wifiSignal"/>
-		</channels>
-	</channel-group-type>
+    <channel-group-type id="multiroom">
+        <label>Multiroom</label>
+        <description>Multiroom control and status</description>
+        <channels>
+            <channel id="role" typeId="role"/>
+            <channel id="masterIP" typeId="masterIP"/>
+            <channel id="slaveIPs" typeId="slaveIPs"/>
+            <channel id="join" typeId="join"/>
+            <channel id="leave" typeId="leave"/>
+            <channel id="ungroup" typeId="ungroup"/>
+            <channel id="kickout" typeId="kickout"/>
+            <channel id="groupVolume" typeId="system.volume"/>
+            <channel id="groupMute" typeId="system.mute"/>
+        </channels>
+    </channel-group-type>
 
-	<channel-group-type id="multiroom">
-		<label>Multiroom</label>
-		<description>Multiroom control and status</description>
-		<channels>
-			<channel id="role" typeId="role"/>
-			<channel id="masterIP" typeId="masterIP"/>
-			<channel id="slaveIPs" typeId="slaveIPs"/>
-			<channel id="join" typeId="join"/>
-			<channel id="leave" typeId="leave"/>
-			<channel id="ungroup" typeId="ungroup"/>
-			<channel id="kickout" typeId="kickout"/>
-			<channel id="groupVolume" typeId="system.volume"/>
-			<channel id="groupMute" typeId="system.mute"/>
-		</channels>
-	</channel-group-type>
+    <!-- Channel Type Definitions -->
 
-	<!-- Channel Type Definitions -->
-	<channel-type id="repeat">
-		<item-type>String</item-type>
-		<label>Repeat</label>
-		<description>Playback repeat mode (OFF, ONE, ALL).</description>
-		<state>OFF</state>
-		<state>ONE</state>
-		<state>ALL</state>
-	</channel-type>
+    <!-- Repeat is now a simple Switch -->
+    <channel-type id="repeat">
+        <item-type>Switch</item-type>
+        <label>Repeat</label>
+        <description>Enable or disable Repeat mode.</description>
+    </channel-type>
 
-	<channel-type id="shuffle">
-		<item-type>Switch</item-type>
-		<label>Shuffle</label>
-		<description>Enable or disable shuffle mode.</description>
-	</channel-type>
+    <!-- Shuffle also remains a Switch -->
+    <channel-type id="shuffle">
+        <item-type>Switch</item-type>
+        <label>Shuffle</label>
+        <description>Shuffle mode for playback (on/off).</description>
+    </channel-type>
 
-	<channel-type id="source">
-		<item-type>String</item-type>
-		<label>Source</label>
-		<description>Current audio source.</description>
-		<state>
-			<options>
-				<option value="airplay">AirPlay</option>
-				<option value="spotify">Spotify</option>
-				<option value="dlna">DLNA</option>
-				<option value="line-in">Line In</option>
-				<option value="bluetooth">Bluetooth</option>
-			</options>
-		</state>
-	</channel-type>
+    <!-- Source options remain as a String with enumerations, if desired -->
+    <channel-type id="source">
+        <item-type>String</item-type>
+        <label>Source</label>
+        <description>Current audio source.</description>
+        <state>
+            <options>
+                <option value="airplay">AirPlay</option>
+                <option value="spotify">Spotify</option>
+                <option value="dlna">DLNA</option>
+                <option value="line-in">Line In</option>
+                <option value="bluetooth">Bluetooth</option>
+            </options>
+        </state>
+    </channel-type>
 
-	<!-- Metadata Channel Types -->
-	<channel-type id="deviceName">
-		<item-type>String</item-type>
-		<label>Device Name</label>
-		<description>Name of the device.</description>
-		<state readOnly="true"/>
-	</channel-type>
+    <!-- Updated: albumArt is now a String for a URL -->
+    <channel-type id="albumArt">
+        <item-type>String</item-type>
+        <label>Album Art URL</label>
+        <description>URL pointing to the current track's album art</description>
+        <state readOnly="true"/>
+    </channel-type>
 
-	<channel-type id="firmware">
-		<item-type>String</item-type>
-		<label>Firmware Version</label>
-		<description>Current firmware version.</description>
-		<state readOnly="true"/>
-	</channel-type>
+    <!-- Additional metadata channel types -->
+    <channel-type id="deviceName">
+        <item-type>String</item-type>
+        <label>Device Name</label>
+        <description>Name of the device.</description>
+        <state readOnly="true"/>
+    </channel-type>
 
-	<channel-type id="macAddress">
-		<item-type>String</item-type>
-		<label>MAC Address</label>
-		<description>MAC address of the device.</description>
-		<state readOnly="true"/>
-	</channel-type>
+    <channel-type id="firmware">
+        <item-type>String</item-type>
+        <label>Firmware Version</label>
+        <description>Current firmware version.</description>
+        <state readOnly="true"/>
+    </channel-type>
 
-	<channel-type id="ipAddress">
-		<item-type>String</item-type>
-		<label>IP Address</label>
-		<description>Current IP address.</description>
-		<state readOnly="true"/>
-	</channel-type>
+    <channel-type id="macAddress">
+        <item-type>String</item-type>
+        <label>MAC Address</label>
+        <description>MAC address of the device.</description>
+        <state readOnly="true"/>
+    </channel-type>
 
-	<channel-type id="wifiSignal">
-		<item-type>Number</item-type>
-		<label>WiFi Signal</label>
-		<description>WiFi signal strength in dBm.</description>
-		<state readOnly="true" pattern="%d dBm"/>
-	</channel-type>
+    <channel-type id="ipAddress">
+        <item-type>String</item-type>
+        <label>IP Address</label>
+        <description>Current IP address.</description>
+        <state readOnly="true"/>
+    </channel-type>
 
-	<!-- Group Channel Types -->
-	<channel-type id="role">
-		<item-type>String</item-type>
-		<label>Multiroom Role</label>
-		<description>Role in multiroom setup (master/slave/standalone).</description>
-		<state readOnly="true">
-			<options>
-				<option value="master">Master</option>
-				<option value="slave">Slave</option>
-				<option value="standalone">Standalone</option>
-			</options>
-		</state>
-	</channel-type>
+    <channel-type id="wifiSignal">
+        <item-type>Number</item-type>
+        <label>WiFi Signal</label>
+        <description>WiFi signal strength in dBm.</description>
+        <state readOnly="true" pattern="%d dBm"/>
+    </channel-type>
 
-	<channel-type id="masterIP">
-		<item-type>String</item-type>
-		<label>Master IP</label>
-		<description>IP address of master device (if slave).</description>
-		<state readOnly="true"/>
-	</channel-type>
+    <channel-type id="role">
+        <item-type>String</item-type>
+        <label>Multiroom Role</label>
+        <description>Role in multiroom setup (master/slave/standalone).</description>
+        <state readOnly="true">
+            <options>
+                <option value="master">Master</option>
+                <option value="slave">Slave</option>
+                <option value="standalone">Standalone</option>
+            </options>
+        </state>
+    </channel-type>
 
-	<channel-type id="slaveIPs">
-		<item-type>String</item-type>
-		<label>Slave IPs</label>
-		<description>IP addresses of slave devices (if master).</description>
-		<state readOnly="true"/>
-	</channel-type>
+    <channel-type id="masterIP">
+        <item-type>String</item-type>
+        <label>Master IP</label>
+        <description>IP address of master device (if slave).</description>
+        <state readOnly="true"/>
+    </channel-type>
 
-	<channel-type id="join">
-		<item-type>String</item-type>
-		<label>Join Group</label>
-		<description>Join a multiroom group by master IP.</description>
-	</channel-type>
+    <channel-type id="slaveIPs">
+        <item-type>String</item-type>
+        <label>Slave IPs</label>
+        <description>IP addresses of slave devices (if master).</description>
+        <state readOnly="true"/>
+    </channel-type>
 
-	<channel-type id="leave">
-		<item-type>Switch</item-type>
-		<label>Leave Group</label>
-		<description>Leave current multiroom group.</description>
-	</channel-type>
+    <channel-type id="join">
+        <item-type>String</item-type>
+        <label>Join Group</label>
+        <description>Join a multiroom group by master IP.</description>
+    </channel-type>
 
-	<channel-type id="ungroup">
-		<item-type>Switch</item-type>
-		<label>Ungroup</label>
-		<description>Disband current multiroom group (if master).</description>
-	</channel-type>
+    <channel-type id="leave">
+        <item-type>Switch</item-type>
+        <label>Leave Group</label>
+        <description>Leave current multiroom group.</description>
+    </channel-type>
 
-	<channel-type id="kickout">
-		<item-type>String</item-type>
-		<label>Kick Out</label>
-		<description>Remove a slave from group by IP (if master).</description>
-	</channel-type>
+    <channel-type id="ungroup">
+        <item-type>Switch</item-type>
+        <label>Ungroup</label>
+        <description>Disband current multiroom group (if master).</description>
+    </channel-type>
 
-	<channel-type id="albumArt">
-		<item-type>Image</item-type>
-		<label>Album Art</label>
-		<description>Album artwork for the current track</description>
-		<state readOnly="true"/>
-	</channel-type>
+    <channel-type id="kickout">
+        <item-type>String</item-type>
+        <label>Kick Out</label>
+        <description>Remove a slave from group by IP (if master).</description>
+    </channel-type>
 
-	<channel-type id="duration">
-		<item-type>Number:Time</item-type>
-		<label>Duration</label>
-		<description>Duration of the current track in seconds</description>
-		<state readOnly="true" pattern="%d s"/>
-	</channel-type>
+    <!-- Duration and Position are times in seconds -->
+    <channel-type id="duration">
+        <item-type>Number:Time</item-type>
+        <label>Duration</label>
+        <description>Duration of the current track in seconds</description>
+        <state readOnly="true" pattern="%d s"/>
+    </channel-type>
 
-	<channel-type id="position">
-		<item-type>Number:Time</item-type>
-		<label>Position</label>
-		<description>Current playback position in seconds</description>
-		<state readOnly="true" pattern="%d s"/>
-	</channel-type>
+    <channel-type id="position">
+        <item-type>Number:Time</item-type>
+        <label>Position</label>
+        <description>Current playback position in seconds</description>
+        <state readOnly="true" pattern="%d s"/>
+    </channel-type>
+
 </thing:thing-descriptions>

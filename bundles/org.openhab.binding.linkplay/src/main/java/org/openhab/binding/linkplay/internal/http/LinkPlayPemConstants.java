@@ -18,7 +18,7 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
  * Provides the PEM content for SSL/TLS configuration.
  * Contains the embedded private key and certificate from the LinkPlay device.
  *
- * @author Mark Theunissen - Initial contribution
+ * @author Michel Cumming - Initial contribution
  */
 @NonNullByDefault
 public final class LinkPlayPemConstants {

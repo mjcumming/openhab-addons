@@ -5,8 +5,8 @@
  * information.
  *
  * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0
+ * terms of the Eclipse Public License 2.0
+ * which is available at http://www.eclipse.org/legal/epl-2.0
  *
  * SPDX-License-Identifier: EPL-2.0
  */
@@ -45,9 +45,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * A UPnP discovery participant for LinkPlay devices.
- * Performs additional HTTP(S) validation before confirming device discovery.
- *
+ * A UPnP discovery participant for LinkPlay devices. We discover all
+ * "MediaRenderer" or "MediaServer" devices, then do an HTTP check to confirm.
+ * <p>
+ * This approach follows openHAB best practices:
+ *  - Listen for broad UPnP announcements
+ *  - Filter by basic device type/services
+ *  - Perform additional HTTP fingerprint check (getStatusEx) to ensure it's LinkPlay
+ * 
  * @author Michael Cumming - Initial contribution
  */
 @NonNullByDefault
@@ -56,25 +61,25 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
 
     private final Logger logger = LoggerFactory.getLogger(LinkPlayUpnpDiscoveryParticipant.class);
 
-    private static final int DISCOVERY_RESULT_TTL_SECONDS = 300;
-    private static final Set<String> SUPPORTED_DEVICE_TYPES = Set.of(UPNP_DEVICE_TYPE,
-            "urn:schemas-upnp-org:device:MediaServer:1" // Some LinkPlay devices use this type
+    // We only look at these UPnP device types
+    private static final Set<String> SUPPORTED_DEVICE_TYPES = Set.of(
+        "urn:schemas-upnp-org:device:MediaRenderer:1",
+        "urn:schemas-upnp-org:device:MediaServer:1"
     );
-    private static final Set<String> SUPPORTED_MANUFACTURERS = Set.of(UPNP_MANUFACTURER.toLowerCase(),
-            "linkplay technology inc.");
 
-    // Additional identifiers for LinkPlay devices
-    private static final String LINKPLAY_IDENTIFIER = "linkplay";
-    private static final String LINKPLAY_MODEL_PREFIX = "ls"; // Common prefix for LinkPlay models
+    private static final int DISCOVERY_RESULT_TTL_SECONDS = 300;
 
-    // HTTP/HTTPS validation settings
+    // HTTP/HTTPS validation to confirm it is truly a LinkPlay device
     private static final int[] HTTPS_PORTS = { 443, 4443 };
     private static final int HTTP_PORT = 80;
     private static final int CONNECT_TIMEOUT_MS = 2000;
     private static final int READ_TIMEOUT_MS = 2000;
+
+    // The endpoint we call to see if "uuid" text is returned
     private static final String VALIDATION_ENDPOINT = "/httpapi.asp?command=getStatusEx";
     private static final String EXPECTED_RESPONSE_CONTENT = "uuid";
 
+    // LinkPlay devices normally have these UPnP services
     private static final ServiceId SERVICE_ID_AV_TRANSPORT = new UDAServiceId("AVTransport");
     private static final ServiceId SERVICE_ID_RENDERING_CONTROL = new UDAServiceId("RenderingControl");
 
@@ -85,56 +90,68 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
 
     @Override
     public Set<ThingTypeUID> getSupportedThingTypeUIDs() {
+        // We only declare the "device" type from your binding
         return Collections.singleton(THING_TYPE_DEVICE);
     }
 
+    /**
+     * Attempts to derive a ThingUID if this device is recognized
+     * as LinkPlay based on basic checks (UPnP services, etc).
+     */
     @Override
     public @Nullable ThingUID getThingUID(RemoteDevice device) {
         String manufacturer = device.getDetails().getManufacturerDetails().getManufacturer();
-        String deviceType = device.getType().getType();
-        String modelName = device.getDetails().getModelDetails().getModelName();
-        String modelDesc = device.getDetails().getModelDetails().getModelDescription();
-        String deviceUDN = device.getIdentity().getUdn().getIdentifierString();
+        String deviceType   = device.getType().getType();
+        String modelName    = device.getDetails().getModelDetails().getModelName();
+        String modelDesc    = device.getDetails().getModelDetails().getModelDescription();
+        String deviceUDN    = device.getIdentity().getUdn().getIdentifierString();
 
-        // Log device details at trace level for debugging
-        logger.trace("Discovered UPnP device - Manufacturer: {}, Type: {}, Model: {}, Desc: {}, UDN: {}", manufacturer,
-                deviceType, modelName, modelDesc, deviceUDN);
+        logger.trace("UPnP device discovered => manufacturer={}, type={}, model={}, desc={}, UDN={}",
+                manufacturer, deviceType, modelName, modelDesc, deviceUDN);
 
+        // If we cannot confirm it's a LinkPlay or MediaRenderer device, return null
         if (!isLinkPlayDevice(device)) {
             return null;
         }
 
-        // Create thing UID from UDN, ensuring it's properly formatted
+        // Create a stable ThingUID from the device's UDN
         String normalizedUDN = deviceUDN.startsWith("uuid:") ? deviceUDN : "uuid:" + deviceUDN;
-        logger.debug("Found LinkPlay device - Manufacturer: {}, Model: {}, UDN: {}", manufacturer, modelName,
-                normalizedUDN);
+        normalizedUDN = normalizedUDN.replaceAll("[^a-zA-Z0-9_]", ""); // clean out special chars
 
-        return new ThingUID(THING_TYPE_DEVICE, normalizedUDN.replaceAll("[^a-zA-Z0-9_]", ""));
+        logger.debug("Found possible LinkPlay device => Mfr={}, Model={}, UDN={}", manufacturer, modelName, normalizedUDN);
+        return new ThingUID(THING_TYPE_DEVICE, normalizedUDN);
     }
 
+    /**
+     * Once we have a ThingUID, we do a final HTTP check to confirm this
+     * is truly a LinkPlay device, then create a DiscoveryResult.
+     */
     @Override
     public @Nullable DiscoveryResult createResult(RemoteDevice device) {
         ThingUID thingUID = getThingUID(device);
         if (thingUID == null) {
-            return null;
+            return null; // not recognized
         }
 
+        // Final check by calling getStatusEx
         String ipAddress = device.getIdentity().getDescriptorURL().getHost();
-        if (ipAddress == null || ipAddress.isEmpty() || !validateDevice(ipAddress)) {
-            logger.debug("Device validation failed for IP {}", ipAddress);
+        if (ipAddress == null || ipAddress.isEmpty()) {
             return null;
         }
 
-        // Get device details
-        String manufacturer = device.getDetails().getManufacturerDetails().getManufacturer();
-        String modelName = device.getDetails().getModelDetails().getModelName();
-        String friendlyName = device.getDetails().getFriendlyName();
-        String deviceUDN = device.getIdentity().getUdn().getIdentifierString();
+        // If HTTP check fails, skip creating a discovery result
+        if (!validateDevice(ipAddress)) {
+            logger.debug("Skipping device at {} => validation (HTTP check) did not confirm LinkPlay", ipAddress);
+            return null;
+        }
 
-        // Normalize UDN
+        // Grab more details for the discovery result
+        String manufacturer = device.getDetails().getManufacturerDetails().getManufacturer();
+        String modelName    = device.getDetails().getModelDetails().getModelName();
+        String friendlyName = device.getDetails().getFriendlyName();
+        String deviceUDN    = device.getIdentity().getUdn().getIdentifierString();
         String normalizedUDN = deviceUDN.startsWith("uuid:") ? deviceUDN : "uuid:" + deviceUDN;
 
-        // Create discovery result with all necessary properties
         Map<String, Object> properties = new HashMap<>();
         properties.put(CONFIG_IP_ADDRESS, ipAddress);
         properties.put(CONFIG_UDN, normalizedUDN);
@@ -143,63 +160,62 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
         properties.put(PROPERTY_UDN, normalizedUDN);
 
         String label = String.format("%s (%s)", friendlyName, ipAddress);
-        return DiscoveryResultBuilder.create(thingUID).withLabel(label).withProperties(properties)
-                .withRepresentationProperty(PROPERTY_UDN).withTTL(DISCOVERY_RESULT_TTL_SECONDS).build();
+        return DiscoveryResultBuilder.create(thingUID)
+                .withLabel(label)
+                .withProperties(properties)
+                .withRepresentationProperty(PROPERTY_UDN)
+                .withTTL(DISCOVERY_RESULT_TTL_SECONDS)
+                .build();
     }
 
+    /**
+     * Basic filter to see if the device is *likely* LinkPlay. We accept devices
+     * with certain UPnP types (MediaRenderer or MediaServer) and known services (AVTransport, RenderingControl).
+     * The real check is the HTTP call in validateDevice(...).
+     */
     private boolean isLinkPlayDevice(RemoteDevice device) {
-        String manufacturer = device.getDetails().getManufacturerDetails().getManufacturer();
         String deviceType = device.getType().getType();
-        String modelName = device.getDetails().getModelDetails().getModelName();
-        String modelDesc = device.getDetails().getModelDetails().getModelDescription();
 
-        // Check UPnP services
+        // Must be at least one of these device types
+        if (!SUPPORTED_DEVICE_TYPES.contains(deviceType)) {
+            return false;
+        }
+
+        // Also require presence of AVTransport & RenderingControl
         Service<?, ?> avTransportService = device.findService(SERVICE_ID_AV_TRANSPORT);
         Service<?, ?> renderingControlService = device.findService(SERVICE_ID_RENDERING_CONTROL);
         boolean hasRequiredServices = avTransportService != null && renderingControlService != null;
-
-        // Log service availability
-        logger.debug("Device {} services - AVTransport: {}, RenderingControl: {}",
+        logger.debug("Device {} => AVTransport={}, RenderingControl={}",
                 device.getDetails().getFriendlyName(), avTransportService != null, renderingControlService != null);
 
-        // Primary check: manufacturer and device type
-        boolean isValidManufacturer = manufacturer != null
-                && SUPPORTED_MANUFACTURERS.contains(manufacturer.toLowerCase());
-        boolean isValidDeviceType = deviceType != null && SUPPORTED_DEVICE_TYPES.contains(deviceType);
-
-        // Secondary check: Look for LinkPlay identifiers in model name and description
-        boolean hasLinkPlayIdentifier = false;
-        if (modelName != null) {
-            hasLinkPlayIdentifier = modelName.toLowerCase().contains(LINKPLAY_IDENTIFIER)
-                    || modelName.toLowerCase().startsWith(LINKPLAY_MODEL_PREFIX);
-        }
-        if (!hasLinkPlayIdentifier && modelDesc != null) {
-            hasLinkPlayIdentifier = modelDesc.toLowerCase().contains(LINKPLAY_IDENTIFIER);
-        }
-
-        // Device is valid if it matches manufacturer/type OR contains LinkPlay identifier OR has required services
-        return (isValidManufacturer && isValidDeviceType) || hasLinkPlayIdentifier || hasRequiredServices;
+        return hasRequiredServices;
     }
 
+    /**
+     * Attempt connecting over HTTPS first, then fallback to HTTP to confirm
+     * that getStatusEx returns "uuid". This ensures the device is truly LinkPlay.
+     */
     private boolean validateDevice(String ipAddress) {
         // Try HTTPS first
         for (int port : HTTPS_PORTS) {
             if (validateConnection(ipAddress, port, true)) {
-                logger.debug("HTTPS validation successful for {} on port {}", ipAddress, port);
+                logger.debug("LinkPlay device confirmed at {} (HTTPS, port={})", ipAddress, port);
                 return true;
             }
         }
 
-        // Fall back to HTTP
-        boolean result = validateConnection(ipAddress, HTTP_PORT, false);
-        if (result) {
-            logger.debug("HTTP validation successful for {} on port {}", ipAddress, HTTP_PORT);
-        } else {
-            logger.debug("All validation attempts failed for {}", ipAddress);
+        // Then fallback to HTTP
+        if (validateConnection(ipAddress, HTTP_PORT, false)) {
+            logger.debug("LinkPlay device confirmed at {} (HTTP, port={})", ipAddress, HTTP_PORT);
+            return true;
         }
-        return result;
+        return false;
     }
 
+    /**
+     * Opens either HTTP or HTTPS connection to the given IP & port, calls getStatusEx,
+     * and checks if the body contains "uuid".
+     */
     private boolean validateConnection(String ipAddress, int port, boolean useSsl) {
         String protocol = useSsl ? "https" : "http";
         String urlStr = String.format("%s://%s:%d%s", protocol, ipAddress, port, VALIDATION_ENDPOINT);
@@ -210,24 +226,28 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
 
             if (responseCode == 200) {
                 try (BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()))) {
-                    String responseLine;
-                    while ((responseLine = reader.readLine()) != null) {
-                        if (responseLine.contains(EXPECTED_RESPONSE_CONTENT)) {
-                            logger.trace("HTTP(S) validation successful: {} contains expected content", urlStr);
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        if (line.contains(EXPECTED_RESPONSE_CONTENT)) {
+                            logger.trace("HTTP check success => '{}' contains '{}'", urlStr, EXPECTED_RESPONSE_CONTENT);
                             return true;
                         }
                     }
                 }
-                logger.trace("HTTP(S) validation failed: {} response missing expected content", urlStr);
+                logger.trace("HTTP check => '{}' does not contain '{}'", urlStr, EXPECTED_RESPONSE_CONTENT);
             } else {
-                logger.trace("HTTP(S) validation failed: {} returned status code {}", urlStr, responseCode);
+                logger.trace("HTTP check => '{}' returned status code {}", urlStr, responseCode);
             }
         } catch (Exception e) {
-            logger.trace("HTTP(S) validation error for {}: {}", urlStr, e.getMessage());
+            logger.trace("HTTP check => '{}' error: {}", urlStr, e.getMessage());
         }
         return false;
     }
 
+    /**
+     * Creates either an HttpsURLConnection or HttpURLConnection, setting
+     * timeouts, SSLContext, etc. as needed.
+     */
     private HttpURLConnection createConnection(String urlStr, boolean useSsl) throws Exception {
         URL url = new URL(urlStr);
         HttpURLConnection conn;
@@ -245,7 +265,6 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
         conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
         conn.setReadTimeout(READ_TIMEOUT_MS);
         conn.setRequestMethod("GET");
-
         return conn;
     }
 
