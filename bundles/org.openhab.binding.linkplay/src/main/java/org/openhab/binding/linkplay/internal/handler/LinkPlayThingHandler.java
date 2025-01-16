@@ -108,18 +108,24 @@ public class LinkPlayThingHandler extends BaseThingHandler {
      * Public method for updating channel state, used by the device manager.
      */
     public void handleStateUpdate(String channelId, State state) {
-        // Check if the channel is part of a group
-        Channel channel = thing.getChannel(channelId);
-        if (channel != null && channel.getUID().getGroupId() != null) {
-            String groupId = channel.getUID().getGroupId();
-            // Log for debugging
-            logger.trace("Updating state for group {} channel {}", groupId, channelId);
-            // Update the individual channel
-            updateState(channelId, state);
+        // First try to find the channel in its group
+        for (String groupId : new String[] { "playback", "system", "network", "multiroom" }) {
+            Channel channel = getThing().getChannel(groupId + "#" + channelId);
+            if (channel != null) {
+                // Found the channel in this group
+                logger.trace("Updating state for channel {}/{} to {}", groupId, channelId, state);
+                updateState(channel.getUID(), state);
+                return;
+            }
+        }
+
+        // If no grouped channel found, try updating directly (though this shouldn't happen)
+        Channel channel = getThing().getChannel(channelId);
+        if (channel != null) {
+            logger.trace("Updating state for ungrouped channel {} to {}", channelId, state);
+            updateState(channel.getUID(), state);
         } else {
-            // Update the individual channel
-            logger.trace("Updating state for channel {}", channelId);
-            updateState(channelId, state);
+            logger.debug("Channel not found: {}", channelId);
         }
     }
 
