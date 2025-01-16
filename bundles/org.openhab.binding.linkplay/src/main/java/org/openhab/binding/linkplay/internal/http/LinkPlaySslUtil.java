@@ -163,9 +163,10 @@ public class LinkPlaySslUtil {
             // Initialize SSLContext with key & trust managers
             SSLContext sslContext = SSLContext.getInstance("TLS");
             sslContext.init(keyManagers, new TrustManager[] { trustManager }, null);
+            logger.info("SSL context successfully created with client certificate");
             return sslContext;
         } catch (Exception e) {
-            logger.warn("Error creating SSL context: {}", e.getMessage());
+            logger.error("Error creating SSL context: {}", e.getMessage());
             throw new IllegalStateException("Failed to create SSL context", e);
         }
     }
@@ -185,7 +186,7 @@ public class LinkPlaySslUtil {
             httpClient.start();
             return httpClient;
         } catch (Exception e) {
-            logger.warn("Error starting HTTPS client: {}", e.getMessage());
+            logger.error("Error starting HTTPS client: {}", e.getMessage());
             throw new IllegalStateException("Failed to start HTTPS client", e);
         }
     }

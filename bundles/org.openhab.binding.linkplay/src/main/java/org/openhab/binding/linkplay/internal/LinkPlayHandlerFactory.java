@@ -95,7 +95,7 @@ public class LinkPlayHandlerFactory extends BaseThingHandlerFactory {
 
         // Double-check the type is actually supported
         if (!SUPPORTED_THING_TYPES_UIDS.contains(thingTypeUID)) {
-            logger.debug("Cannot create handler for unsupported thing type {}", thingTypeUID);
+            logger.trace("Cannot create handler for unsupported thing type {}", thingTypeUID);
             return null;
         }
 

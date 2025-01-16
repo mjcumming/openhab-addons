@@ -44,8 +44,6 @@ public class LinkPlayHttpManager {
 
     private final LinkPlayHttpClient httpClient;
     private final LinkPlayDeviceManager deviceManager;
-    private final int maxRetries;
-    private final long retryDelayMs;
     private final int pollingIntervalSeconds;
     private final String deviceName;
 
@@ -65,13 +63,10 @@ public class LinkPlayHttpManager {
         this.config = config;
         this.deviceName = deviceName;
 
-        // Use config-based values or fallback
-        this.maxRetries = config.getMaxRetries() > 0 ? config.getMaxRetries() : MAX_RETRIES;
-        this.retryDelayMs = config.getRetryDelayMillis() > 0 ? config.getRetryDelayMillis() : RETRY_DELAY_MS;
-        this.pollingIntervalSeconds = Math.max(config.getPollingInterval(), 10);
+        // Use config value directly - 0 means no polling, any positive number is the interval
+        this.pollingIntervalSeconds = config.getPollingInterval();
 
-        logger.debug("[{}] LinkPlayHttpManager created => maxRetries={}, retryDelayMs={}, pollInterval={}s", deviceName,
-                this.maxRetries, this.retryDelayMs, this.pollingIntervalSeconds);
+        logger.trace("[{}] LinkPlayHttpManager created => pollInterval={}s", deviceName, this.pollingIntervalSeconds);
     }
 
     // ------------------------------------------------------------------------
@@ -81,11 +76,15 @@ public class LinkPlayHttpManager {
      * Starts periodic polling using the configured interval.
      */
     public void startPolling() {
+        // If user sets poll=0, do not schedule
+        if (pollingIntervalSeconds <= 0) {
+            logger.debug("[{}] Polling is disabled (interval=0).", deviceName);
+            return;
+        }
         if (pollingJob != null && !pollingJob.isCancelled()) {
             logger.debug("[{}] Polling is already running; skipping start.", deviceName);
             return;
         }
-
         pollingJob = ThreadPoolManager.getScheduledPool(LinkPlayBindingConstants.BINDING_ID + "-http")
                 .scheduleWithFixedDelay(this::poll, 0, pollingIntervalSeconds, TimeUnit.SECONDS);
         logger.debug("[{}] Started HTTP polling every {}s", deviceName, pollingIntervalSeconds);
@@ -113,7 +112,7 @@ public class LinkPlayHttpManager {
             CompletableFuture<@Nullable String> future = httpClient.getPlayerStatus(ip)
                     .handle((@Nullable String result, @Nullable Throwable ex) -> {
                         if (ex != null) {
-                            logger.debug("[{}] Error polling device at {} => {}", deviceName, ip, ex.getMessage());
+                            logger.trace("[{}] Error polling device at {} => {}", deviceName, ip, ex.getMessage());
                             return null;
                         }
                         return result;
@@ -123,7 +122,7 @@ public class LinkPlayHttpManager {
             String response = future.get(TIMEOUT_MS, TimeUnit.MILLISECONDS);
 
             if (response == null || response.isEmpty()) {
-                logger.debug("[{}] Null or empty response from device IP={}", deviceName, ip);
+                logger.warn("[{}] Null or empty response from device IP={}", deviceName, ip);
                 deviceManager.handleHttpPollFailure(new LinkPlayCommunicationException("No response from device"));
                 return;
             }
@@ -147,14 +146,14 @@ public class LinkPlayHttpManager {
      * E.g., for REFRESH commands on volume/mute, etc.
      */
     public void refreshPlayerStatus() {
-        logger.debug("[{}] refreshPlayerStatus() => doing one-off getPlayerStatus", deviceName);
+        logger.trace("[{}] refreshPlayerStatus() => doing one-off getPlayerStatus", deviceName);
         String ip = getDeviceIp();
 
         try {
             CompletableFuture<String> future = httpClient.getPlayerStatus(ip)
                     .handle((@Nullable String result, @Nullable Throwable ex) -> {
                         if (ex != null || result == null) {
-                            logger.debug("[{}] Error or null result from getPlayerStatus: {}", deviceName,
+                            logger.trace("[{}] Error or null result from getPlayerStatus: {}", deviceName,
                                     ex != null ? ex.getMessage() : "null result");
                             return "";
                         }
@@ -163,7 +162,7 @@ public class LinkPlayHttpManager {
             String response = future.get(TIMEOUT_MS, TimeUnit.MILLISECONDS);
 
             if (response.isEmpty()) {
-                logger.debug("[{}] No or empty response => cannot update channels.", deviceName);
+                logger.warn("[{}] No or empty response => cannot update channels.", deviceName);
                 return;
             }
             try {
@@ -173,7 +172,7 @@ public class LinkPlayHttpManager {
                 logger.warn("[{}] refreshPlayerStatus() => parse error: {}", deviceName, e.getMessage());
             }
         } catch (Exception e) {
-            logger.debug("[{}] refreshPlayerStatus() => exception: {}", deviceName, e.getMessage());
+            logger.warn("[{}] refreshPlayerStatus() => exception: {}", deviceName, e.getMessage());
         }
     }
 
@@ -182,7 +181,7 @@ public class LinkPlayHttpManager {
      * that relate to multiroom (role, masterIP, slaveIPs, etc.).
      */
     public void refreshMultiroomStatus() {
-        logger.debug("[{}] refreshMultiroomStatus() => doing one-off getStatusEx", deviceName);
+        logger.trace("[{}] refreshMultiroomStatus() => doing one-off getStatusEx", deviceName);
         String ip = getDeviceIp();
 
         try {
@@ -190,7 +189,7 @@ public class LinkPlayHttpManager {
             String response = future.get(TIMEOUT_MS, TimeUnit.MILLISECONDS);
 
             if (response == null || response.isEmpty()) {
-                logger.debug("[{}] No or empty response => cannot update multiroom channels.", deviceName);
+                logger.warn("[{}] No or empty response => cannot update multiroom channels.", deviceName);
                 return;
             }
 
@@ -201,7 +200,7 @@ public class LinkPlayHttpManager {
                 logger.warn("[{}] refreshMultiroomStatus() => parse error: {}", deviceName, e.getMessage());
             }
         } catch (Exception e) {
-            logger.debug("[{}] refreshMultiroomStatus() => exception: {}", deviceName, e.getMessage());
+            logger.warn("[{}] refreshMultiroomStatus() => exception: {}", deviceName, e.getMessage());
         }
     }
 
@@ -210,16 +209,16 @@ public class LinkPlayHttpManager {
         @Nullable
         String cmd = formatCommand(channelId, command);
         if (cmd == null) {
-            logger.debug("[{}] No mapping for channel='{}' => command='{}'", deviceName, channelId, command);
+            logger.trace("[{}] No mapping for channel='{}' => command='{}'", deviceName, channelId, command);
             return;
         }
 
-        logger.debug("[{}] Sending command='{}' to IP={}", deviceName, cmd, ip);
+        logger.trace("[{}] Sending command='{}' to IP={}", deviceName, cmd, ip);
         try {
             CompletableFuture<@Nullable String> futureResponse = httpClient.sendCommand(ip, cmd)
                     .handle((@Nullable String result, @Nullable Throwable ex) -> {
                         if (ex != null) {
-                            logger.debug("[{}] Error sending command='{}' => {}", deviceName, cmd, ex.getMessage());
+                            logger.warn("[{}] Error sending command='{}' => {}", deviceName, cmd, ex.getMessage());
                             return null;
                         }
                         return result;
@@ -268,7 +267,7 @@ public class LinkPlayHttpManager {
         }
 
         if (lastException != null) {
-            logger.debug("[{}] Command '{}' failed after {} retries => {}", deviceName, command, MAX_RETRIES,
+            logger.warn("[{}] Command '{}' failed after {} retries => {}", deviceName, command, MAX_RETRIES,
                     lastException.getMessage());
         }
         return null; // No success
@@ -280,7 +279,7 @@ public class LinkPlayHttpManager {
             CompletableFuture<@Nullable String> future = httpClient.sendCommand(ip, command)
                     .handle((@Nullable String result, @Nullable Throwable ex) -> {
                         if (ex != null) {
-                            logger.debug("[{}] Error sending command='{}': {}", deviceName, command, ex.getMessage());
+                            logger.warn("[{}] Error sending command='{}': {}", deviceName, command, ex.getMessage());
                             return null;
                         }
                         return result;
@@ -301,7 +300,7 @@ public class LinkPlayHttpManager {
             }
 
         } catch (Exception e) {
-            logger.debug("[{}] Exception sending command='{}': {}", deviceName, command, e.getMessage());
+            logger.warn("[{}] Exception sending command='{}': {}", deviceName, command, e.getMessage());
             return null;
         }
     }
@@ -335,7 +334,7 @@ public class LinkPlayHttpManager {
         } else if ("PAUSE".equals(c)) {
             return "setPlayerCmd:pause";
         }
-        logger.debug("[{}] Unhandled control command => {}", deviceName, cmd);
+        logger.trace("[{}] Unhandled control command => {}", deviceName, cmd);
         return "";
     }
 

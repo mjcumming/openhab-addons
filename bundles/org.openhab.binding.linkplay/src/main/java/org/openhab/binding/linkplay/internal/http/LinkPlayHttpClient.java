@@ -68,7 +68,7 @@ public class LinkPlayHttpClient {
      */
     @Activate
     public LinkPlayHttpClient(@Reference HttpClientFactory httpClientFactory) {
-        logger.debug("Initializing LinkPlay HTTP client (plain + SSL)...");
+        logger.info("Initializing LinkPlay HTTP client (plain + SSL)...");
 
         // Plain HTTP client from openHAB's shared "commonHttpClient"
         this.httpClient = httpClientFactory.getCommonHttpClient();
@@ -82,7 +82,7 @@ public class LinkPlayHttpClient {
             this.sslHttpClient = LinkPlaySslUtil.createHttpsClient(sslContext);
             this.sslHttpClient.start();
 
-            logger.debug("LinkPlay HTTPS client successfully initialized");
+            logger.info("LinkPlay HTTPS client successfully initialized");
         } catch (Exception e) {
             logger.error("Failed to create SSL HTTP client => {}", e.getMessage());
             throw new IllegalStateException("Failed to create SSL HTTP client", e);
@@ -169,7 +169,7 @@ public class LinkPlayHttpClient {
             for (int port : HTTPS_PORTS) {
                 String url = String.format("https://%s:%d/httpapi.asp?%s", ipAddress, port, params);
                 try {
-                    logger.debug("Trying HTTPS request => {}", url);
+                    logger.trace("Trying HTTPS request => {}", url);
                     ContentResponse response = sslHttpClient.newRequest(url).timeout(TIMEOUT_MS, TimeUnit.MILLISECONDS)
                             .send();
 
@@ -180,16 +180,16 @@ public class LinkPlayHttpClient {
                         }
                         return content;
                     }
-                    logger.debug("HTTPS request => {} returned status code {}", url, response.getStatus());
+                    logger.trace("HTTPS request => {} returned status code {}", url, response.getStatus());
                 } catch (Exception e) {
-                    logger.debug("HTTPS request => {} failed: {}", url, e.getMessage());
+                    logger.trace("HTTPS request => {} failed: {}", url, e.getMessage());
                 }
             }
 
             // Fallback to HTTP
             String url = String.format("http://%s:%d/httpapi.asp?%s", ipAddress, HTTP_PORT, params);
             try {
-                logger.debug("Falling back to HTTP => {}", url);
+                logger.trace("Falling back to HTTP => {}", url);
                 ContentResponse response = httpClient.newRequest(url).timeout(TIMEOUT_MS, TimeUnit.MILLISECONDS).send();
 
                 if (response.getStatus() == 200) {

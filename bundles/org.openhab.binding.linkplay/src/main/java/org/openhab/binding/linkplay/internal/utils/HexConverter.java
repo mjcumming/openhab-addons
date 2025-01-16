@@ -44,7 +44,7 @@ public class HexConverter {
         // Remove any whitespace and validate hex string
         hex = hex.replaceAll("\\s", "");
         if (hex.length() % 2 != 0 || !hex.matches("[0-9A-Fa-f]+")) {
-            logger.debug("Invalid hex string: {}", hex);
+            logger.trace("Invalid hex string: {}", hex);
             return "";
         }
 
@@ -55,7 +55,7 @@ public class HexConverter {
             }
             return new String(bytes, StandardCharsets.UTF_8);
         } catch (Exception e) {
-            logger.debug("Failed to convert hex to string: {}", e.getMessage());
+            logger.trace("Failed to convert hex to string: {}", e.getMessage());
             return "";
         }
     }

@@ -24,27 +24,13 @@ import org.openhab.core.config.core.Configuration;
 @NonNullByDefault
 public class LinkPlayConfiguration {
 
-    /**
-     * Configuration constants
-     */
-    public static final int MIN_POLLING_INTERVAL = 10;
-    public static final int MAX_POLLING_INTERVAL = 60;
-    public static final int DEFAULT_POLLING_INTERVAL = 30;
-
-    public static final int MIN_RETRIES = 0;
-    public static final int MAX_RETRIES = 5;
-    public static final int DEFAULT_RETRIES = 3;
-
-    public static final int MIN_RETRY_DELAY_MS = 100;
-    public static final int MAX_RETRY_DELAY_MS = 5000;
-    public static final int DEFAULT_RETRY_DELAY_MS = 1000;
+    // We keep a default, but no min or max
+    private static final int DEFAULT_POLLING_INTERVAL = 10;
 
     private String ipAddress = "";
     private String deviceName = "";
     private String udn = "";
-    private int pollingInterval = DEFAULT_POLLING_INTERVAL;
-    private int maxRetries = DEFAULT_RETRIES;
-    private int retryDelayMillis = DEFAULT_RETRY_DELAY_MS;
+    private int pollingInterval = DEFAULT_POLLING_INTERVAL; // 0 => disabled
 
     /**
      * Creates a new configuration instance from a {@link Configuration} object.
@@ -55,33 +41,26 @@ public class LinkPlayConfiguration {
     public static LinkPlayConfiguration fromConfiguration(Configuration configuration) {
         LinkPlayConfiguration config = new LinkPlayConfiguration();
 
-        // Required parameters
-        config.ipAddress = (String) configuration.get("ipAddress");
+        // ipAddress is required
+        config.ipAddress = getString(configuration, "ipAddress", "");
 
         // Optional parameters with defaults
-        config.deviceName = getConfigValue(configuration, "deviceName", "");
-        config.udn = getConfigValue(configuration, "udn", "");
-        config.pollingInterval = getConfigValue(configuration, "pollingInterval", DEFAULT_POLLING_INTERVAL);
-        config.maxRetries = getConfigValue(configuration, "maxRetries", DEFAULT_RETRIES);
-        config.retryDelayMillis = getConfigValue(configuration, "retryDelayMillis", DEFAULT_RETRY_DELAY_MS);
+        config.deviceName = getString(configuration, "deviceName", "");
+        config.udn = getString(configuration, "udn", "");
+
+        // pollingInterval can be 0 or more (no upper limit)
+        config.pollingInterval = getInteger(configuration, "pollingInterval", DEFAULT_POLLING_INTERVAL);
+        if (config.pollingInterval < 0) {
+            config.pollingInterval = 0; // clamp negative to 0
+        }
 
         return config;
     }
 
-    private static <T> T getConfigValue(Configuration config, String key, T defaultValue) {
-        Object value = config.get(key);
-        if (value != null && defaultValue != null && defaultValue.getClass().isInstance(value)) {
-            @SuppressWarnings("unchecked")
-            T typedValue = (T) value;
-            return typedValue;
-        }
-        return defaultValue;
-    }
-
     /**
-     * Validates and normalizes the configuration.
+     * Validates the IP address and normalizes the UDN if present.
      *
-     * @return true if the configuration is valid, false otherwise
+     * @return true if config is valid, false otherwise
      */
     public boolean isValid() {
         // IP address is required
@@ -106,11 +85,6 @@ public class LinkPlayConfiguration {
             return false;
         }
 
-        // Normalize values
-        pollingInterval = Math.min(Math.max(pollingInterval, MIN_POLLING_INTERVAL), MAX_POLLING_INTERVAL);
-        maxRetries = Math.min(Math.max(maxRetries, MIN_RETRIES), MAX_RETRIES);
-        retryDelayMillis = Math.min(Math.max(retryDelayMillis, MIN_RETRY_DELAY_MS), MAX_RETRY_DELAY_MS);
-
         // Normalize UDN if present
         if (!udn.isEmpty() && !udn.startsWith("uuid:")) {
             udn = "uuid:" + udn;
@@ -119,7 +93,7 @@ public class LinkPlayConfiguration {
         return true;
     }
 
-    // Getters
+    // ---- Getters ----
     public String getIpAddress() {
         return ipAddress;
     }
@@ -132,22 +106,33 @@ public class LinkPlayConfiguration {
         return udn;
     }
 
+    /**
+     * @return The user-specified polling interval in seconds (0 = disabled).
+     */
     public int getPollingInterval() {
         return pollingInterval;
     }
 
-    public int getMaxRetries() {
-        return maxRetries;
-    }
-
-    public int getRetryDelayMillis() {
-        return retryDelayMillis;
-    }
-
     @Override
     public String toString() {
-        return String.format(
-                "LinkPlayConfiguration [ipAddress=%s, deviceName=%s, udn=%s, pollingInterval=%d, maxRetries=%d, retryDelayMillis=%d]",
-                ipAddress, deviceName, udn, pollingInterval, maxRetries, retryDelayMillis);
+        return String.format("LinkPlayConfiguration [ipAddress=%s, deviceName=%s, udn=%s, pollingInterval=%d]",
+                ipAddress, deviceName, udn, pollingInterval);
+    }
+
+    // ---- Helper methods ----
+    private static String getString(Configuration config, String key, String defaultVal) {
+        Object val = config.get(key);
+        if (val instanceof String) {
+            return (String) val;
+        }
+        return defaultVal;
+    }
+
+    private static int getInteger(Configuration config, String key, int defaultVal) {
+        Object val = config.get(key);
+        if (val instanceof Number) {
+            return ((Number) val).intValue();
+        }
+        return defaultVal;
     }
 }

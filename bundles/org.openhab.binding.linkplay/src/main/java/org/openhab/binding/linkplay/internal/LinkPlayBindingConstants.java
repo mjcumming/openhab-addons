@@ -81,6 +81,7 @@ public class LinkPlayBindingConstants {
     public static final String CHANNEL_ROLE = "role";
     public static final String CHANNEL_MASTER_IP = "masterIP";
     public static final String CHANNEL_SLAVE_IPS = "slaveIPs";
+    public static final String CHANNEL_GROUP_NAME = "groupName";
     public static final String CHANNEL_JOIN = "join";
     public static final String CHANNEL_LEAVE = "leave";
     public static final String CHANNEL_UNGROUP = "ungroup";

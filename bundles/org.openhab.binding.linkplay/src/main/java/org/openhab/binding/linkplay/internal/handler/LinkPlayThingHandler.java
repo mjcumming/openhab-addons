@@ -65,7 +65,7 @@ public class LinkPlayThingHandler extends BaseThingHandler {
 
     @Override
     public void initialize() {
-        logger.debug("Initializing LinkPlayThingHandler for Thing: {}", getThing().getUID());
+        logger.info("Initializing LinkPlayThingHandler for Thing: {}", getThing().getUID());
 
         try {
             LinkPlayDeviceManager manager = new LinkPlayDeviceManager(this, config, httpClient, upnpIOService);
@@ -94,7 +94,7 @@ public class LinkPlayThingHandler extends BaseThingHandler {
 
     @Override
     public void handleCommand(ChannelUID channelUID, Command command) {
-        logger.debug("Received command: {} for channel: {}", command, channelUID.getIdWithoutGroup());
+        logger.trace("Received command: {} for channel: {}", command, channelUID.getIdWithoutGroup());
 
         final LinkPlayDeviceManager manager = deviceManager;
         if (manager != null) {
@@ -113,12 +113,12 @@ public class LinkPlayThingHandler extends BaseThingHandler {
         if (channel != null && channel.getUID().getGroupId() != null) {
             String groupId = channel.getUID().getGroupId();
             // Log for debugging
-            logger.debug("Updating state for group {} channel {}", groupId, channelId);
+            logger.trace("Updating state for group {} channel {}", groupId, channelId);
             // Update the individual channel
             updateState(channelId, state);
         } else {
             // Update the individual channel
-            logger.debug("Updating state for channel {}", channelId);
+            logger.trace("Updating state for channel {}", channelId);
             updateState(channelId, state);
         }
     }

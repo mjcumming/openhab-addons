@@ -188,28 +188,29 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
      * if the response contains "uuid".
      */
     private boolean validateDevice(String ipAddress) {
-        logger.debug("validateDevice => Checking IP={}", ipAddress);
+        logger.trace("validateDevice => Checking IP={}", ipAddress);
         try {
             String response = httpClient.getStatusEx(ipAddress).get();
-            logger.debug("validateDevice => Response from getStatusEx: '{}'", response);
+            logger.info("LinkPlay device found at {} => getStatusEx response: '{}'", ipAddress, response);
+
             if (response != null && response.contains("uuid")) {
-                logger.trace("LinkPlay device confirmed at {} => 'uuid' found in getStatusEx", ipAddress);
+                logger.debug("LinkPlay device confirmed at {} => 'uuid' found in getStatusEx", ipAddress);
                 return true;
             }
-            logger.trace("No 'uuid' in response => not recognized as LinkPlay. Response: {}", response);
+            logger.trace("No 'uuid' in response => not recognized as LinkPlay");
         } catch (CompletionException e) {
             Throwable cause = e.getCause();
             if (cause instanceof LinkPlayApiException) {
-                logger.debug("Device {} => API error: {}", ipAddress, cause.getMessage());
+                logger.warn("Device {} => API error: {}", ipAddress, cause.getMessage());
             } else if (cause instanceof LinkPlayCommunicationException) {
-                logger.debug("Device {} => Communication error: {}", ipAddress, cause.getMessage());
+                logger.warn("Device {} => Communication error: {}", ipAddress, cause.getMessage());
             } else {
-                logger.debug("Device {} => Exception during getStatusEx: {}", ipAddress, e.getMessage());
+                logger.warn("Device {} => Exception during getStatusEx: {}", ipAddress, e.getMessage());
             }
         } catch (Exception e) {
-            logger.trace("Device {} => Unexpected exception: {}", ipAddress, e.getMessage());
+            logger.warn("Device {} => Unexpected exception: {}", ipAddress, e.getMessage());
         }
-        logger.debug("validateDevice => returning false for IP={}", ipAddress);
+        logger.trace("validateDevice => returning false for IP={}", ipAddress);
         return false;
     }
 

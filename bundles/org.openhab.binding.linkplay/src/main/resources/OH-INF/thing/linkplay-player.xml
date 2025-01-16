@@ -17,40 +17,35 @@
 		</channel-groups>
 
 		<config-description>
+			<!-- IP address is still required -->
 			<parameter name="ipAddress" type="text" required="true">
 				<context>network-address</context>
 				<label>IP Address</label>
 				<description>IP address of the LinkPlay device.</description>
 			</parameter>
+
 			<parameter name="deviceName" type="text" required="false">
 				<label>Device Name</label>
-				<description>Friendly name for the LinkPlay device.</description>
+				<description>Friendly name for the LinkPlay device (populated from UPnP or getStatusEx).</description>
 			</parameter>
+
 			<parameter name="udn" type="text" required="false">
 				<label>UDN</label>
 				<description>Unique Device Name (UDN) for UPnP identification.</description>
 				<advanced>true</advanced>
 			</parameter>
-			<parameter name="pollingInterval" type="integer" required="false" min="10" max="60" unit="s">
+
+			<!-- Polling Interval => min=0 means '0' disables polling -->
+			<parameter name="pollingInterval" type="integer" required="false" min="0" unit="s">
 				<label>Polling Interval</label>
-				<description>Interval in seconds between device status updates.</description>
+				<description>Interval (in seconds) between device status updates. Use 0 to disable polling.</description>
 				<default>10</default>
 				<advanced>true</advanced>
-			</parameter>
-			<parameter name="maxRetries" type="integer" required="false">
-				<label>Max Retries</label>
-				<description>Maximum number of retries for HTTP commands.</description>
-				<default>3</default>
-			</parameter>
-			<parameter name="retryDelayMillis" type="integer" required="false">
-				<label>Retry Delay</label>
-				<description>Delay between HTTP retries in milliseconds.</description>
-				<default>1000</default>
 			</parameter>
 		</config-description>
 	</thing-type>
 
-	<!-- Channel Group Types -->
+	<!-- Channel Group Type: playback -->
 	<channel-group-type id="playback">
 		<label>Playback</label>
 		<description>Media playback controls and information</description>
@@ -70,6 +65,7 @@
 		</channels>
 	</channel-group-type>
 
+	<!-- Channel Group Type: system -->
 	<channel-group-type id="system">
 		<label>System</label>
 		<description>Device system information</description>
@@ -79,6 +75,7 @@
 		</channels>
 	</channel-group-type>
 
+	<!-- Channel Group Type: network -->
 	<channel-group-type id="network">
 		<label>Network</label>
 		<description>Network-related information</description>
@@ -89,6 +86,7 @@
 		</channels>
 	</channel-group-type>
 
+	<!-- Channel Group Type: multiroom -->
 	<channel-group-type id="multiroom">
 		<label>Multiroom</label>
 		<description>Multiroom control and status</description>
@@ -96,6 +94,8 @@
 			<channel id="role" typeId="role"/>
 			<channel id="masterIP" typeId="masterIP"/>
 			<channel id="slaveIPs" typeId="slaveIPs"/>
+			<!-- new channel for groupName -->
+			<channel id="groupName" typeId="groupName"/>
 			<channel id="join" typeId="join"/>
 			<channel id="leave" typeId="leave"/>
 			<channel id="ungroup" typeId="ungroup"/>
@@ -107,21 +107,21 @@
 
 	<!-- Channel Type Definitions -->
 
-	<!-- Repeat is now a simple Switch -->
+	<!-- "repeat" => Switch -->
 	<channel-type id="repeat">
 		<item-type>Switch</item-type>
 		<label>Repeat</label>
 		<description>Enable or disable Repeat mode.</description>
 	</channel-type>
 
-	<!-- Shuffle also remains a Switch -->
+	<!-- "shuffle" => Switch -->
 	<channel-type id="shuffle">
 		<item-type>Switch</item-type>
 		<label>Shuffle</label>
 		<description>Shuffle mode for playback (on/off).</description>
 	</channel-type>
 
-	<!-- Source options remain as a String with enumerations, if desired -->
+	<!-- "source" => String with enumerations -->
 	<channel-type id="source">
 		<item-type>String</item-type>
 		<label>Source</label>
@@ -137,7 +137,7 @@
 		</state>
 	</channel-type>
 
-	<!-- Updated: albumArt is now a String for a URL -->
+	<!-- albumArt => String (URL) -->
 	<channel-type id="albumArt">
 		<item-type>String</item-type>
 		<label>Album Art URL</label>
@@ -145,7 +145,7 @@
 		<state readOnly="true"/>
 	</channel-type>
 
-	<!-- Additional metadata channel types -->
+	<!-- deviceName => readOnly String -->
 	<channel-type id="deviceName">
 		<item-type>String</item-type>
 		<label>Device Name</label>
@@ -153,6 +153,7 @@
 		<state readOnly="true"/>
 	</channel-type>
 
+	<!-- firmware => readOnly String -->
 	<channel-type id="firmware">
 		<item-type>String</item-type>
 		<label>Firmware Version</label>
@@ -160,6 +161,7 @@
 		<state readOnly="true"/>
 	</channel-type>
 
+	<!-- macAddress => readOnly String -->
 	<channel-type id="macAddress">
 		<item-type>String</item-type>
 		<label>MAC Address</label>
@@ -167,6 +169,7 @@
 		<state readOnly="true"/>
 	</channel-type>
 
+	<!-- ipAddress => readOnly String -->
 	<channel-type id="ipAddress">
 		<item-type>String</item-type>
 		<label>IP Address</label>
@@ -174,6 +177,7 @@
 		<state readOnly="true"/>
 	</channel-type>
 
+	<!-- wifiSignal => readOnly Number -->
 	<channel-type id="wifiSignal">
 		<item-type>Number</item-type>
 		<label>WiFi Signal</label>
@@ -181,6 +185,7 @@
 		<state readOnly="true" pattern="%d dBm"/>
 	</channel-type>
 
+	<!-- role => readOnly String -->
 	<channel-type id="role">
 		<item-type>String</item-type>
 		<label>Multiroom Role</label>
@@ -194,6 +199,7 @@
 		</state>
 	</channel-type>
 
+	<!-- masterIP => readOnly String -->
 	<channel-type id="masterIP">
 		<item-type>String</item-type>
 		<label>Master IP</label>
@@ -201,6 +207,7 @@
 		<state readOnly="true"/>
 	</channel-type>
 
+	<!-- slaveIPs => readOnly String -->
 	<channel-type id="slaveIPs">
 		<item-type>String</item-type>
 		<label>Slave IPs</label>
@@ -208,31 +215,43 @@
 		<state readOnly="true"/>
 	</channel-type>
 
+	<!-- groupName => readOnly String (the new channel) -->
+	<channel-type id="groupName">
+		<item-type>String</item-type>
+		<label>Group Name</label>
+		<description>Group Name from device's JSON config if available</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<!-- join => String -->
 	<channel-type id="join">
 		<item-type>String</item-type>
 		<label>Join Group</label>
 		<description>Join a multiroom group by master IP.</description>
 	</channel-type>
 
+	<!-- leave => Switch -->
 	<channel-type id="leave">
 		<item-type>Switch</item-type>
 		<label>Leave Group</label>
 		<description>Leave current multiroom group.</description>
 	</channel-type>
 
+	<!-- ungroup => Switch -->
 	<channel-type id="ungroup">
 		<item-type>Switch</item-type>
 		<label>Ungroup</label>
 		<description>Disband current multiroom group (if master).</description>
 	</channel-type>
 
+	<!-- kickout => String -->
 	<channel-type id="kickout">
 		<item-type>String</item-type>
 		<label>Kick Out</label>
 		<description>Remove a slave from group by IP (if master).</description>
 	</channel-type>
 
-	<!-- Duration and Position are times in seconds -->
+	<!-- duration => readOnly Number:Time -->
 	<channel-type id="duration">
 		<item-type>Number:Time</item-type>
 		<label>Duration</label>
@@ -240,6 +259,7 @@
 		<state readOnly="true" pattern="%d s"/>
 	</channel-type>
 
+	<!-- position => readOnly Number:Time -->
 	<channel-type id="position">
 		<item-type>Number:Time</item-type>
 		<label>Position</label>

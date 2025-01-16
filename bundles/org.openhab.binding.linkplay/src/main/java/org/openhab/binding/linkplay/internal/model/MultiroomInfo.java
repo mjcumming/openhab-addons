@@ -18,6 +18,7 @@ import java.util.List;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
 /**
@@ -27,41 +28,69 @@ import com.google.gson.JsonObject;
  */
 @NonNullByDefault
 public class MultiroomInfo {
-    private final String role;
-    private final String masterIP;
+
+    private final String role; // "master", "slave", or "standalone"
+    private final String masterIP; // If we're a slave, this might hold the master IP (if provided)
     private final List<String> slaveIPs;
 
     public MultiroomInfo(JsonObject json) {
-        // Extract UUID and host_uuid from status, checking both possible fields
-        String uuid = json.has("uuid") ? json.get("uuid").getAsString() : "";
-        String hostUuid = json.has("host_uuid") ? json.get("host_uuid").getAsString() : "";
-
-        // Some firmware versions use master_uuid instead of host_uuid
-        if (hostUuid.isEmpty() && json.has("master_uuid")) {
-            hostUuid = json.get("master_uuid").getAsString();
+        // 1) Read the 'group' integer. If it doesn't exist, default to 0.
+        int groupVal = 0;
+        if (json.has("group")) {
+            try {
+                groupVal = json.get("group").getAsInt();
+            } catch (Exception ignored) {
+                // fallback to 0
+            }
         }
 
-        // Determine role based on UUIDs
-        if (uuid.isEmpty() || hostUuid.isEmpty()) {
-            this.role = "standalone";
-            this.masterIP = "";
-        } else if (uuid.equals(hostUuid)) {
+        // 2) The LinkPlay doc says when the device is in slave mode, we have 'master_uuid' (or 'host_uuid').
+        String masterUuid = "";
+        if (json.has("master_uuid")) {
+            masterUuid = json.get("master_uuid").getAsString();
+        } else if (json.has("host_uuid")) {
+            masterUuid = json.get("host_uuid").getAsString();
+        }
+
+        // 3) Additional fields that might appear
+        String foundMasterIP = json.has("master_ip") ? json.get("master_ip").getAsString() : "";
+
+        // 4) Decide role: master, slave, or standalone
+        if (groupVal > 0) {
+            // device is master of groupVal slaves
             this.role = "master";
             this.masterIP = "";
         } else {
-            this.role = "slave";
-            this.masterIP = json.has("master_ip") ? json.get("master_ip").getAsString() : "";
+            // groupVal == 0 => either standalone or slave
+            if (!masterUuid.isEmpty()) {
+                // this device has a known master => it's a slave
+                this.role = "slave";
+                this.masterIP = foundMasterIP;
+            } else {
+                // truly standalone
+                this.role = "standalone";
+                this.masterIP = "";
+            }
         }
 
-        // Extract slave IPs for master devices
+        // 5) If role == master, parse the 'slave_list' array
         this.slaveIPs = new ArrayList<>();
-        if ("master".equals(this.role) && json.has("slave_list") && json.get("slave_list").isJsonArray()) {
-            JsonArray slaveList = json.get("slave_list").getAsJsonArray();
-            slaveList.forEach(element -> {
-                if (element.isJsonObject() && element.getAsJsonObject().has("ip")) {
-                    slaveIPs.add(element.getAsJsonObject().get("ip").getAsString());
+        if ("master".equals(this.role)) {
+            /*
+             * Some firmwares do 'slave_list' or 'slaves' or store them inside 'multiroom: { ... }'.
+             * The code below expects 'slave_list' as a JSON array of objects { "ip": "<IP>" }.
+             */
+            if (json.has("slave_list") && json.get("slave_list").isJsonArray()) {
+                JsonArray slaveList = json.get("slave_list").getAsJsonArray();
+                for (JsonElement elem : slaveList) {
+                    if (elem.isJsonObject()) {
+                        JsonObject slaveObj = elem.getAsJsonObject();
+                        if (slaveObj.has("ip")) {
+                            this.slaveIPs.add(slaveObj.get("ip").getAsString());
+                        }
+                    }
                 }
-            });
+            }
         }
     }
 
@@ -73,10 +102,16 @@ public class MultiroomInfo {
         return masterIP;
     }
 
+    /**
+     * Returns a comma-separated string of slave IPs for logging or simple display.
+     */
     public String getSlaveIPs() {
         return String.join(",", slaveIPs);
     }
 
+    /**
+     * Returns the slave IPs as a List.
+     */
     public List<String> getSlaveIPList() {
         return slaveIPs;
     }

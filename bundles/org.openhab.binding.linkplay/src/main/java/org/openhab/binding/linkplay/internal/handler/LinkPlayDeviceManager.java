@@ -76,7 +76,7 @@ public class LinkPlayDeviceManager {
         // Create the UpnpManager
         this.upnpManager = new LinkPlayUpnpManager(upnpIOService, this, deviceId);
 
-        logger.debug("[{}] DeviceManager created with config: {}", deviceId, config);
+        logger.trace("[{}] DeviceManager created with config: {}", deviceId, config);
     }
 
     /**
@@ -93,7 +93,7 @@ public class LinkPlayDeviceManager {
             logger.debug("[{}] Found UDN in config => {}. Registering UPnP now.", deviceId, deviceUDN);
             upnpManager.register(deviceUDN);
         } else {
-            logger.debug("[{}] No UDN in config yet; will rely on HTTP to discover and register UPnP later.", deviceId);
+            logger.trace("[{}] No UDN in config yet; will rely on HTTP to discover and register UPnP later.", deviceId);
         }
 
         // Mark device as ONLINE initially
@@ -109,7 +109,7 @@ public class LinkPlayDeviceManager {
 
         // Reset failure count on successful poll
         failedHttpPollCount = 0;
-        
+
         // Possibly discover new UDN from the JSON
         String discoveredUdn = parseUdnFromHttp(status);
         if (discoveredUdn != null && !discoveredUdn.isEmpty()) {
@@ -127,22 +127,8 @@ public class LinkPlayDeviceManager {
             updateState(LinkPlayBindingConstants.CHANNEL_CONTROL, controlState);
         }
 
-        // Title/Artist/Album from JSON if present
-        if (status.has("Title")) {
-            String hexTitle = status.get("Title").getAsString();
-            String title = HexConverter.hexToString(hexTitle);
-            updateState(LinkPlayBindingConstants.CHANNEL_TITLE, new StringType(title));
-        }
-        if (status.has("Artist")) {
-            String hexArtist = status.get("Artist").getAsString();
-            String artist = HexConverter.hexToString(hexArtist);
-            updateState(LinkPlayBindingConstants.CHANNEL_ARTIST, new StringType(artist));
-        }
-        if (status.has("Album")) {
-            String hexAlbum = status.get("Album").getAsString();
-            String album = HexConverter.hexToString(hexAlbum);
-            updateState(LinkPlayBindingConstants.CHANNEL_ALBUM, new StringType(album));
-        }
+        // Use centralized method for title/artist/album updates
+        updateMediaInfoChannels(status);
 
         // Volume
         if (status.has("vol")) {
@@ -169,6 +155,18 @@ public class LinkPlayDeviceManager {
             updateState(LinkPlayBindingConstants.CHANNEL_SHUFFLE, OnOffType.from(shuffleOn));
         }
 
+        // Not all devices have a DeviceName
+        if (status.has("DeviceName")) {
+            String name = status.get("DeviceName").getAsString();
+            updateState(LinkPlayBindingConstants.CHANNEL_DEVICE_NAME, new StringType(name));
+        }
+
+        // Not all devices have a GroupName
+        if (status.has("GroupName")) {
+            String gName = status.get("GroupName").getAsString();
+            updateState(LinkPlayBindingConstants.CHANNEL_GROUP_NAME, new StringType(gName));
+        }
+
         // LinkPlay's getPlayerStatus does not provide album art => no code needed here to set albumArt
 
         // If we were offline, mark us back online
@@ -184,10 +182,10 @@ public class LinkPlayDeviceManager {
         failedHttpPollCount++;
         if (failedHttpPollCount >= MAX_OFFLINE_COUNT) {
             logger.warn("[{}] HTTP poll failure #{} => {}", deviceId, failedHttpPollCount, error.getMessage());
-            handleStatusUpdate(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR, 
-                "No response from device after " + failedHttpPollCount + " attempts");
+            handleStatusUpdate(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
+                    "No response from device after " + failedHttpPollCount + " attempts");
         } else {
-            logger.debug("[{}] HTTP poll failure #{} => {}", deviceId, failedHttpPollCount, error.getMessage());
+            logger.trace("[{}] HTTP poll failure #{} => {}", deviceId, failedHttpPollCount, error.getMessage());
         }
     }
 
@@ -196,7 +194,7 @@ public class LinkPlayDeviceManager {
      * Passes them to the HTTP manager for formatting and sending.
      */
     public void handleCommand(String channelId, Command command) {
-        logger.debug("[{}] Handling command '{}' for channel '{}'", deviceId, command, channelId);
+        logger.trace("[{}] Handling command '{}' for channel '{}'", deviceId, command, channelId);
 
         // Check if command is REFRESH
         if ("REFRESH".equalsIgnoreCase(command.toString())) {
@@ -261,7 +259,7 @@ public class LinkPlayDeviceManager {
      * Used by the UPnP Manager to update playback state.
      */
     public void updatePlaybackState(String state) {
-        logger.debug("[{}] Updating playback state (UPnP) => {}", deviceId, state);
+        logger.trace("[{}] Updating playback state (UPnP) => {}", deviceId, state);
         State controlState = "play".equalsIgnoreCase(state) ? PlayPauseType.PLAY : PlayPauseType.PAUSE;
         updateState(LinkPlayBindingConstants.CHANNEL_CONTROL, controlState);
     }
@@ -270,7 +268,7 @@ public class LinkPlayDeviceManager {
      * Used by the UPnP manager to update metadata from the event; includes album art (URL) from UPnP.
      */
     public void updateMetadata(Map<String, String> metadata) {
-        logger.debug("[{}] Updating metadata (UPnP) => {}", deviceId, metadata);
+        logger.trace("[{}] Updating metadata (UPnP) => {}", deviceId, metadata);
         if (metadata.containsKey("Title")) {
             updateState(LinkPlayBindingConstants.CHANNEL_TITLE, new StringType(metadata.get("Title")));
         }
@@ -289,23 +287,21 @@ public class LinkPlayDeviceManager {
      * Transport URI from UPnP, preserved from original code.
      */
     public void updateTransportUri(String uri) {
-        logger.debug("[{}] Updating transport URI => {}", deviceId, uri);
-        // No direct channel for URI unless you add one in the future
+        logger.trace("[{}] Updating transport URI => {}", deviceId, uri);
     }
 
     /**
      * Current track duration from UPnP events, original structure preserved.
      */
     public void updateDuration(String duration) {
-        logger.debug("[{}] Updating media duration => {}", deviceId, duration);
-        // Could parse and update LinkPlayBindingConstants.CHANNEL_DURATION if desired
+        logger.trace("[{}] Updating media duration => {}", deviceId, duration);
     }
 
     /**
      * Volume from UPnP events, same logic as from HTTP (just a different source).
      */
     public void updateVolume(String volume) {
-        logger.debug("[{}] Updating volume (UPnP) => {}", deviceId, volume);
+        logger.trace("[{}] Updating volume (UPnP) => {}", deviceId, volume);
         try {
             int vol = Integer.parseInt(volume);
             updateState(LinkPlayBindingConstants.CHANNEL_VOLUME, new PercentType(vol));
@@ -318,7 +314,7 @@ public class LinkPlayDeviceManager {
      * Mute from UPnP events.
      */
     public void updateMute(boolean mute) {
-        logger.debug("[{}] Updating mute state (UPnP) => {}", deviceId, mute);
+        logger.trace("[{}] Updating mute state (UPnP) => {}", deviceId, mute);
         updateState(LinkPlayBindingConstants.CHANNEL_MUTE, OnOffType.from(mute));
     }
 
@@ -383,7 +379,6 @@ public class LinkPlayDeviceManager {
                 return false;
             }
             String val = obj.get(key).getAsString();
-            // Some devices might do "true"/"false" or "1"/"0" or "on"/"off"
             return "true".equalsIgnoreCase(val) || "1".equals(val) || "on".equalsIgnoreCase(val);
         } catch (Exception e) {
             logger.trace("[{}] Failed to get boolean for key='{}': {}", deviceId, key, e.getMessage());
