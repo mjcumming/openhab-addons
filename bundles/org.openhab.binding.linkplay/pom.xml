@@ -29,14 +29,5 @@
       <scope>provided</scope>
     </dependency>
 
-    <!-- === Test Dependencies === -->
-    <!-- (1) If you need explicit JUnit 5 (often openHAB parent POM already includes it) -->
-    <!-- (2) WireMock for HTTP stubbing & verification -->
-    <dependency>
-      <groupId>com.github.tomakehurst</groupId>
-      <artifactId>wiremock</artifactId>
-      <version>2.35.0</version>
-      <scope>test</scope>
-    </dependency>
   </dependencies>
 </project>

@@ -5,8 +5,8 @@
  * information.
  *
  * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License 2.0
- * which is available at http://www.eclipse.org/legal/epl-2.0
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0
  *
  * SPDX-License-Identifier: EPL-2.0
  */
@@ -59,7 +59,7 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
     private @Nullable String udn;
     private volatile boolean isDisposed = false;
 
-    // We maintain the references to these full-service strings
+    // Full URN strings from your constants
     private static final String SERVICE_AVTRANSPORT = LinkPlayBindingConstants.UPNP_SERVICE_TYPE_AV_TRANSPORT;
     private static final String SERVICE_RENDERING_CONTROL = LinkPlayBindingConstants.UPNP_SERVICE_TYPE_RENDERING_CONTROL;
 
@@ -72,7 +72,7 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
     }
 
     /**
-     * Registers as a UPnP participant if we know the UDN.
+     * Registers as a UPnP participant with a known UDN (must match the device's "uuid:..." exactly).
      */
     public void register(String udn) {
         if (isDisposed) {
@@ -117,7 +117,7 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
     }
 
     /**
-     * Add subscription by short name, e.g. "AVTransport" => full URN string.
+     * Add subscription by short name, e.g. "AVTransport" => "urn:schemas-upnp-org:service:AVTransport:1".
      */
     public void addSubscription(String serviceShortName) {
         if (isDisposed) {
@@ -145,7 +145,7 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
             subscriptionRenewalFuture.cancel(true);
         }
 
-        subscriptionRenewalFuture = scheduler.scheduleAtFixedRate(() -> {
+        subscriptionRenewalFuture = scheduler.scheduleWithFixedDelay(() -> {
             if (isDisposed) {
                 return;
             }
@@ -198,23 +198,42 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
     }
 
     /**
-     * Called by the framework when a UPnP event arrives.
+     * onValueReceived: called by openHAB's UpnpIOService when an event arrives.
+     * - In Sonos-like devices, often the "variable" is "LastChange" for AVTransport/RenderingControl.
      */
     @Override
     public void onValueReceived(@Nullable String variable, @Nullable String value, @Nullable String service) {
+        logger.debug("[{}] onValueReceived => variable={}, value={}, service={}", deviceId, variable, value, service);
+
         if (isDisposed || variable == null || value == null || service == null) {
             return;
         }
-        logger.debug("[{}] UPnP event => service={}, var={}, value={}", deviceId, service, variable, value);
+
+        // Check if we support this service (AVTransport or RenderingControl)
+        if (!supportsService(service)) {
+            logger.trace("[{}] Service '{}' not supported by LinkPlayUpnpManager", deviceId, service);
+            return;
+        }
 
         try {
+            // Sonos-like approach: "LastChange" frequently lumps everything
             switch (service) {
                 case SERVICE_AVTRANSPORT:
-                    handleAVTransportEvent(variable, value);
+                    if ("LastChange".equals(variable)) {
+                        parseAvTransportLastChange(value);
+                    } else {
+                        // fallback to your original event handling
+                        handleAVTransportEvent(variable, value);
+                    }
                     break;
 
                 case SERVICE_RENDERING_CONTROL:
-                    handleRenderingControlEvent(variable, value);
+                    if ("LastChange".equals(variable)) {
+                        parseRenderingControlLastChange(value);
+                    } else {
+                        // fallback to your original
+                        handleRenderingControlEvent(variable, value);
+                    }
                     break;
 
                 default:
@@ -225,6 +244,87 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
         }
     }
 
+    /**
+     * If the device lumps AVTransport updates in 'LastChange', parse that XML
+     * to extract the fields (TransportState, CurrentTrackMetaData, etc.)
+     * then update the device manager accordingly.
+     */
+    private void parseAvTransportLastChange(String lastChangeXml) {
+        logger.trace("[{}] parseAvTransportLastChange => xml: {}", deviceId, lastChangeXml);
+
+        // Use DIDLParser.parseLastChange(...) to parse the big XML.
+        Map<String, String> data = DIDLParser.parseLastChange(lastChangeXml);
+        if (data == null || data.isEmpty()) {
+            logger.debug("[{}] No data parsed from LastChange (AVTransport)", deviceId);
+            return;
+        }
+
+        // Example usage: typical field keys might be "TransportState", "AVTransportURI", "CurrentTrackMetaData", etc.
+        if (data.containsKey("TransportState")) {
+            String state = data.get("TransportState");
+            if (state != null) {
+                deviceManager.updatePlaybackState(state);
+            }
+        }
+        if (data.containsKey("AVTransportURI")) {
+            String uri = data.get("AVTransportURI");
+            if (uri != null) {
+                deviceManager.updateTransportUri(uri);
+            }
+        }
+        if (data.containsKey("CurrentTrackMetaData")) {
+            String metaXml = data.get("CurrentTrackMetaData");
+            if (metaXml != null && !metaXml.isEmpty()) {
+                Map<String, String> metadata = DIDLParser.parseMetadata(metaXml);
+                if (metadata != null && !metadata.isEmpty()) {
+                    deviceManager.updateMetadata(metadata);
+                }
+            }
+        }
+        if (data.containsKey("CurrentTrackDuration")) {
+            String duration = data.get("CurrentTrackDuration");
+            if (duration != null) {
+                deviceManager.updateDuration(duration);
+            }
+        }
+
+        // Possibly parse more fields if your device includes them in LastChange
+    }
+
+    /**
+     * If the device lumps RenderingControl updates (Volume, Mute, etc.) in 'LastChange',
+     * parse that similarly and then call the device manager's update methods.
+     */
+    private void parseRenderingControlLastChange(String lastChangeXml) {
+        logger.trace("[{}] parseRenderingControlLastChange => xml: {}", deviceId, lastChangeXml);
+
+        Map<String, String> data = DIDLParser.parseLastChange(lastChangeXml);
+        if (data == null || data.isEmpty()) {
+            logger.debug("[{}] No data parsed from LastChange (RenderingControl)", deviceId);
+            return;
+        }
+
+        // Typical fields might be "Volume" or "Mute"
+        if (data.containsKey("Volume")) {
+            String volume = data.get("Volume");
+            if (volume != null) {
+                deviceManager.updateVolume(volume);
+            }
+        }
+        if (data.containsKey("Mute")) {
+            String mute = data.get("Mute");
+            if (mute != null) {
+                boolean isMute = "1".equals(mute) || "true".equalsIgnoreCase(mute);
+                deviceManager.updateMute(isMute);
+            }
+        }
+
+        // Some devices might also do "Bass", "Treble", etc. if present
+    }
+
+    /**
+     * Original fallback for devices that do individually send 'TransportState', 'CurrentTrackMetaData', etc.
+     */
     private void handleAVTransportEvent(String variable, String value) {
         switch (variable) {
             case "TransportState":
@@ -233,7 +333,6 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
 
             case "CurrentTrackMetaData":
                 if (!value.isEmpty()) {
-                    @Nullable
                     Map<String, String> metadata = DIDLParser.parseMetadata(value);
                     if (metadata != null && !metadata.isEmpty()) {
                         deviceManager.updateMetadata(metadata);
@@ -254,6 +353,9 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
         }
     }
 
+    /**
+     * Original fallback for devices that do individually send 'Volume', 'Mute', etc.
+     */
     private void handleRenderingControlEvent(String variable, String value) {
         switch (variable) {
             case "Volume":
@@ -261,7 +363,7 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
                 break;
 
             case "Mute":
-                boolean isMute = ("1".equals(value) || "true".equalsIgnoreCase(value));
+                boolean isMute = "1".equals(value) || "true".equalsIgnoreCase(value);
                 deviceManager.updateMute(isMute);
                 break;
 
@@ -271,7 +373,7 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
     }
 
     /**
-     * Called by the framework when subscription is confirmed or fails.
+     * Called by openHAB when subscription is confirmed or fails.
      */
     @Override
     public void onServiceSubscribed(@Nullable String service, boolean succeeded) {
@@ -296,6 +398,7 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
 
     @Override
     public @Nullable String getUDN() {
+        // Must return EXACT "uuid:..." string that the device expects.
         return udn;
     }
 
@@ -303,7 +406,7 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
     public void onStatusChanged(boolean status) {
         logger.debug("[{}] UPnP device {} is {}", deviceId, (udn != null ? udn : "<unknown>"),
                 (status ? "present" : "absent"));
-        // Typically we do not set OFFLINE here, letting the HTTP logic do that
+        // Typically we do not set the device OFFLINE here; we rely on HTTP logic.
     }
 
     /**
@@ -311,19 +414,20 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
      */
     public void dispose() {
         isDisposed = true;
-        logger.debug("[{}] Disposing UpnpManager", deviceId);
+        logger.debug("[{}] Disposing UPnP manager", deviceId);
 
         if (subscriptionRenewalFuture != null) {
             subscriptionRenewalFuture.cancel(true);
             subscriptionRenewalFuture = null;
         }
 
-        unregister();
-        scheduler.shutdownNow();
+        unregister(); // remove your UPnP subscriptions
+
+        // DO NOT call scheduler.shutdownNow() if 'scheduler' is from ThreadPoolManager
+        logger.debug("[{}] UPnP manager disposed", deviceId);
     }
 
     public boolean supportsService(String service) {
-        // Check if service is AVTransport or RenderingControl
         return service.equals(SERVICE_AVTRANSPORT) || service.equals(SERVICE_RENDERING_CONTROL);
     }
 }

@@ -5,8 +5,8 @@
  * information.
  *
  * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License 2.0
- * which is available at http://www.eclipse.org/legal/epl-2.0
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0
  *
  * SPDX-License-Identifier: EPL-2.0
  */
@@ -14,17 +14,11 @@ package org.openhab.binding.linkplay.internal.discovery;
 
 import static org.openhab.binding.linkplay.internal.LinkPlayBindingConstants.*;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
-
-import javax.net.ssl.HttpsURLConnection;
-import javax.net.ssl.SSLContext;
+import java.util.concurrent.CompletionException;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
@@ -32,7 +26,9 @@ import org.jupnp.model.meta.RemoteDevice;
 import org.jupnp.model.meta.Service;
 import org.jupnp.model.types.ServiceId;
 import org.jupnp.model.types.UDAServiceId;
-import org.openhab.binding.linkplay.internal.http.LinkPlaySslUtil;
+import org.openhab.binding.linkplay.internal.http.LinkPlayApiException;
+import org.openhab.binding.linkplay.internal.http.LinkPlayCommunicationException;
+import org.openhab.binding.linkplay.internal.http.LinkPlayHttpClient;
 import org.openhab.core.config.discovery.DiscoveryResult;
 import org.openhab.core.config.discovery.DiscoveryResultBuilder;
 import org.openhab.core.config.discovery.upnp.UpnpDiscoveryParticipant;
@@ -41,17 +37,14 @@ import org.openhab.core.thing.ThingUID;
 import org.osgi.service.component.ComponentContext;
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
+import org.osgi.service.component.annotations.Reference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
  * A UPnP discovery participant for LinkPlay devices. We discover all
- * "MediaRenderer" or "MediaServer" devices, then do an HTTP check to confirm.
- * <p>
- * This approach follows openHAB best practices:
- * - Listen for broad UPnP announcements
- * - Filter by basic device type/services
- * - Perform additional HTTP fingerprint check (getStatusEx) to ensure it's LinkPlay
+ * "MediaRenderer" or "MediaServer" devices, then do an HTTP check
+ * using our LinkPlayHttpClient to confirm it's truly LinkPlay.
  * 
  * @author Michael Cumming - Initial contribution
  */
@@ -62,28 +55,20 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
     private final Logger logger = LoggerFactory.getLogger(LinkPlayUpnpDiscoveryParticipant.class);
 
     // We only look at these UPnP device types
-    private static final Set<String> SUPPORTED_DEVICE_TYPES = Set.of("urn:schemas-upnp-org:device:MediaRenderer:1",
-            "urn:schemas-upnp-org:device:MediaServer:1");
+    // private static final Set<String> SUPPORTED_DEVICE_TYPES = Set.of("urn:schemas-upnp-org:device:MediaRenderer:1",
+    // "urn:schemas-upnp-org:device:MediaServer:1");
 
     private static final int DISCOVERY_RESULT_TTL_SECONDS = 300;
-
-    // HTTP/HTTPS validation to confirm it is truly a LinkPlay device
-    private static final int[] HTTPS_PORTS = { 443, 4443 };
-    private static final int HTTP_PORT = 80;
-    private static final int CONNECT_TIMEOUT_MS = 2000;
-    private static final int READ_TIMEOUT_MS = 2000;
-
-    // The endpoint we call to see if "uuid" text is returned
-    private static final String VALIDATION_ENDPOINT = "/httpapi.asp?command=getStatusEx";
-    private static final String EXPECTED_RESPONSE_CONTENT = "uuid";
 
     // LinkPlay devices normally have these UPnP services
     private static final ServiceId SERVICE_ID_AV_TRANSPORT = new UDAServiceId("AVTransport");
     private static final ServiceId SERVICE_ID_RENDERING_CONTROL = new UDAServiceId("RenderingControl");
 
+    private final LinkPlayHttpClient httpClient;
+
     @Activate
-    protected void activate(ComponentContext context) {
-        logger.debug("LinkPlay UPnP Discovery service activated");
+    public LinkPlayUpnpDiscoveryParticipant(@Reference LinkPlayHttpClient httpClient) {
+        this.httpClient = httpClient;
     }
 
     @Override
@@ -132,15 +117,15 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
             return null; // not recognized
         }
 
-        // Final check by calling getStatusEx
+        // final check by calling getStatusEx via LinkPlayHttpClient
+        logger.trace("DescriptorURL is '{}'", device.getIdentity().getDescriptorURL());
         String ipAddress = device.getIdentity().getDescriptorURL().getHost();
         if (ipAddress == null || ipAddress.isEmpty()) {
             return null;
         }
 
-        // If HTTP check fails, skip creating a discovery result
         if (!validateDevice(ipAddress)) {
-            logger.debug("Skipping device at {} => validation (HTTP check) did not confirm LinkPlay", ipAddress);
+            logger.debug("Skipping device at {} => HTTP check did not confirm LinkPlay", ipAddress);
             return null;
         }
 
@@ -170,16 +155,28 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
      */
     private boolean isLinkPlayDevice(RemoteDevice device) {
         String deviceType = device.getType().getType();
+        logger.trace("isLinkPlayDevice => deviceType={}", deviceType);
 
         // Must be at least one of these device types
-        if (!SUPPORTED_DEVICE_TYPES.contains(deviceType)) {
+        // if (!SUPPORTED_DEVICE_TYPES.contains(deviceType)) {
+        // return false;
+        // }
+        String type = device.getType().getType().trim().toLowerCase();
+        if (!(type.contains("mediarenderer") || type.contains("mediaserver"))) {
+            logger.trace("isLinkPlayDevice => deviceType={} does not contain 'mediarenderer' or 'mediaserver'",
+                    deviceType);
             return false;
         }
 
-        // Also require presence of AVTransport & RenderingControl
+        // Check for required services
         Service<?, ?> avTransportService = device.findService(SERVICE_ID_AV_TRANSPORT);
         Service<?, ?> renderingControlService = device.findService(SERVICE_ID_RENDERING_CONTROL);
         boolean hasRequiredServices = avTransportService != null && renderingControlService != null;
+
+        logger.trace("isLinkPlayDevice => Checking deviceType={}, avTransport={}, renderingControl={}", deviceType,
+                avTransportService != null, renderingControlService != null);
+        logger.trace("isLinkPlayDevice => returns {}", hasRequiredServices);
+
         logger.debug("Device {} => AVTransport={}, RenderingControl={}", device.getDetails().getFriendlyName(),
                 avTransportService != null, renderingControlService != null);
 
@@ -187,80 +184,38 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
     }
 
     /**
-     * Attempt connecting over HTTPS first, then fallback to HTTP to confirm
-     * that getStatusEx returns "uuid". This ensures the device is truly LinkPlay.
+     * Reuses the LinkPlayHttpClient to call getStatusEx(...) and see
+     * if the response contains "uuid".
      */
     private boolean validateDevice(String ipAddress) {
-        // Try HTTPS first
-        for (int port : HTTPS_PORTS) {
-            if (validateConnection(ipAddress, port, true)) {
-                logger.debug("LinkPlay device confirmed at {} (HTTPS, port={})", ipAddress, port);
+        logger.debug("validateDevice => Checking IP={}", ipAddress);
+        try {
+            String response = httpClient.getStatusEx(ipAddress).get();
+            logger.debug("validateDevice => Response from getStatusEx: '{}'", response);
+            if (response != null && response.contains("uuid")) {
+                logger.trace("LinkPlay device confirmed at {} => 'uuid' found in getStatusEx", ipAddress);
                 return true;
             }
-        }
-
-        // Then fallback to HTTP
-        if (validateConnection(ipAddress, HTTP_PORT, false)) {
-            logger.debug("LinkPlay device confirmed at {} (HTTP, port={})", ipAddress, HTTP_PORT);
-            return true;
-        }
-        return false;
-    }
-
-    /**
-     * Opens either HTTP or HTTPS connection to the given IP & port, calls getStatusEx,
-     * and checks if the body contains "uuid".
-     */
-    private boolean validateConnection(String ipAddress, int port, boolean useSsl) {
-        String protocol = useSsl ? "https" : "http";
-        String urlStr = String.format("%s://%s:%d%s", protocol, ipAddress, port, VALIDATION_ENDPOINT);
-
-        try {
-            HttpURLConnection conn = createConnection(urlStr, useSsl);
-            int responseCode = conn.getResponseCode();
-
-            if (responseCode == 200) {
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()))) {
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        if (line.contains(EXPECTED_RESPONSE_CONTENT)) {
-                            logger.trace("HTTP check success => '{}' contains '{}'", urlStr, EXPECTED_RESPONSE_CONTENT);
-                            return true;
-                        }
-                    }
-                }
-                logger.trace("HTTP check => '{}' does not contain '{}'", urlStr, EXPECTED_RESPONSE_CONTENT);
+            logger.trace("No 'uuid' in response => not recognized as LinkPlay. Response: {}", response);
+        } catch (CompletionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof LinkPlayApiException) {
+                logger.debug("Device {} => API error: {}", ipAddress, cause.getMessage());
+            } else if (cause instanceof LinkPlayCommunicationException) {
+                logger.debug("Device {} => Communication error: {}", ipAddress, cause.getMessage());
             } else {
-                logger.trace("HTTP check => '{}' returned status code {}", urlStr, responseCode);
+                logger.debug("Device {} => Exception during getStatusEx: {}", ipAddress, e.getMessage());
             }
         } catch (Exception e) {
-            logger.trace("HTTP check => '{}' error: {}", urlStr, e.getMessage());
+            logger.trace("Device {} => Unexpected exception: {}", ipAddress, e.getMessage());
         }
+        logger.debug("validateDevice => returning false for IP={}", ipAddress);
         return false;
     }
 
-    /**
-     * Creates either an HttpsURLConnection or HttpURLConnection, setting
-     * timeouts, SSLContext, etc. as needed.
-     */
-    private HttpURLConnection createConnection(String urlStr, boolean useSsl) throws Exception {
-        URL url = new URL(urlStr);
-        HttpURLConnection conn;
-
-        if (useSsl) {
-            HttpsURLConnection httpsConn = (HttpsURLConnection) url.openConnection();
-            SSLContext sslContext = LinkPlaySslUtil.createSslContext(LinkPlaySslUtil.createTrustAllManager());
-            httpsConn.setSSLSocketFactory(sslContext.getSocketFactory());
-            httpsConn.setHostnameVerifier((hostname, session) -> true);
-            conn = httpsConn;
-        } else {
-            conn = (HttpURLConnection) url.openConnection();
-        }
-
-        conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
-        conn.setReadTimeout(READ_TIMEOUT_MS);
-        conn.setRequestMethod("GET");
-        return conn;
+    @Activate
+    protected void activate(ComponentContext context) {
+        logger.debug("LinkPlay UPnP Discovery service activated");
     }
 
     protected void deactivate() {

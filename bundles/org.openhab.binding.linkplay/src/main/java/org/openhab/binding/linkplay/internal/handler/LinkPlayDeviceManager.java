@@ -5,8 +5,8 @@
  * information.
  *
  * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License 2.0
- * which is available at http://www.eclipse.org/legal/epl-2.0
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0
  *
  * SPDX-License-Identifier: EPL-2.0
  */
@@ -21,6 +21,7 @@ import org.openhab.binding.linkplay.internal.config.LinkPlayConfiguration;
 import org.openhab.binding.linkplay.internal.http.LinkPlayHttpClient;
 import org.openhab.binding.linkplay.internal.http.LinkPlayHttpManager;
 import org.openhab.binding.linkplay.internal.upnp.LinkPlayUpnpManager;
+import org.openhab.binding.linkplay.internal.utils.HexConverter;
 import org.openhab.core.io.transport.upnp.UpnpIOService;
 import org.openhab.core.library.types.OnOffType;
 import org.openhab.core.library.types.PercentType;
@@ -70,7 +71,7 @@ public class LinkPlayDeviceManager {
         this.deviceUDN = config.getUdn();
 
         // Create the HttpManager with full functionality (including sendCommandWithRetry)
-        this.httpManager = new LinkPlayHttpManager(httpClient, this, config);
+        this.httpManager = new LinkPlayHttpManager(httpClient, this, config, deviceId);
 
         // Create the UpnpManager
         this.upnpManager = new LinkPlayUpnpManager(upnpIOService, this, deviceId);
@@ -106,6 +107,9 @@ public class LinkPlayDeviceManager {
     public void updateChannelsFromHttp(JsonObject status) {
         logger.trace("[{}] updateChannelsFromHttp => JSON status: {}", deviceId, status);
 
+        // Reset failure count on successful poll
+        failedHttpPollCount = 0;
+        
         // Possibly discover new UDN from the JSON
         String discoveredUdn = parseUdnFromHttp(status);
         if (discoveredUdn != null && !discoveredUdn.isEmpty()) {
@@ -125,13 +129,19 @@ public class LinkPlayDeviceManager {
 
         // Title/Artist/Album from JSON if present
         if (status.has("Title")) {
-            updateState(LinkPlayBindingConstants.CHANNEL_TITLE, new StringType(getAsString(status, "Title")));
+            String hexTitle = status.get("Title").getAsString();
+            String title = HexConverter.hexToString(hexTitle);
+            updateState(LinkPlayBindingConstants.CHANNEL_TITLE, new StringType(title));
         }
         if (status.has("Artist")) {
-            updateState(LinkPlayBindingConstants.CHANNEL_ARTIST, new StringType(getAsString(status, "Artist")));
+            String hexArtist = status.get("Artist").getAsString();
+            String artist = HexConverter.hexToString(hexArtist);
+            updateState(LinkPlayBindingConstants.CHANNEL_ARTIST, new StringType(artist));
         }
         if (status.has("Album")) {
-            updateState(LinkPlayBindingConstants.CHANNEL_ALBUM, new StringType(getAsString(status, "Album")));
+            String hexAlbum = status.get("Album").getAsString();
+            String album = HexConverter.hexToString(hexAlbum);
+            updateState(LinkPlayBindingConstants.CHANNEL_ALBUM, new StringType(album));
         }
 
         // Volume
@@ -161,8 +171,7 @@ public class LinkPlayDeviceManager {
 
         // LinkPlay's getPlayerStatus does not provide album art => no code needed here to set albumArt
 
-        // Reset offline count
-        failedHttpPollCount = 0;
+        // If we were offline, mark us back online
         if (thingHandler.getThing().getStatus() != ThingStatus.ONLINE) {
             handleStatusUpdate(ThingStatus.ONLINE);
         }
@@ -173,11 +182,12 @@ public class LinkPlayDeviceManager {
      */
     public void handleHttpPollFailure(Throwable error) {
         failedHttpPollCount++;
-        logger.warn("[{}] HTTP poll failure #{} => {}", deviceId, failedHttpPollCount, error.getMessage());
-
         if (failedHttpPollCount >= MAX_OFFLINE_COUNT) {
-            handleStatusUpdate(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
-                    "Device unreachable after " + failedHttpPollCount + " attempts");
+            logger.warn("[{}] HTTP poll failure #{} => {}", deviceId, failedHttpPollCount, error.getMessage());
+            handleStatusUpdate(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR, 
+                "No response from device after " + failedHttpPollCount + " attempts");
+        } else {
+            logger.debug("[{}] HTTP poll failure #{} => {}", deviceId, failedHttpPollCount, error.getMessage());
         }
     }
 
@@ -187,6 +197,42 @@ public class LinkPlayDeviceManager {
      */
     public void handleCommand(String channelId, Command command) {
         logger.debug("[{}] Handling command '{}' for channel '{}'", deviceId, command, channelId);
+
+        // Check if command is REFRESH
+        if ("REFRESH".equalsIgnoreCase(command.toString())) {
+            // Decide which refresh logic to use
+            switch (channelId) {
+                case LinkPlayBindingConstants.CHANNEL_VOLUME:
+                case LinkPlayBindingConstants.CHANNEL_MUTE:
+                case LinkPlayBindingConstants.CHANNEL_CONTROL:
+                case LinkPlayBindingConstants.CHANNEL_ARTIST:
+                case LinkPlayBindingConstants.CHANNEL_ALBUM:
+                case LinkPlayBindingConstants.CHANNEL_TITLE:
+                    // For playback-oriented channels, we do a partial or one-off call to getPlayerStatus
+                    logger.trace("[{}] REFRESH => one-off call to getPlayerStatus for channel '{}'", deviceId,
+                            channelId);
+                    httpManager.refreshPlayerStatus();
+                    break;
+
+                case LinkPlayBindingConstants.CHANNEL_ROLE:
+                case LinkPlayBindingConstants.CHANNEL_MASTER_IP:
+                case LinkPlayBindingConstants.CHANNEL_SLAVE_IPS:
+                    // For multiroom info, we want getStatusEx or a different endpoint
+                    logger.trace("[{}] REFRESH => calling getStatusEx for multiroom channel '{}'", deviceId, channelId);
+                    httpManager.refreshMultiroomStatus();
+                    break;
+
+                // For any read-only channels you do not want to fetch at all, just do nothing:
+                default:
+                    logger.trace("[{}] REFRESH => ignoring read-only or unmapped channel '{}'", deviceId, channelId);
+                    break;
+            }
+
+            // Return here so we do NOT pass REFRESH to the HTTP manager's normal command sending
+            return;
+        }
+
+        // Otherwise, normal commands:
         httpManager.sendChannelCommand(channelId, command);
     }
 
@@ -338,10 +384,31 @@ public class LinkPlayDeviceManager {
             }
             String val = obj.get(key).getAsString();
             // Some devices might do "true"/"false" or "1"/"0" or "on"/"off"
-            return val.equalsIgnoreCase("true") || val.equals("1") || val.equalsIgnoreCase("on");
+            return "true".equalsIgnoreCase(val) || "1".equals(val) || "on".equalsIgnoreCase(val);
         } catch (Exception e) {
             logger.trace("[{}] Failed to get boolean for key='{}': {}", deviceId, key, e.getMessage());
             return false;
+        }
+    }
+
+    private void updateMediaInfoChannels(JsonObject json) {
+        // For title, artist, album - decode from hex if present
+        if (json.has("Title")) {
+            String hexTitle = json.get("Title").getAsString();
+            String title = HexConverter.hexToString(hexTitle);
+            updateState(LinkPlayBindingConstants.CHANNEL_TITLE, new StringType(title));
+        }
+
+        if (json.has("Artist")) {
+            String hexArtist = json.get("Artist").getAsString();
+            String artist = HexConverter.hexToString(hexArtist);
+            updateState(LinkPlayBindingConstants.CHANNEL_ARTIST, new StringType(artist));
+        }
+
+        if (json.has("Album")) {
+            String hexAlbum = json.get("Album").getAsString();
+            String album = HexConverter.hexToString(hexAlbum);
+            updateState(LinkPlayBindingConstants.CHANNEL_ALBUM, new StringType(album));
         }
     }
 }

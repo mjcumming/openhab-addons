@@ -1,17 +1,17 @@
-## LinkPlay Binding
+# LinkPlay Binding
 
 This binding integrates audio devices built upon the **LinkPlay** platform. Many brands embed LinkPlay modules in their products (Arylic, WiiM, Audio Pro, and more), enabling multiroom audio, streaming services, AirPlay, and DLNA/UPnP capabilities.
 
-### **Supported Devices**
+## **Supported Devices**
 
-> **Examples** (not exhaustive):
->
-> - **Arylic**: S50 Pro+, A50, Up2Stream (Amp/Pro/mini) boards  
-> - **WiiM**: WiiM Mini, WiiM Pro  
-> - **Audio Pro**: A10, A26, A36, Addon C-series, Link 1, etc.  
-> - **Others**: August WS300, Auna, Bauhn, Bem, Cowin, Dayton Audio, DOSS, Edifier, Energy Sistem, FABRIQ, GGMM…  
->
-> Since LinkPlay is an “under the hood” technology, many manufacturers do not explicitly mention it. If your device supports multiroom streaming and LinkPlay apps (4STREAM, WiiM Home, etc.), it likely works with this binding.
+**Examples** (not exhaustive):
+
+- **Arylic**: S50 Pro+, A50, Up2Stream (Amp/Pro/mini) boards  
+- **WiiM**: WiiM Mini, WiiM Pro  
+- **Audio Pro**: A10, A26, A36, Addon C-series, Link 1, etc.  
+- **Others**: August WS300, Auna, Bauhn, Bem, Cowin, Dayton Audio, DOSS, Edifier, Energy Sistem, FABRIQ, GGMM…  
+
+Since LinkPlay is an "under the hood" technology, many manufacturers do not explicitly mention it. If your device supports multiroom streaming and LinkPlay apps (4STREAM, WiiM Home, etc.), it likely works with this binding.
 
 ---
 
@@ -37,6 +37,7 @@ This binding integrates audio devices built upon the **LinkPlay** platform. Many
 ## Discovery
 
 By default, the binding listens for **UPnP/SSDP** announcements to discover LinkPlay devices.  
+
 - They appear in the **Inbox** with a generated UID based on the device UDN.  
 - The label is derived from the device’s friendly name.  
 - If you have multiple LinkPlay devices, each will appear with its IP address and basic properties.
@@ -55,6 +56,7 @@ You can add devices manually (e.g. in a `*.things` file or via the UI) if discov
 | `pollingInterval`  | Interval (seconds) for periodic status polling       | No       | 10      |
 
 **Notes**:  
+
 - The binding uses `ipAddress` plus periodic polling to stay updated on device status (volume, track, etc.).  
 - The `udn` can be discovered automatically from the HTTP status in many cases, but if you already know it, you can supply it.
 

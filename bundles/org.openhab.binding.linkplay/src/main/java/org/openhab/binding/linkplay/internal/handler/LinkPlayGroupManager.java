@@ -41,17 +41,19 @@ public class LinkPlayGroupManager {
     private final Logger logger = LoggerFactory.getLogger(LinkPlayGroupManager.class);
     private String ipAddress = ""; // Initialized to an empty string
     private final LinkPlayHttpManager httpManager;
+    private final String deviceName;
 
-    public LinkPlayGroupManager(LinkPlayHttpManager httpManager) {
+    public LinkPlayGroupManager(LinkPlayHttpManager httpManager, String deviceName) {
         this.httpManager = httpManager;
-    } // Closed the constructor
+        this.deviceName = deviceName;
+    }
 
     public void initialize(String ipAddress) {
         if (!ipAddress.isEmpty()) {
             this.ipAddress = ipAddress;
             triggerGroupStateUpdate();
         } else {
-            logger.warn("Cannot initialize group manager - IP address is empty");
+            logger.warn("[{}] Cannot initialize group manager - IP address is empty", deviceName);
         }
     }
 
@@ -60,7 +62,7 @@ public class LinkPlayGroupManager {
      */
     public void triggerGroupStateUpdate() {
         if (ipAddress.isEmpty()) {
-            logger.warn("Cannot update group state - IP address is empty");
+            logger.warn("[{}] Cannot update group state - IP address is empty", deviceName);
             return;
         }
 
@@ -68,7 +70,7 @@ public class LinkPlayGroupManager {
             @Nullable
             JsonObject response = httpManager.sendCommand("getStatusEx");
             if (response == null) {
-                logger.warn("Received null response from sendCommand 'getStatusEx'");
+                logger.warn("[{}] Received null response from sendCommand 'getStatusEx'", deviceName);
                 return;
             }
             handleStatusUpdate(response);
@@ -79,11 +81,10 @@ public class LinkPlayGroupManager {
 
     /**
      * Handle received commands for the group management channels.
-     * Handle received commands for the group management channels.
      */
     public void handleCommand(ChannelUID channelUID, Command command) {
         if (ipAddress.isEmpty()) {
-            logger.warn("Cannot handle command - device IP is empty");
+            logger.warn("[{}] Cannot handle command - device IP is empty", deviceName);
             return;
         }
 
@@ -115,7 +116,7 @@ public class LinkPlayGroupManager {
                 break;
 
             default:
-                logger.debug("Unhandled channel command: {}", channelId);
+                logger.debug("[{}] Unhandled channel command: {}", deviceName, channelId);
         }
     }
 
@@ -125,7 +126,7 @@ public class LinkPlayGroupManager {
             if (!masterIp.isEmpty()) {
                 try {
                     JsonObject response = httpManager.sendCommand("joinGroup:" + masterIp);
-                    logger.debug("Join group response: {}", response);
+                    logger.debug("[{}] Join group response: {}", deviceName, response);
                     triggerGroupStateUpdate();
                 } catch (Exception e) {
                     handleGroupError("joining group", e);
@@ -137,7 +138,7 @@ public class LinkPlayGroupManager {
     private void handleLeaveCommand() {
         try {
             JsonObject response = httpManager.sendCommand("leaveGroup");
-            logger.debug("Leave group response: {}", response);
+            logger.debug("[{}] Leave group response: {}", deviceName, response);
             triggerGroupStateUpdate();
         } catch (Exception e) {
             handleGroupError("leaving group", e);
@@ -147,7 +148,7 @@ public class LinkPlayGroupManager {
     private void handleUngroupCommand() {
         try {
             JsonObject response = httpManager.sendCommand("ungroup");
-            logger.debug("Ungroup response: {}", response);
+            logger.debug("[{}] Ungroup response: {}", deviceName, response);
             triggerGroupStateUpdate();
         } catch (Exception e) {
             handleGroupError("ungrouping", e);
@@ -159,7 +160,7 @@ public class LinkPlayGroupManager {
             String slaveIp = command.toString();
             try {
                 JsonObject response = httpManager.sendCommand("kickoutSlave:" + slaveIp);
-                logger.debug("Kickout response: {}", response);
+                logger.debug("[{}] Kickout response: {}", deviceName, response);
                 triggerGroupStateUpdate();
             } catch (Exception e) {
                 handleGroupError("kicking out slave", e);
@@ -174,7 +175,9 @@ public class LinkPlayGroupManager {
                 @Nullable
                 JsonObject status = httpManager.sendCommand("getStatusEx");
                 if (status == null) {
-                    logger.warn("Received null response from sendCommand 'getStatusEx' in handleGroupVolumeCommand");
+                    logger.warn(
+                            "[{}] Received null response from sendCommand 'getStatusEx' in handleGroupVolumeCommand",
+                            deviceName);
                     return;
                 }
                 JsonObject nonNullStatus = status; // Assign to a non-null variable
@@ -184,12 +187,13 @@ public class LinkPlayGroupManager {
                         @Nullable
                         JsonObject slaveResponse = httpManager.sendCommand("setPlayerCmd:vol:" + volume);
                         if (slaveResponse == null) {
-                            logger.warn("Received null response from sendCommand 'setPlayerCmd:vol:{}' for slave {}",
-                                    volume, slaveIp);
+                            logger.warn(
+                                    "[{}] Received null response from sendCommand 'setPlayerCmd:vol:{}' for slave {}",
+                                    deviceName, volume, slaveIp);
                             continue;
                         }
                         JsonObject nonNullSlaveResponse = slaveResponse; // Assign to a non-null variable
-                        logger.debug("Set volume response for {}: {}", slaveIp, nonNullSlaveResponse);
+                        logger.debug("[{}] Set volume response for {}: {}", deviceName, slaveIp, nonNullSlaveResponse);
                     } catch (Exception e) {
                         handleGroupError("setting volume for " + slaveIp, e);
                     }
@@ -197,12 +201,13 @@ public class LinkPlayGroupManager {
                 @Nullable
                 JsonObject masterResponse = httpManager.sendCommand("setPlayerCmd:vol:" + volume);
                 if (masterResponse == null) {
-                    logger.warn("Received null response from sendCommand 'setPlayerCmd:vol:{}' for master {}", volume,
-                            ipAddress);
+                    logger.warn("[{}] Received null response from sendCommand 'setPlayerCmd:vol:{}' for master {}",
+                            deviceName, volume, ipAddress);
                     return;
                 }
                 JsonObject nonNullMasterResponse = masterResponse; // Assign to a non-null variable
-                logger.debug("Set volume response for master {}: {}", ipAddress, nonNullMasterResponse);
+                logger.debug("[{}] Set volume response for master {}: {}", deviceName, ipAddress,
+                        nonNullMasterResponse);
             } catch (Exception e) {
                 handleGroupError("volume control operation", e);
             }
@@ -217,7 +222,8 @@ public class LinkPlayGroupManager {
                 @Nullable
                 JsonObject status = httpManager.sendCommand("getStatusEx");
                 if (status == null) {
-                    logger.warn("Received null response from sendCommand 'getStatusEx' in handleGroupMuteCommand");
+                    logger.warn("[{}] Received null response from sendCommand 'getStatusEx' in handleGroupMuteCommand",
+                            deviceName);
                     return;
                 }
                 JsonObject nonNullStatus = status; // Assign to a non-null variable
@@ -227,12 +233,13 @@ public class LinkPlayGroupManager {
                         @Nullable
                         JsonObject slaveResponse = httpManager.sendCommand("setPlayerCmd:mute:" + muteValue);
                         if (slaveResponse == null) {
-                            logger.warn("Received null response from sendCommand 'setPlayerCmd:mute:{}' for slave {}",
-                                    muteValue, slaveIp);
+                            logger.warn(
+                                    "[{}] Received null response from sendCommand 'setPlayerCmd:mute:{}' for slave {}",
+                                    deviceName, muteValue, slaveIp);
                             continue;
                         }
                         JsonObject nonNullSlaveResponse = slaveResponse; // Assign to a non-null variable
-                        logger.debug("Set mute response for {}: {}", slaveIp, nonNullSlaveResponse);
+                        logger.debug("[{}] Set mute response for {}: {}", deviceName, slaveIp, nonNullSlaveResponse);
                     } catch (Exception e) {
                         handleGroupError("setting mute for " + slaveIp, e);
                     }
@@ -240,12 +247,12 @@ public class LinkPlayGroupManager {
                 @Nullable
                 JsonObject masterResponse = httpManager.sendCommand("setPlayerCmd:mute:" + muteValue);
                 if (masterResponse == null) {
-                    logger.warn("Received null response from sendCommand 'setPlayerCmd:mute:{}' for master {}",
-                            muteValue, ipAddress);
+                    logger.warn("[{}] Received null response from sendCommand 'setPlayerCmd:mute:{}' for master {}",
+                            deviceName, muteValue, ipAddress);
                     return;
                 }
                 JsonObject nonNullMasterResponse = masterResponse; // Assign to a non-null variable
-                logger.debug("Set mute response for master {}: {}", ipAddress, nonNullMasterResponse);
+                logger.debug("[{}] Set mute response for master {}: {}", deviceName, ipAddress, nonNullMasterResponse);
             } catch (Exception e) {
                 handleGroupError("mute control operation", e);
             }
@@ -274,15 +281,15 @@ public class LinkPlayGroupManager {
      * Handle group error without redundant null check.
      */
     private void handleGroupError(String operation, Throwable error) {
-        logger.warn("[{}] Error {} : {}", ipAddress, operation, error.getMessage());
+        logger.warn("[{}] Error {} : {}", deviceName, operation, error.getMessage());
         if (logger.isDebugEnabled()) {
-            logger.debug("[{}] Error details:", ipAddress, error);
+            logger.debug("[{}] Error details:", deviceName, error);
         }
     }
 
     private void updateGroupState(MultiroomInfo multiroomInfo) {
         try {
-            logger.debug("[{}] Group state updated - Role: {}, Master IP: {}, Slaves: {}", ipAddress,
+            logger.debug("[{}] Group state updated - Role: {}, Master IP: {}, Slaves: {}", deviceName,
                     multiroomInfo.getRole(), multiroomInfo.getMasterIP(), multiroomInfo.getSlaveIPs());
         } catch (Exception e) {
             handleGroupError("updating group state", e);
@@ -290,6 +297,6 @@ public class LinkPlayGroupManager {
     }
 
     public void dispose() {
-        logger.debug("Disposing LinkPlayGroupManager for IP: {}", ipAddress);
+        logger.debug("[{}] Disposing LinkPlayGroupManager for IP: {}", deviceName, ipAddress);
     }
 }

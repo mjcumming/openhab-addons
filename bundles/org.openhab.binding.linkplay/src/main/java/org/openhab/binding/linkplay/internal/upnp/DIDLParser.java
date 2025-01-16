@@ -5,7 +5,8 @@
  * information.
  *
  * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License 2.0
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0
  *
  * SPDX-License-Identifier: EPL-2.0
  */
@@ -46,89 +47,69 @@ public class DIDLParser {
 
     /**
      * Parses DIDL-Lite metadata (e.g., track info, album, artist, etc.).
-     *
-     * @param metadata the DIDL-Lite XML string
-     * @return A map of known fields (title, artist, album, albumArtUri) or null if parse fails or input is empty
      */
     @Nullable
     public static Map<String, String> parseMetadata(String metadata) {
         if (metadata.isEmpty()) {
             return null;
         }
-
         MetadataHandler handler = new MetadataHandler();
         try {
             SAXParserFactory factory = SAXParserFactory.newInstance();
-            // Security features
             factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
             factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-            // If you need namespace awareness, call factory.setNamespaceAware(true);
 
             SAXParser saxParser = factory.newSAXParser();
             saxParser.getXMLReader().setFeature("http://xml.org/sax/features/external-general-entities", false);
-
             saxParser.parse(new InputSource(new StringReader(metadata)), handler);
             return handler.getValues();
         } catch (IOException | SAXException | ParserConfigurationException e) {
             logger.debug("Error parsing DIDL-Lite metadata: {}", e.getMessage());
-            // Optionally: logger.debug("Error parsing DIDL-Lite metadata", e);
             return null;
         }
     }
 
     /**
-     * Parses AVTransport event XML, extracting fields like TransportState, CurrentTrackMetaData, etc.
-     *
-     * @param xml the AVTransport event XML
-     * @return A map of recognized AVTransport fields, or null if parse fails or input is empty
+     * Example method to parse AVTransport event XML (non-LastChange style).
+     * You already had something similar. We'll keep it for reference.
      */
     @Nullable
     public static Map<String, String> getAVTransportFromXML(String xml) {
         if (xml.isEmpty()) {
             return null;
         }
-
         AVTransportHandler handler = new AVTransportHandler();
         try {
             SAXParserFactory factory = SAXParserFactory.newInstance();
-            // Security features
             factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
             factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
 
             SAXParser saxParser = factory.newSAXParser();
             saxParser.getXMLReader().setFeature("http://xml.org/sax/features/external-general-entities", false);
-
             saxParser.parse(new InputSource(new StringReader(xml)), handler);
             return handler.getValues();
         } catch (IOException | SAXException | ParserConfigurationException e) {
             logger.debug("Error parsing AVTransport XML: {}", e.getMessage());
-            // Optionally: logger.debug("Error parsing AVTransport XML", e);
             return null;
         }
     }
 
     /**
-     * Parses RenderingControl event XML, extracting fields like Volume, Mute, etc.
-     *
-     * @param xml the RenderingControl event XML
-     * @return A map of recognized fields, or null if parse fails or input is empty
+     * Example method to parse RenderingControl event XML (non-LastChange style).
      */
     @Nullable
     public static Map<String, String> getRenderingControlFromXML(String xml) {
         if (xml.isEmpty()) {
             return null;
         }
-
         RenderingControlHandler handler = new RenderingControlHandler();
         try {
             SAXParserFactory factory = SAXParserFactory.newInstance();
-            // Security features
             factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
             factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
 
             SAXParser saxParser = factory.newSAXParser();
             saxParser.getXMLReader().setFeature("http://xml.org/sax/features/external-general-entities", false);
-
             saxParser.parse(new InputSource(new StringReader(xml)), handler);
             return handler.getValues();
         } catch (IOException | SAXException | ParserConfigurationException e) {
@@ -138,10 +119,59 @@ public class DIDLParser {
     }
 
     // ------------------------------------------------------------------------
-    // Internal Handler for DIDL-Lite metadata (title, artist, album, albumArtUri)
+    // NEW: parseLastChange(...) for "LastChange" event data
     // ------------------------------------------------------------------------
-    private static class MetadataHandler extends DefaultHandler {
 
+    /**
+     * Parse a typical 'LastChange' event string used by AVTransport or RenderingControl
+     * in many UPnP devices. The XML structure often looks like:
+     *
+     * <Event xmlns="urn:schemas-upnp-org:metadata-1-0/AVT/">
+     * <InstanceID val="0">
+     * <TransportState val="PLAYING"/>
+     * <TransportStatus val="OK"/>
+     * <CurrentTransportActions val="NEXT,PREV"/>
+     * <AVTransportURI val="http://stream.example.com/radio.mp3"/>
+     * <Volume channel="Master" val="17"/>
+     * ...
+     * </InstanceID>
+     * </Event>
+     *
+     * We read child elements of <InstanceID ...> and store their attribute "val".
+     * If you see "Volume channel=Master val=17", we might store "Volume"="17".
+     *
+     * @param lastChangeXml The raw XML from LastChange
+     * @return Map of recognized fields => values (e.g. "TransportState" => "PLAYING", "Volume" => "17")
+     */
+    @Nullable
+    public static Map<String, String> parseLastChange(String lastChangeXml) {
+        if (lastChangeXml.isEmpty()) {
+            return null;
+        }
+        LastChangeHandler handler = new LastChangeHandler();
+        try {
+            SAXParserFactory factory = SAXParserFactory.newInstance();
+            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+
+            SAXParser saxParser = factory.newSAXParser();
+            saxParser.getXMLReader().setFeature("http://xml.org/sax/features/external-general-entities", false);
+            saxParser.parse(new InputSource(new StringReader(lastChangeXml)), handler);
+            return handler.getValues();
+        } catch (IOException | SAXException | ParserConfigurationException e) {
+            logger.debug("Error parsing LastChange XML: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // Internal Handlers
+    // ------------------------------------------------------------------------
+
+    /**
+     * For DIDL-Lite track info fields (title, artist, album, albumArtUri).
+     */
+    private static class MetadataHandler extends DefaultHandler {
         private final Map<String, String> values = new HashMap<>();
         private final StringBuilder currentValue = new StringBuilder();
         private String currentElement = "";
@@ -155,7 +185,6 @@ public class DIDLParser {
             currentValue.setLength(0);
             currentElement = qName;
 
-            // If an attribute "val" is present, store it directly
             if (attributes != null && attributes.getValue("val") != null) {
                 addIfNotEmpty(values, qName, attributes.getValue("val"));
             }
@@ -166,7 +195,6 @@ public class DIDLParser {
             if (qName == null) {
                 return;
             }
-            // We only store text for certain recognized DIDL-Lite fields
             switch (currentElement) {
                 case "dc:title":
                     addIfNotEmpty(values, "title", currentValue.toString());
@@ -181,15 +209,18 @@ public class DIDLParser {
                     addIfNotEmpty(values, "albumArtUri", currentValue.toString());
                     break;
                 default:
-                    // ignore other elements
+                    // ignore
                     break;
             }
             currentElement = "";
         }
 
         @Override
-        public void characters(char[] ch, int start, int length) {
-            currentValue.append(ch, start, length);
+        @SuppressWarnings("null")
+        public void characters(char @Nullable [] ch, int start, int length) throws SAXException {
+            if (ch != null) {
+                currentValue.append(ch, start, length);
+            }
         }
 
         public Map<String, String> getValues() {
@@ -197,11 +228,10 @@ public class DIDLParser {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // Internal Handler for AVTransport event fields (TransportState, etc.)
-    // ------------------------------------------------------------------------
+    /**
+     * For AVTransport event fields (TransportState, CurrentTrackMetaData, etc.).
+     */
     private static class AVTransportHandler extends DefaultHandler {
-
         private final Map<String, String> values = new HashMap<>();
         private final StringBuilder currentValue = new StringBuilder();
         private String currentElement = "";
@@ -215,7 +245,6 @@ public class DIDLParser {
             currentValue.setLength(0);
             currentElement = qName;
 
-            // If attribute "val" is present, store directly
             if (attributes != null && attributes.getValue("val") != null) {
                 addIfNotEmpty(values, qName, attributes.getValue("val"));
             }
@@ -226,7 +255,6 @@ public class DIDLParser {
             if (qName == null) {
                 return;
             }
-            // We store recognized AVTransport fields
             switch (currentElement) {
                 case "TransportState":
                 case "CurrentTrackMetaData":
@@ -236,15 +264,17 @@ public class DIDLParser {
                     addIfNotEmpty(values, currentElement, currentValue.toString());
                     break;
                 default:
-                    // ignore unknown
                     break;
             }
             currentElement = "";
         }
 
         @Override
-        public void characters(char[] ch, int start, int length) {
-            currentValue.append(ch, start, length);
+        @SuppressWarnings("null")
+        public void characters(char @Nullable [] ch, int start, int length) throws SAXException {
+            if (ch != null) {
+                currentValue.append(ch, start, length);
+            }
         }
 
         public Map<String, String> getValues() {
@@ -252,11 +282,10 @@ public class DIDLParser {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // Internal Handler for RenderingControl event fields (Volume, Mute, etc.)
-    // ------------------------------------------------------------------------
+    /**
+     * For RenderingControl event fields (Volume, Mute, etc.).
+     */
     private static class RenderingControlHandler extends DefaultHandler {
-
         private final Map<String, String> values = new HashMap<>();
         private final StringBuilder currentValue = new StringBuilder();
         private String currentElement = "";
@@ -288,15 +317,17 @@ public class DIDLParser {
                     addIfNotEmpty(values, currentElement, currentValue.toString());
                     break;
                 default:
-                    // ignore unknown
                     break;
             }
             currentElement = "";
         }
 
         @Override
-        public void characters(char[] ch, int start, int length) {
-            currentValue.append(ch, start, length);
+        @SuppressWarnings("null")
+        public void characters(char @Nullable [] ch, int start, int length) throws SAXException {
+            if (ch != null) {
+                currentValue.append(ch, start, length);
+            }
         }
 
         public Map<String, String> getValues() {
@@ -304,9 +335,49 @@ public class DIDLParser {
         }
     }
 
-    /**
-     * Helper method to store a trimmed value in the map if it's non-empty.
-     */
+    // ------------------------------------------------------------------------
+    // NEW LastChangeHandler for typical "LastChange" event
+    // ------------------------------------------------------------------------
+    private static class LastChangeHandler extends DefaultHandler {
+
+        private final Map<String, String> values = new HashMap<>();
+        private String currentElement = "";
+
+        /**
+         * We do not need 'characters()' if most events are in attributes "val" of each element
+         * within <InstanceID>.
+         */
+        @Override
+        public void startElement(@Nullable String uri, @Nullable String localName, @Nullable String qName,
+                @Nullable Attributes attributes) {
+            if (qName == null) {
+                return;
+            }
+            currentElement = qName;
+
+            // Typically we look for <InstanceID ...> child elements like <TransportState val="PLAYING"/>
+            if (attributes != null && attributes.getValue("val") != null) {
+                String val = attributes.getValue("val").trim();
+                if (!val.isEmpty()) {
+                    // Example: qName=TransportState, val=PLAYING
+                    values.put(qName, val);
+                }
+            }
+        }
+
+        @Override
+        public void endElement(@Nullable String uri, @Nullable String localName, @Nullable String qName) {
+            currentElement = "";
+        }
+
+        public Map<String, String> getValues() {
+            return values.isEmpty() ? Collections.emptyMap() : values;
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // Helper for storing trimmed text into a map if non-empty
+    // ------------------------------------------------------------------------
     private static void addIfNotEmpty(Map<String, String> map, String key, String value) {
         String trimmed = value.trim();
         if (!trimmed.isEmpty()) {

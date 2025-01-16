@@ -21,6 +21,7 @@ import org.openhab.binding.linkplay.internal.config.LinkPlayConfiguration;
 import org.openhab.binding.linkplay.internal.http.LinkPlayHttpClient;
 import org.openhab.core.config.core.Configuration;
 import org.openhab.core.io.transport.upnp.UpnpIOService;
+import org.openhab.core.thing.Channel;
 import org.openhab.core.thing.ChannelUID;
 import org.openhab.core.thing.Thing;
 import org.openhab.core.thing.ThingStatus;
@@ -35,7 +36,7 @@ import org.slf4j.LoggerFactory;
  * The {@link LinkPlayThingHandler} is responsible for handling commands and status updates for LinkPlay devices.
  * It manages the lifecycle of a LinkPlay device and integrates with the Device Manager.
  *
- * author Michael Cumming - Initial contribution
+ * @author Michael Cumming - Initial contribution
  */
 @NonNullByDefault
 public class LinkPlayThingHandler extends BaseThingHandler {
@@ -87,7 +88,7 @@ public class LinkPlayThingHandler extends BaseThingHandler {
             manager.dispose();
             deviceManager = null;
         }
-        scheduler.shutdownNow();
+
         super.dispose();
     }
 
@@ -109,8 +110,8 @@ public class LinkPlayThingHandler extends BaseThingHandler {
     public void handleStateUpdate(String channelId, State state) {
         // Check if the channel is part of a group
         Channel channel = thing.getChannel(channelId);
-        if (channel != null && channel.isGrouped()) {
-            String groupId = channel.getGroupId();
+        if (channel != null && channel.getUID().getGroupId() != null) {
+            String groupId = channel.getUID().getGroupId();
             // Log for debugging
             logger.debug("Updating state for group {} channel {}", groupId, channelId);
             // Update the individual channel

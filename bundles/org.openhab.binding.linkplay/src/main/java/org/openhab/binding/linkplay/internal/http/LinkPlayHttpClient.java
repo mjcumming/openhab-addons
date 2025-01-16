@@ -4,12 +4,13 @@
  * See the NOTICE file(s) distributed with this work for additional
  * information.
  *
- * This program and the accompanying materials are made available
- * under the terms of the Eclipse Public License 2.0
- * which is available at http://www.eclipse.org/legal/epl-2.0
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0
  *
  * SPDX-License-Identifier: EPL-2.0
  */
+
 package org.openhab.binding.linkplay.internal.http;
 
 import static org.openhab.binding.linkplay.internal.LinkPlayBindingConstants.CHANNEL_VOLUME;
@@ -41,8 +42,8 @@ import org.slf4j.LoggerFactory;
  * - Tries multiple HTTPS ports (443, 4443), then falls back to HTTP on port 80.
  * - Uses a custom SSL context (mutual TLS) if needed.
  * - Provides async methods returning {@link CompletableFuture} for concurrency.
- * - Does minimal error-checking in responses (e.g. "error" or "fail").
- * 
+ * - Minimal error-checking in responses (e.g. "error" or "fail").
+ *
  * @author Michael Cumming - Initial contribution
  */
 @NonNullByDefault
@@ -51,11 +52,10 @@ public class LinkPlayHttpClient {
 
     private static final Logger logger = LoggerFactory.getLogger(LinkPlayHttpClient.class);
 
-    // Default fallback ports
+    // Default fallback ports for https
     private static final int[] HTTPS_PORTS = { 443, 4443 };
     private static final int HTTP_PORT = 80;
 
-    // Timeout for each request
     private static final int TIMEOUT_MS = 2000;
 
     private final HttpClient httpClient; // for plain HTTP
@@ -89,9 +89,6 @@ public class LinkPlayHttpClient {
         }
     }
 
-    /**
-     * Deactivate closes the SSL HTTP client if it's running.
-     */
     @Deactivate
     protected void deactivate() {
         try {
@@ -105,7 +102,7 @@ public class LinkPlayHttpClient {
     }
 
     // ------------------------------------------------------------------------
-    // Commonly used endpoints
+    // Common endpoints
     // ------------------------------------------------------------------------
 
     public CompletableFuture<String> getStatusEx(String ipAddress) {
@@ -133,10 +130,6 @@ public class LinkPlayHttpClient {
         return sendCommand(ip, String.format("multiroom/kickout?slave=%s", slaveIP));
     }
 
-    // ------------------------------------------------------------------------
-    // Generic command endpoints
-    // ------------------------------------------------------------------------
-
     /**
      * Send a command "command=..." to the device, returning a future with raw response text.
      */
@@ -144,7 +137,6 @@ public class LinkPlayHttpClient {
         if (ipAddress.isEmpty()) {
             throw new IllegalArgumentException("IP address must not be empty");
         }
-        // "command=" is how LinkPlay's HTTP API is typically structured
         return sendRequest(ipAddress, "command=" + command);
     }
 
@@ -164,21 +156,16 @@ public class LinkPlayHttpClient {
         if (CHANNEL_VOLUME.equals(command) && value instanceof PercentType) {
             return "setPlayerCmd:vol:" + ((PercentType) value).intValue();
         }
-        // Extend with other logic for "mute", "control", etc. if needed
+        // Extend for "mute", "control", etc.
         return command;
     }
 
     // ------------------------------------------------------------------------
-    // Internal request logic
+    // Internal fallback logic: try HTTPS ports, then HTTP
     // ------------------------------------------------------------------------
-
-    /**
-     * Actually performs the request: tries each HTTPS port in turn, then falls back to HTTP if all fail.
-     * If we get a 200 OK, we return the response content; otherwise we throw an exception.
-     */
     private CompletableFuture<String> sendRequest(String ipAddress, String params) {
         return CompletableFuture.supplyAsync(() -> {
-            // Attempt HTTPS on known ports
+            // Attempt HTTPS
             for (int port : HTTPS_PORTS) {
                 String url = String.format("https://%s:%d/httpapi.asp?%s", ipAddress, port, params);
                 try {
