@@ -32,7 +32,9 @@ import org.slf4j.LoggerFactory;
 
 /**
  * The {@link LinkPlayUpnpManager} handles UPnP discovery, subscriptions, and event callbacks.
- * It retains all existing logic for subscription renewal and dispatches metadata updates.
+ * Includes logic for subscription renewal and dispatches metadata updates.
+ * LinkPlay devicees mostly do not support UPnP events or have very limited or non-standard support.                
+ * By default UPNP is turned off in the LinkPlay binding, but can be enabled in the Thing configuration.
  * 
  * @author Michael Cumming - Initial contribution
  */

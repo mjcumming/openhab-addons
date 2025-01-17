@@ -235,7 +235,7 @@ public class LinkPlayDeviceManager {
     }
 
     /**
-     * Called by the UpnpManager to indicate subscription success/failure, unchanged from original.
+     * Called by the UpnpManager to indicate subscription success/failure
      */
     public void setUpnpSubscriptionState(boolean active) {
         logger.debug("[{}] setUpnpSubscriptionState => {}", deviceId, active);
@@ -284,14 +284,14 @@ public class LinkPlayDeviceManager {
     }
 
     /**
-     * Transport URI from UPnP, preserved from original code.
+     * Transport URI from UPnP
      */
     public void updateTransportUri(String uri) {
         logger.trace("[{}] Updating transport URI => {}", deviceId, uri);
     }
 
     /**
-     * Current track duration from UPnP events, original structure preserved.
+     * Current track duration from UPnP events
      */
     public void updateDuration(String duration) {
         logger.trace("[{}] Updating media duration => {}", deviceId, duration);
@@ -336,7 +336,7 @@ public class LinkPlayDeviceManager {
     }
 
     /**
-     * Basic example to parse UDN from an HTTP JSON, same logic as original code.
+     * Basic parse UDN from an HTTP JSON
      */
     private @Nullable String parseUdnFromHttp(JsonObject json) {
         if (json.has("udn")) {
