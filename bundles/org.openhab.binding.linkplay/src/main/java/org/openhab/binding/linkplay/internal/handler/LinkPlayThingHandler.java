@@ -12,9 +12,6 @@
  */
 package org.openhab.binding.linkplay.internal.handler;
 
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.binding.linkplay.internal.config.LinkPlayConfiguration;
@@ -42,9 +39,6 @@ import org.slf4j.LoggerFactory;
 public class LinkPlayThingHandler extends BaseThingHandler {
 
     private static final Logger logger = LoggerFactory.getLogger(LinkPlayThingHandler.class);
-
-    // A dedicated scheduler for device tasks (HTTP, etc.)
-    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
 
     private final UpnpIOService upnpIOService;
     private final LinkPlayHttpClient httpClient;
@@ -107,26 +101,32 @@ public class LinkPlayThingHandler extends BaseThingHandler {
     /**
      * Public method for updating channel state, used by the device manager.
      */
-    public void handleStateUpdate(String channelId, State state) {
-        // Check if the channel is part of a group
-        Channel channel = thing.getChannel(channelId);
-        if (channel != null && channel.getUID().getGroupId() != null) {
-            String groupId = channel.getUID().getGroupId();
-            // Log for debugging
-            logger.trace("Updating state for group {} channel {}", groupId, channelId);
-            // Update the individual channel
-            updateState(channelId, state);
+    public final void handleStateUpdate(String channelId, State state) {
+        // First try to find the channel in its group
+        for (String groupId : new String[] { "playback", "system", "network", "multiroom" }) {
+            Channel channel = getThing().getChannel(groupId + "#" + channelId);
+            if (channel != null) {
+                // Found the channel in this group
+                logger.trace("Updating state for channel {}/{} to {}", groupId, channelId, state);
+                updateState(channel.getUID(), state);
+                return;
+            }
+        }
+
+        // If no grouped channel found, try updating directly (though this shouldn't happen)
+        Channel channel = getThing().getChannel(channelId);
+        if (channel != null) {
+            logger.trace("Updating state for ungrouped channel {} to {}", channelId, state);
+            updateState(channel.getUID(), state);
         } else {
-            // Update the individual channel
-            logger.trace("Updating state for channel {}", channelId);
-            updateState(channelId, state);
+            logger.debug("Channel not found: {}", channelId);
         }
     }
 
     /**
      * Public method for updating thing status, used by the device manager.
      */
-    public void handleStatusUpdate(ThingStatus status, @Nullable ThingStatusDetail detail,
+    public final void handleStatusUpdate(ThingStatus status, @Nullable ThingStatusDetail detail,
             @Nullable String description) {
         updateStatus(status, detail != null ? detail : ThingStatusDetail.NONE, description != null ? description : "");
     }
@@ -134,7 +134,7 @@ public class LinkPlayThingHandler extends BaseThingHandler {
     /**
      * Public method for updating thing status, used by the device manager.
      */
-    public void handleStatusUpdate(ThingStatus status) {
+    public final void handleStatusUpdate(ThingStatus status) {
         updateStatus(status);
     }
 
@@ -142,7 +142,7 @@ public class LinkPlayThingHandler extends BaseThingHandler {
      * Updates the UDN in the Thing configuration.
      * This is called when we discover the UDN from the device.
      */
-    public void updateUdnInConfig(String udn) {
+    public final void updateUdnInConfig(String udn) {
         Configuration config = editConfiguration();
         config.put("udn", udn);
         updateConfiguration(config);

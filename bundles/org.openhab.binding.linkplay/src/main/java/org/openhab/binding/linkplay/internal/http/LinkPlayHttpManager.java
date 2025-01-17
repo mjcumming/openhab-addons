@@ -81,10 +81,14 @@ public class LinkPlayHttpManager {
             logger.debug("[{}] Polling is disabled (interval=0).", deviceName);
             return;
         }
-        if (pollingJob != null && !pollingJob.isCancelled()) {
+
+        // Add null-safe check for existing pollingJob
+        final @Nullable ScheduledFuture<?> currentPollingJob = pollingJob;
+        if (currentPollingJob != null && !currentPollingJob.isCancelled()) {
             logger.debug("[{}] Polling is already running; skipping start.", deviceName);
             return;
         }
+
         pollingJob = ThreadPoolManager.getScheduledPool(LinkPlayBindingConstants.BINDING_ID + "-http")
                 .scheduleWithFixedDelay(this::poll, 0, pollingIntervalSeconds, TimeUnit.SECONDS);
         logger.debug("[{}] Started HTTP polling every {}s", deviceName, pollingIntervalSeconds);
@@ -94,8 +98,9 @@ public class LinkPlayHttpManager {
      * Stops periodic polling.
      */
     public void stopPolling() {
-        if (pollingJob != null) {
-            pollingJob.cancel(true);
+        final @Nullable ScheduledFuture<?> currentPollingJob = pollingJob;
+        if (currentPollingJob != null) {
+            currentPollingJob.cancel(true);
             pollingJob = null;
             logger.debug("[{}] Stopped HTTP polling", deviceName);
         }
@@ -136,7 +141,8 @@ public class LinkPlayHttpManager {
                 deviceManager.handleHttpPollFailure(e);
             }
         } catch (Exception e) {
-            logger.warn("[{}] HTTP poll failed => {}", deviceName, e.getMessage());
+            logger.warn("[{}] HTTP poll failed => {}", deviceName,
+                    e.getMessage() != null ? e.getMessage() : e.toString());
             deviceManager.handleHttpPollFailure(e);
         }
     }
@@ -188,8 +194,8 @@ public class LinkPlayHttpManager {
             CompletableFuture<String> future = httpClient.getStatusEx(ip);
             String response = future.get(TIMEOUT_MS, TimeUnit.MILLISECONDS);
 
-            if (response == null || response.isEmpty()) {
-                logger.warn("[{}] No or empty response => cannot update multiroom channels.", deviceName);
+            if (response.isEmpty()) {
+                logger.warn("[{}] Empty response => cannot update multiroom channels.", deviceName);
                 return;
             }
 
