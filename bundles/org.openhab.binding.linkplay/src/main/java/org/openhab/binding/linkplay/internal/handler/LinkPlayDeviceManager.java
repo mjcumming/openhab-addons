@@ -23,10 +23,13 @@ import org.openhab.binding.linkplay.internal.http.LinkPlayHttpManager;
 import org.openhab.binding.linkplay.internal.upnp.LinkPlayUpnpManager;
 import org.openhab.binding.linkplay.internal.utils.HexConverter;
 import org.openhab.core.io.transport.upnp.UpnpIOService;
+import org.openhab.core.library.types.DecimalType;
 import org.openhab.core.library.types.OnOffType;
 import org.openhab.core.library.types.PercentType;
 import org.openhab.core.library.types.PlayPauseType;
+import org.openhab.core.library.types.QuantityType;
 import org.openhab.core.library.types.StringType;
+import org.openhab.core.library.unit.Units;
 import org.openhab.core.thing.ThingStatus;
 import org.openhab.core.thing.ThingStatusDetail;
 import org.openhab.core.types.Command;
@@ -168,6 +171,55 @@ public class LinkPlayDeviceManager {
         }
 
         // LinkPlay's getPlayerStatus does not provide album art => no code needed here to set albumArt
+
+        // Add duration and position handling
+        if (status.has("totlen")) {
+            int totalMillis = getAsInt(status, "totlen", 0);
+            int totalSeconds = totalMillis / 1000;
+            updateState(LinkPlayBindingConstants.CHANNEL_DURATION, new QuantityType<>(totalSeconds, Units.SECOND));
+        }
+
+        if (status.has("curpos")) {
+            int currentMillis = getAsInt(status, "curpos", 0);
+            int currentSeconds = currentMillis / 1000;
+            updateState(LinkPlayBindingConstants.CHANNEL_POSITION, new QuantityType<>(currentSeconds, Units.SECOND));
+        }
+
+        // Source channel (playback group)
+        if (status.has("mode")) {
+            String mode = getAsString(status, "mode");
+            String source = switch (mode.toLowerCase()) {
+                case "airplay" -> "airplay";
+                case "spotify" -> "spotify";
+                case "dlna", "upnp" -> "dlna";
+                case "line-in", "linein" -> "line-in";
+                case "bluetooth" -> "bluetooth";
+                default -> mode.toLowerCase();
+            };
+            updateState(LinkPlayBindingConstants.CHANNEL_SOURCE, new StringType(source));
+        }
+
+        // System info channels
+        if (status.has("firmware")) {
+            String firmware = getAsString(status, "firmware");
+            updateState(LinkPlayBindingConstants.CHANNEL_FIRMWARE, new StringType(firmware));
+        }
+
+        // Network info channels
+        if (status.has("ip")) {
+            String ip = getAsString(status, "ip");
+            updateState(LinkPlayBindingConstants.CHANNEL_IP_ADDRESS, new StringType(ip));
+        }
+
+        if (status.has("mac")) {
+            String mac = getAsString(status, "mac");
+            updateState(LinkPlayBindingConstants.CHANNEL_MAC_ADDRESS, new StringType(mac));
+        }
+
+        if (status.has("wifi_signal")) {
+            int signal = getAsInt(status, "wifi_signal", 0);
+            updateState(LinkPlayBindingConstants.CHANNEL_WIFI_SIGNAL, new DecimalType(signal));
+        }
 
         // If we were offline, mark us back online
         if (thingHandler.getThing().getStatus() != ThingStatus.ONLINE) {

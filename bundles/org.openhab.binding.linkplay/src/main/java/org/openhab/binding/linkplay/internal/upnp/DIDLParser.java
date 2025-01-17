@@ -341,19 +341,15 @@ public class DIDLParser {
     private static class LastChangeHandler extends DefaultHandler {
 
         private final Map<String, String> values = new HashMap<>();
-        private String currentElement = "";
+        // private String currentElement = ""; // Removed unused field
 
-        /**
-         * We do not need 'characters()' if most events are in attributes "val" of each element
-         * within <InstanceID>.
-         */
         @Override
         public void startElement(@Nullable String uri, @Nullable String localName, @Nullable String qName,
                 @Nullable Attributes attributes) {
             if (qName == null) {
                 return;
             }
-            currentElement = qName;
+            // currentElement = qName; // Removed unused assignment
 
             // Typically we look for <InstanceID ...> child elements like <TransportState val="PLAYING"/>
             if (attributes != null && attributes.getValue("val") != null) {
@@ -367,7 +363,7 @@ public class DIDLParser {
 
         @Override
         public void endElement(@Nullable String uri, @Nullable String localName, @Nullable String qName) {
-            currentElement = "";
+            // currentElement = ""; // Removed unused assignment
         }
 
         public Map<String, String> getValues() {

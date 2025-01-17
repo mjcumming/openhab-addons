@@ -193,7 +193,7 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
             String response = httpClient.getStatusEx(ipAddress).get();
             logger.info("LinkPlay device found at {} => getStatusEx response: '{}'", ipAddress, response);
 
-            if (response != null && response.contains("uuid")) {
+            if (response.contains("uuid")) {
                 logger.debug("LinkPlay device confirmed at {} => 'uuid' found in getStatusEx", ipAddress);
                 return true;
             }
