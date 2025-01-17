@@ -54,6 +54,8 @@ public class LinkPlayDeviceManager {
     private final LinkPlayThingHandler thingHandler;
     private final LinkPlayHttpManager httpManager;
     private final LinkPlayUpnpManager upnpManager;
+    private final @Nullable LinkPlayUartManager uartManager; 
+
     private final LinkPlayConfiguration config;
 
     private final String deviceId;
@@ -72,6 +74,10 @@ public class LinkPlayDeviceManager {
         this.config = config;
         this.deviceId = thingHandler.getThing().getUID().getId();
         this.deviceUDN = config.getUdn();
+
+
+        private final @Nullable LinkPlayUartManager uartManager; // or optional
+
 
         // Create the HttpManager with full functionality (including sendCommandWithRetry)
         this.httpManager = new LinkPlayHttpManager(httpClient, this, config, deviceId);
