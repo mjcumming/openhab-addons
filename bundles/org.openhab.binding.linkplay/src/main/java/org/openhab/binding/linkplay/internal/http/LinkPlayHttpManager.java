@@ -56,6 +56,9 @@ public class LinkPlayHttpManager {
 
     private final LinkPlayConfiguration config;
 
+    private @Nullable String lastArtist;
+    private @Nullable String lastTitle;
+
     public LinkPlayHttpManager(LinkPlayHttpClient client, LinkPlayDeviceManager deviceManager,
             LinkPlayConfiguration config, String deviceName) {
         this.httpClient = client;
@@ -136,6 +139,17 @@ public class LinkPlayHttpManager {
                 JsonObject json = JsonParser.parseString(response).getAsJsonObject();
                 logger.trace("[{}] poll() -> JSON: {}", deviceName, json);
                 deviceManager.updateChannelsFromHttp(json);
+
+                String currentArtist = json.has("artist") ? json.get("artist").getAsString() : null;
+                String currentTitle = json.has("title") ? json.get("title").getAsString() : null;
+
+                if (currentArtist != null && currentTitle != null
+                        && (!currentArtist.equals(lastArtist) || !currentTitle.equals(lastTitle))) {
+                    retrieveMusicMetadataAndCoverArt(currentArtist, currentTitle);
+                    lastArtist = currentArtist;
+                    lastTitle = currentTitle;
+                }
+
             } catch (JsonSyntaxException e) {
                 logger.warn("[{}] Failed to parse device response => {}", deviceName, e.getMessage());
                 deviceManager.handleHttpPollFailure(e);
@@ -376,6 +390,52 @@ public class LinkPlayHttpManager {
             return "0.0.0.0";
         }
         return ip;
+    }
+
+    private void retrieveMusicMetadataAndCoverArt(String artist, String title) {
+        if (artist == null || title == null) {
+            logger.debug("[{}] Artist or title is missing, cannot fetch cover art", deviceName);
+            return;
+        }
+
+        try {
+            // Query MusicBrainz
+            String mbUrl = "https://musicbrainz.org/ws/2/recording?query=title:" + title + "%20AND%20artist:" + artist + "&fmt=json";
+            CompletableFuture<@Nullable String> futureMb = httpClient.rawGetRequest(mbUrl);
+            try {
+                String mbResponse = futureMb.get(TIMEOUT_MS, TimeUnit.MILLISECONDS);
+                if (mbResponse == null) {
+                    logger.debug("[{}] No MusicBrainz response", deviceName);
+                    return;
+                }
+                JsonObject mbJson = JsonParser.parseString(mbResponse).getAsJsonObject();
+                // ... parse for release ID ...
+                // Query CoverArtArchive
+                String caaUrl = "https://coverartarchive.org/release/" + releaseId;
+                CompletableFuture<@Nullable String> futureCaa = httpClient.rawGetRequest(caaUrl);
+                String caaResponse = futureCaa.get(TIMEOUT_MS, TimeUnit.MILLISECONDS);
+                // ... parse for cover art ... 
+            } catch (Exception e) {
+                logger.warn("[{}] Error fetching cover art: {}", deviceName, e.getMessage());
+            }
+
+        } catch (Exception e) {
+            logger.warn("[{}] Error fetching cover art: {}", deviceName, e.getMessage());
+        }
+    }
+
+    /**
+     * Simple helper to make HTTP requests (placeholder).
+     */
+    private @Nullable String makeRequest(String baseUrl, @Nullable String query) {
+        try {
+            String url = baseUrl + (query != null ? "?" + query : "");
+            CompletableFuture<@Nullable String> future = httpClient.sendCommand(url, "");
+            return future.get(TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        } catch (Exception e) {
+            logger.warn("[{}] HTTP request failed => {}", deviceName, e.getMessage());
+            return null;
+        }
     }
 
     public void dispose() {

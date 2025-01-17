@@ -205,4 +205,26 @@ public class LinkPlayHttpClient {
             }
         });
     }
+    
+    /**
+     * Performs a simple GET request without LinkPlay-specific fallback logic.
+     */
+    public CompletableFuture<@Nullable String> rawGetRequest(String url) {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                logger.trace("rawGetRequest -> {}", url);
+                // Use the Jetty HttpClient directly
+                ContentResponse response = httpClient.GET(url);
+                if (response.getStatus() == 200) {
+                    return response.getContentAsString();
+                } else {
+                    logger.warn("rawGetRequest failed with status={}, url={}", response.getStatus(), url);
+                    return null;
+                }
+            } catch (Exception e) {
+                logger.warn("rawGetRequest exception => {}", e.getMessage());
+                return null;
+            }
+        });
+    }
 }
