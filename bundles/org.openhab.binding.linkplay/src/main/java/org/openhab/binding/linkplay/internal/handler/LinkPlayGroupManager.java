@@ -43,10 +43,12 @@ public class LinkPlayGroupManager {
     private String ipAddress = "";
 
     private final LinkPlayHttpManager httpManager;
+    private final LinkPlayThingHandler thingHandler;
     private final String deviceName;
 
-    public LinkPlayGroupManager(LinkPlayHttpManager httpManager, String deviceName) {
+    public LinkPlayGroupManager(LinkPlayHttpManager httpManager, LinkPlayThingHandler thingHandler, String deviceName) {
         this.httpManager = httpManager;
+        this.thingHandler = thingHandler;
         this.deviceName = deviceName;
     }
 
@@ -283,18 +285,42 @@ public class LinkPlayGroupManager {
     // ------------------------------------------------------------------------
     private void handleStatusUpdate(JsonObject rootJson) {
         try {
-            // Build info from the entire root so we can read 'group', 'master_uuid', etc.
+            // Parse multiroom info
             MultiroomInfo info = new MultiroomInfo(rootJson);
-            updateGroupState(info);
+
+            // Update role
+            String role = info.getRole();
+            thingHandler.handleStateUpdate(CHANNEL_ROLE, new StringType(role));
+
+            // Update master IP if we're a slave
+            if ("slave".equals(role) && !info.getMasterIP().isEmpty()) {
+                thingHandler.handleStateUpdate(CHANNEL_MASTER_IP, new StringType(info.getMasterIP()));
+            }
+
+            // Update slave IPs if we're a master
+            if ("master".equals(role)) {
+                thingHandler.handleStateUpdate(CHANNEL_SLAVE_IPS, new StringType(info.getSlaveIPs()));
+            }
+
+            // Update network info
+            if (rootJson.has("ip")) {
+                thingHandler.handleStateUpdate(CHANNEL_IP_ADDRESS, new StringType(getAsString(rootJson, "ip")));
+            }
+            if (rootJson.has("mac")) {
+                thingHandler.handleStateUpdate(CHANNEL_MAC_ADDRESS, new StringType(getAsString(rootJson, "mac")));
+            }
+            if (rootJson.has("wifi_signal")) {
+                int signal = getAsInt(rootJson, "wifi_signal", 0);
+                thingHandler.handleStateUpdate(CHANNEL_WIFI_SIGNAL,
+                        new QuantityType<>(signal, Units.DECIBEL_MILLIWATTS));
+            }
+
+            logger.debug("[{}] Updated multiroom status: role={}, masterIP={}, slaves={}", deviceName, role,
+                    info.getMasterIP(), info.getSlaveIPs());
+
         } catch (Exception e) {
             handleGroupError("parsing status update", e);
         }
-    }
-
-    private void updateGroupState(MultiroomInfo info) {
-        logger.info("[{}] Group state updated => role={}, masterIP={}, slaves={}", deviceName, info.getRole(),
-                info.getMasterIP(), info.getSlaveIPs());
-        // In the future, you can do more here, e.g., update channels
     }
 
     private void handleGroupError(String operation, Throwable error) {

@@ -36,9 +36,13 @@ public class LinkPlayBindingConstants {
     // Thing Configuration parameters
     public static final String CONFIG_IP_ADDRESS = "ipAddress";
     public static final String CONFIG_UDN = "udn";
-    public static final String CONFIG_POLLING_INTERVAL = "pollingInterval";
+    public static final String CONFIG_PLAYER_STATUS_POLLING_INTERVAL = "playerStatusPollingInterval";
+    public static final String CONFIG_DEVICE_STATUS_POLLING_INTERVAL = "deviceStatusPollingInterval";
     public static final String CONFIG_DEVICE_NAME = "deviceName";
-    public static final int DEFAULT_POLLING_INTERVAL = 30; // seconds
+
+    // Default polling intervals (in seconds)
+    public static final int DEFAULT_PLAYER_STATUS_POLLING_INTERVAL = 5;
+    public static final int DEFAULT_DEVICE_STATUS_POLLING_INTERVAL = 10;
 
     // Thing Properties
     public static final String PROPERTY_UDN = "UDN";
@@ -59,7 +63,7 @@ public class LinkPlayBindingConstants {
     public static final String CHANNEL_TITLE = "title"; // Track title
     public static final String CHANNEL_ARTIST = "artist"; // Track artist
     public static final String CHANNEL_ALBUM = "album"; // Track album
-    public static final String CHANNEL_ALBUM_ART = "albumArt"; // URL to album art from UPnP
+    public static final String CHANNEL_PLAYBACK_ALBUMART = "albumArt"; // URL to album art from UPnP
     public static final String CHANNEL_DURATION = "duration"; // Track duration (Number:Time)
     public static final String CHANNEL_POSITION = "position"; // Current track position (Number:Time)
     public static final String CHANNEL_VOLUME = "volume"; // Playback volume

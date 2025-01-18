@@ -18,7 +18,9 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.TimeUnit;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
@@ -83,27 +85,47 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
      */
     @Override
     public @Nullable ThingUID getThingUID(RemoteDevice device) {
-        String manufacturer = device.getDetails().getManufacturerDetails().getManufacturer();
-        String deviceType = device.getType().getType();
-        String modelName = device.getDetails().getModelDetails().getModelName();
-        String modelDesc = device.getDetails().getModelDetails().getModelDescription();
-        String deviceUDN = device.getIdentity().getUdn().getIdentifierString();
+        try {
+            // First check if this looks like a LinkPlay device based on UPnP services
+            if (!isLinkPlayDevice(device)) {
+                logger.debug("Device {} does not have required UPnP services", device.getDetails().getFriendlyName());
+                return null;
+            }
 
-        logger.trace("UPnP device discovered => manufacturer={}, type={}, model={}, desc={}, UDN={}", manufacturer,
-                deviceType, modelName, modelDesc, deviceUDN);
+            // Use the correct UPnP device details class
+            org.jupnp.model.meta.DeviceDetails details = device.getDetails();
+            String ip = details.getBaseURL().getHost();
+            String modelName = details.getModelDetails().getModelName();
+            String friendlyName = details.getFriendlyName();
 
-        // If we cannot confirm it's a LinkPlay or MediaRenderer device, return null
-        if (!isLinkPlayDevice(device)) {
+            // Add more detailed logging about the device we're checking
+            logger.warn("Checking potential LinkPlay device: IP={}, Model={}, Name={}", ip, modelName, friendlyName);
+
+            // Try to validate via HTTP with increased timeout
+            try {
+                CompletableFuture<String> future = httpClient.getStatusEx(ip);
+                String response = future.get(5000, TimeUnit.MILLISECONDS);
+
+                if (response != null && !response.isEmpty()) {
+                    if (response.contains("uuid")) {
+                        // Successfully validated as LinkPlay
+                        logger.warn("Confirmed LinkPlay device at {}: {}", ip, response);
+                        return new ThingUID(THING_TYPE_DEVICE, details.getSerialNumber());
+                    } else {
+                        logger.warn("Device at {} responded but no UUID found: {}", ip, response);
+                    }
+                } else {
+                    logger.warn("Device at {} returned empty response", ip);
+                }
+            } catch (Exception e) {
+                logger.warn("HTTP validation failed for device at {}: {}", ip, e.getMessage());
+            }
+
+            return null;
+        } catch (Exception e) {
+            logger.warn("Discovery error for device {}: {}", device.getDetails().getFriendlyName(), e.getMessage());
             return null;
         }
-
-        // Create a stable ThingUID from the device's UDN
-        String normalizedUDN = deviceUDN.startsWith("uuid:") ? deviceUDN : "uuid:" + deviceUDN;
-        normalizedUDN = normalizedUDN.replaceAll("[^a-zA-Z0-9_]", ""); // clean out special chars
-
-        logger.debug("Found possible LinkPlay device => Mfr={}, Model={}, UDN={}", manufacturer, modelName,
-                normalizedUDN);
-        return new ThingUID(THING_TYPE_DEVICE, normalizedUDN);
     }
 
     /**

@@ -12,6 +12,8 @@
  */
 package org.openhab.binding.linkplay.internal.config;
 
+import java.math.BigDecimal;
+
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.openhab.core.config.core.Configuration;
 
@@ -25,12 +27,14 @@ import org.openhab.core.config.core.Configuration;
 public class LinkPlayConfiguration {
 
     // We keep a default, but no min or max
-    private static final int DEFAULT_POLLING_INTERVAL = 10;
+    private static final int DEFAULT_PLAYER_STATUS_POLLING_INTERVAL = 5;
+    private static final int DEFAULT_DEVICE_STATUS_POLLING_INTERVAL = 10;
 
     private String ipAddress = "";
     private String deviceName = "";
     private String udn = "";
-    private int pollingInterval = DEFAULT_POLLING_INTERVAL; // 0 => disabled
+    private int playerStatusPollingInterval = DEFAULT_PLAYER_STATUS_POLLING_INTERVAL;
+    private int deviceStatusPollingInterval = DEFAULT_DEVICE_STATUS_POLLING_INTERVAL;
 
     /**
      * Creates a new configuration instance from a {@link Configuration} object.
@@ -38,23 +42,27 @@ public class LinkPlayConfiguration {
      * @param configuration The configuration object
      * @return A new configuration instance
      */
-    public static LinkPlayConfiguration fromConfiguration(Configuration configuration) {
-        LinkPlayConfiguration config = new LinkPlayConfiguration();
+    public static LinkPlayConfiguration fromConfiguration(Configuration config) {
+        LinkPlayConfiguration linkplayConfig = new LinkPlayConfiguration();
 
-        // ipAddress is required
-        config.ipAddress = getString(configuration, "ipAddress", "");
+        // Get IP address as string
+        linkplayConfig.ipAddress = (String) config.get("ipAddress");
 
-        // Optional parameters with defaults
-        config.deviceName = getString(configuration, "deviceName", "");
-        config.udn = getString(configuration, "udn", "");
-
-        // pollingInterval can be 0 or more (no upper limit)
-        config.pollingInterval = getInteger(configuration, "pollingInterval", DEFAULT_POLLING_INTERVAL);
-        if (config.pollingInterval < 0) {
-            config.pollingInterval = 0; // clamp negative to 0
+        // Handle numeric values safely by converting from BigDecimal
+        Object playerPollObj = config.get("playerStatusPollingInterval");
+        if (playerPollObj instanceof BigDecimal) {
+            linkplayConfig.playerStatusPollingInterval = ((BigDecimal) playerPollObj).intValue();
         }
 
-        return config;
+        Object devicePollObj = config.get("deviceStatusPollingInterval");
+        if (devicePollObj instanceof BigDecimal) {
+            linkplayConfig.deviceStatusPollingInterval = ((BigDecimal) devicePollObj).intValue();
+        }
+
+        // Get UDN as string
+        linkplayConfig.udn = (String) config.get("udn");
+
+        return linkplayConfig;
     }
 
     /**
@@ -107,16 +115,28 @@ public class LinkPlayConfiguration {
     }
 
     /**
-     * @return The user-specified polling interval in seconds (0 = disabled).
+     * Gets the player status polling interval in seconds
+     * 
+     * @return polling interval, or 0 if polling is disabled
      */
-    public int getPollingInterval() {
-        return pollingInterval;
+    public int getPlayerStatusPollingInterval() {
+        return playerStatusPollingInterval;
+    }
+
+    /**
+     * Gets the device status polling interval in seconds
+     * 
+     * @return polling interval, or 0 if polling is disabled
+     */
+    public int getDeviceStatusPollingInterval() {
+        return deviceStatusPollingInterval;
     }
 
     @Override
     public String toString() {
-        return String.format("LinkPlayConfiguration [ipAddress=%s, deviceName=%s, udn=%s, pollingInterval=%d]",
-                ipAddress, deviceName, udn, pollingInterval);
+        return String.format(
+                "LinkPlayConfiguration [ipAddress=%s, deviceName=%s, udn=%s, playerStatusPollingInterval=%d, deviceStatusPollingInterval=%d]",
+                ipAddress, deviceName, udn, playerStatusPollingInterval, deviceStatusPollingInterval);
     }
 
     // ---- Helper methods ----

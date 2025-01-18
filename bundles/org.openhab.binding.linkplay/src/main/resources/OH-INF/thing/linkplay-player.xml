@@ -36,9 +36,17 @@
 			</parameter>
 
 			<!-- Polling Interval => min=0 means '0' disables polling -->
-			<parameter name="pollingInterval" type="integer" required="false" min="0" unit="s">
-				<label>Polling Interval</label>
-				<description>Interval (in seconds) between device status updates. Use 0 to disable polling.</description>
+			<parameter name="playerStatusPollingInterval" type="integer" required="false" min="0" unit="s">
+				<label>Player Status Polling Interval</label>
+				<description>Interval (in seconds) between player status updates (volume, playback, track). Use 0 to disable
+					polling.</description>
+				<default>5</default>
+				<advanced>true</advanced>
+			</parameter>
+
+			<parameter name="deviceStatusPollingInterval" type="integer" required="false" min="0" unit="s">
+				<label>Device Status Polling Interval</label>
+				<description>Interval (in seconds) between device status updates (multiroom, network). Use 0 to disable polling.</description>
 				<default>10</default>
 				<advanced>true</advanced>
 			</parameter>
@@ -71,7 +79,7 @@
 		<description>Device system information</description>
 		<channels>
 			<channel id="deviceName" typeId="deviceName"/>
-			<channel id="firmware" typeId="firmware"/>
+			<channel id="firmware" typeId="firmwareVersion"/>
 		</channels>
 	</channel-group-type>
 
@@ -153,11 +161,11 @@
 		<state readOnly="true"/>
 	</channel-type>
 
-	<!-- firmware => readOnly String -->
-	<channel-type id="firmware">
+	<!-- firmwareVersion => readOnly String -->
+	<channel-type id="firmwareVersion">
 		<item-type>String</item-type>
 		<label>Firmware Version</label>
-		<description>Current firmware version.</description>
+		<description>Device firmware version</description>
 		<state readOnly="true"/>
 	</channel-type>
 

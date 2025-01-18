@@ -44,10 +44,12 @@ public class LinkPlayHttpManager {
 
     private final LinkPlayHttpClient httpClient;
     private final LinkPlayDeviceManager deviceManager;
-    private final int pollingIntervalSeconds;
+    private final int playerStatusPollingInterval;
+    private final int deviceStatusPollingInterval;
     private final String deviceName;
 
-    private @Nullable ScheduledFuture<?> pollingJob;
+    private @Nullable ScheduledFuture<?> playerStatusPollingJob;
+    private @Nullable ScheduledFuture<?> deviceStatusPollingJob;
     private static final int TIMEOUT_MS = 10000; // 10-second timeout
 
     // Keep original constants for max retries, delay, etc.
@@ -66,161 +68,134 @@ public class LinkPlayHttpManager {
         this.config = config;
         this.deviceName = deviceName;
 
-        // Use config value directly - 0 means no polling, any positive number is the interval
-        this.pollingIntervalSeconds = config.getPollingInterval();
+        // Get intervals from config
+        this.playerStatusPollingInterval = config.getPlayerStatusPollingInterval();
+        this.deviceStatusPollingInterval = config.getDeviceStatusPollingInterval();
 
-        logger.trace("[{}] LinkPlayHttpManager created => pollInterval={}s", deviceName, this.pollingIntervalSeconds);
+        logger.trace("[{}] LinkPlayHttpManager created => playerPoll={}s, devicePoll={}s", deviceName,
+                this.playerStatusPollingInterval, this.deviceStatusPollingInterval);
+
+        // Start polling automatically
+        startPlayerStatusPolling();
+        startDeviceStatusPolling();
     }
 
     // ------------------------------------------------------------------------
-    // 1) Periodic Polling
-    // --
+    // Polling Control Methods
+    // ------------------------------------------------------------------------
+
     /**
-     * Starts periodic polling using the configured interval.
+     * Starts player status polling using the configured interval.
      */
-    public void startPolling() {
-        // If user sets poll=0, do not schedule
-        if (pollingIntervalSeconds <= 0) {
-            logger.debug("[{}] Polling is disabled (interval=0).", deviceName);
+    public void startPlayerStatusPolling() {
+        if (playerStatusPollingInterval <= 0) {
+            logger.debug("[{}] Player status polling is disabled (interval=0).", deviceName);
             return;
         }
 
-        // Add null-safe check for existing pollingJob
-        final @Nullable ScheduledFuture<?> currentPollingJob = pollingJob;
-        if (currentPollingJob != null && !currentPollingJob.isCancelled()) {
-            logger.debug("[{}] Polling is already running; skipping start.", deviceName);
+        final @Nullable ScheduledFuture<?> currentJob = playerStatusPollingJob;
+        if (currentJob != null && !currentJob.isCancelled()) {
+            logger.debug("[{}] Player status polling already running.", deviceName);
             return;
         }
 
-        pollingJob = ThreadPoolManager.getScheduledPool(LinkPlayBindingConstants.BINDING_ID + "-http")
-                .scheduleWithFixedDelay(this::poll, 0, pollingIntervalSeconds, TimeUnit.SECONDS);
-        logger.debug("[{}] Started HTTP polling every {}s", deviceName, pollingIntervalSeconds);
+        playerStatusPollingJob = ThreadPoolManager.getScheduledPool(LinkPlayBindingConstants.BINDING_ID + "-http")
+                .scheduleWithFixedDelay(this::pollPlayerStatus, 0, playerStatusPollingInterval, TimeUnit.SECONDS);
+        logger.debug("[{}] Started player status polling every {}s", deviceName, playerStatusPollingInterval);
     }
 
     /**
-     * Stops periodic polling.
+     * Starts device status polling using the configured interval.
+     */
+    public void startDeviceStatusPolling() {
+        if (deviceStatusPollingInterval <= 0) {
+            logger.debug("[{}] Device status polling is disabled (interval=0).", deviceName);
+            return;
+        }
+
+        final @Nullable ScheduledFuture<?> currentJob = deviceStatusPollingJob;
+        if (currentJob != null && !currentJob.isCancelled()) {
+            logger.debug("[{}] Device status polling already running.", deviceName);
+            return;
+        }
+
+        deviceStatusPollingJob = ThreadPoolManager.getScheduledPool(LinkPlayBindingConstants.BINDING_ID + "-http")
+                .scheduleWithFixedDelay(this::pollDeviceStatus, 0, deviceStatusPollingInterval, TimeUnit.SECONDS);
+        logger.debug("[{}] Started device status polling every {}s", deviceName, deviceStatusPollingInterval);
+    }
+
+    /**
+     * Stops all polling activities.
      */
     public void stopPolling() {
-        final @Nullable ScheduledFuture<?> currentPollingJob = pollingJob;
-        if (currentPollingJob != null) {
-            currentPollingJob.cancel(true);
-            pollingJob = null;
-            logger.debug("[{}] Stopped HTTP polling", deviceName);
+        final @Nullable ScheduledFuture<?> playerJob = playerStatusPollingJob;
+        if (playerJob != null) {
+            playerJob.cancel(true);
+            playerStatusPollingJob = null;
+            logger.debug("[{}] Stopped player status polling", deviceName);
+        }
+
+        final @Nullable ScheduledFuture<?> deviceJob = deviceStatusPollingJob;
+        if (deviceJob != null) {
+            deviceJob.cancel(true);
+            deviceStatusPollingJob = null;
+            logger.debug("[{}] Stopped device status polling", deviceName);
         }
     }
 
+    // ------------------------------------------------------------------------
+    // Polling Implementation Methods
+    // ------------------------------------------------------------------------
+
     /**
-     * Periodic poll method: retrieves player status, parses JSON, and notifies deviceManager.
+     * Polls player status (playback, volume, etc.)
      */
-    private void poll() {
+    private void pollPlayerStatus() {
         String ip = getDeviceIp();
-        logger.trace("[{}] Polling device at IP={}", deviceName, ip);
+        logger.trace("[{}] Polling player status at IP={}", deviceName, ip);
 
         try {
-            CompletableFuture<@Nullable String> future = httpClient.getPlayerStatus(ip)
-                    .handle((@Nullable String result, @Nullable Throwable ex) -> {
-                        if (ex != null) {
-                            logger.trace("[{}] Error polling device at {} => {}", deviceName, ip, ex.getMessage());
-                            return null;
-                        }
-                        return result;
-                    });
-
-            @Nullable
+            CompletableFuture<String> future = httpClient.getPlayerStatus(ip);
             String response = future.get(TIMEOUT_MS, TimeUnit.MILLISECONDS);
-
-            if (response == null || response.isEmpty()) {
-                logger.warn("[{}] Null or empty response from device IP={}", deviceName, ip);
-                deviceManager.handleHttpPollFailure(new LinkPlayCommunicationException("No response from device"));
-                return;
-            }
+            logger.trace("[{}] pollPlayerStatus() -> JSON: {}", deviceName, response);
 
             try {
                 JsonObject json = JsonParser.parseString(response).getAsJsonObject();
-                logger.trace("[{}] poll() -> JSON: {}", deviceName, json);
                 deviceManager.updateChannelsFromHttp(json);
-
-                String currentArtist = json.has("artist") ? json.get("artist").getAsString() : null;
-                String currentTitle = json.has("title") ? json.get("title").getAsString() : null;
-
-                if (currentArtist != null && currentTitle != null
-                        && (!currentArtist.equals(lastArtist) || !currentTitle.equals(lastTitle))) {
-                    retrieveMusicMetadataAndCoverArt(currentArtist, currentTitle);
-                    lastArtist = currentArtist;
-                    lastTitle = currentTitle;
-                }
-
+                deviceManager.handleCommunicationResult(true);
             } catch (JsonSyntaxException e) {
-                logger.warn("[{}] Failed to parse device response => {}", deviceName, e.getMessage());
-                deviceManager.handleHttpPollFailure(e);
+                logger.warn("[{}] Failed to parse player status JSON: {}", deviceName, e.getMessage());
+                deviceManager.handleCommunicationResult(false);
             }
         } catch (Exception e) {
-            logger.warn("[{}] HTTP poll failed => {}", deviceName,
-                    e.getMessage() != null ? e.getMessage() : e.toString());
-            deviceManager.handleHttpPollFailure(e);
+            logger.warn("[{}] Player status poll failed: {}", deviceName, e.getMessage());
+            deviceManager.handleCommunicationResult(false);
         }
     }
 
     /**
-     * Called by DeviceManager to do an immediate "getPlayerStatus" and update channels.
-     * E.g., for REFRESH commands on volume/mute, etc.
+     * Polls device status (multiroom configuration, etc.)
      */
-    public void refreshPlayerStatus() {
-        logger.trace("[{}] refreshPlayerStatus() => doing one-off getPlayerStatus", deviceName);
+    private void pollDeviceStatus() {
         String ip = getDeviceIp();
-
-        try {
-            CompletableFuture<String> future = httpClient.getPlayerStatus(ip)
-                    .handle((@Nullable String result, @Nullable Throwable ex) -> {
-                        if (ex != null || result == null) {
-                            logger.trace("[{}] Error or null result from getPlayerStatus: {}", deviceName,
-                                    ex != null ? ex.getMessage() : "null result");
-                            return "";
-                        }
-                        return result;
-                    });
-            String response = future.get(TIMEOUT_MS, TimeUnit.MILLISECONDS);
-
-            if (response.isEmpty()) {
-                logger.warn("[{}] No or empty response => cannot update channels.", deviceName);
-                return;
-            }
-            try {
-                JsonObject json = JsonParser.parseString(response).getAsJsonObject();
-                deviceManager.updateChannelsFromHttp(json);
-            } catch (JsonSyntaxException e) {
-                logger.warn("[{}] refreshPlayerStatus() => parse error: {}", deviceName, e.getMessage());
-            }
-        } catch (Exception e) {
-            logger.warn("[{}] refreshPlayerStatus() => exception: {}", deviceName, e.getMessage());
-        }
-    }
-
-    /**
-     * Called by DeviceManager to do an immediate "getStatusEx" and update channels
-     * that relate to multiroom (role, masterIP, slaveIPs, etc.).
-     */
-    public void refreshMultiroomStatus() {
-        logger.trace("[{}] refreshMultiroomStatus() => doing one-off getStatusEx", deviceName);
-        String ip = getDeviceIp();
+        logger.trace("[{}] Polling device status at IP={}", deviceName, ip);
 
         try {
             CompletableFuture<String> future = httpClient.getStatusEx(ip);
             String response = future.get(TIMEOUT_MS, TimeUnit.MILLISECONDS);
-
-            if (response.isEmpty()) {
-                logger.warn("[{}] Empty response => cannot update multiroom channels.", deviceName);
-                return;
-            }
+            logger.trace("[{}] pollDeviceStatus() -> JSON: {}", deviceName, response);
 
             try {
                 JsonObject json = JsonParser.parseString(response).getAsJsonObject();
-                deviceManager.updateChannelsFromHttp(json);
+                deviceManager.updateMultiroomChannelsFromHttp(json);
+                deviceManager.handleCommunicationResult(true);
             } catch (JsonSyntaxException e) {
-                logger.warn("[{}] refreshMultiroomStatus() => parse error: {}", deviceName, e.getMessage());
+                logger.warn("[{}] Failed to parse device status JSON: {}", deviceName, e.getMessage());
+                deviceManager.handleCommunicationResult(false);
             }
         } catch (Exception e) {
-            logger.warn("[{}] refreshMultiroomStatus() => exception: {}", deviceName, e.getMessage());
+            logger.warn("[{}] Device status poll failed: {}", deviceName, e.getMessage());
+            deviceManager.handleCommunicationResult(false);
         }
     }
 
@@ -249,48 +224,8 @@ public class LinkPlayHttpManager {
             logger.trace("[{}] Command response => {}", deviceName, response);
         } catch (Exception ex) {
             logger.warn("[{}] Exception sending command='{}' => {}", deviceName, cmd, ex.getMessage());
-            deviceManager.handleHttpPollFailure(ex);
+            deviceManager.handleCommunicationResult(false);
         }
-    }
-
-    public @Nullable JsonObject sendCommandWithRetry(String command, @Nullable String expectedResponse) {
-        int retries = 0;
-        Exception lastException = null;
-
-        while (retries < MAX_RETRIES) {
-            try {
-                JsonObject response = sendCommand(command);
-                if (response != null) {
-                    // If we do not expect a specific response or if it matches
-                    if (expectedResponse == null || (response.has("status")
-                            && expectedResponse.equals(response.get("status").getAsString()))) {
-                        return response;
-                    }
-                }
-                // Wrong or null response => try again
-                retries++;
-                if (retries < MAX_RETRIES) {
-                    Thread.sleep(RETRY_DELAY_MS);
-                }
-            } catch (Exception e) {
-                lastException = e;
-                retries++;
-                if (retries < MAX_RETRIES) {
-                    try {
-                        Thread.sleep(RETRY_DELAY_MS);
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        return null;
-                    }
-                }
-            }
-        }
-
-        if (lastException != null) {
-            logger.warn("[{}] Command '{}' failed after {} retries => {}", deviceName, command, MAX_RETRIES,
-                    lastException.getMessage());
-        }
-        return null; // No success
     }
 
     public @Nullable JsonObject sendCommand(String command) {
@@ -315,7 +250,7 @@ public class LinkPlayHttpManager {
                 return JsonParser.parseString(response).getAsJsonObject();
             } catch (JsonSyntaxException e) {
                 logger.warn("[{}] Failed to parse response for command='{}': {}", deviceName, command, e.getMessage());
-                deviceManager.handleHttpPollFailure(e);
+                deviceManager.handleCommunicationResult(false);
                 return null;
             }
 
@@ -392,52 +327,9 @@ public class LinkPlayHttpManager {
         return ip;
     }
 
-    private void retrieveMusicMetadataAndCoverArt(String artist, String title) {
-        if (artist == null || title == null) {
-            logger.debug("[{}] Artist or title is missing, cannot fetch cover art", deviceName);
-            return;
-        }
-
-        try {
-            // Query MusicBrainz
-            String mbUrl = "https://musicbrainz.org/ws/2/recording?query=title:" + title + "%20AND%20artist:" + artist + "&fmt=json";
-            CompletableFuture<@Nullable String> futureMb = httpClient.rawGetRequest(mbUrl);
-            try {
-                String mbResponse = futureMb.get(TIMEOUT_MS, TimeUnit.MILLISECONDS);
-                if (mbResponse == null) {
-                    logger.debug("[{}] No MusicBrainz response", deviceName);
-                    return;
-                }
-                JsonObject mbJson = JsonParser.parseString(mbResponse).getAsJsonObject();
-                // ... parse for release ID ...
-                // Query CoverArtArchive
-                String caaUrl = "https://coverartarchive.org/release/" + releaseId;
-                CompletableFuture<@Nullable String> futureCaa = httpClient.rawGetRequest(caaUrl);
-                String caaResponse = futureCaa.get(TIMEOUT_MS, TimeUnit.MILLISECONDS);
-                // ... parse for cover art ... 
-            } catch (Exception e) {
-                logger.warn("[{}] Error fetching cover art: {}", deviceName, e.getMessage());
-            }
-
-        } catch (Exception e) {
-            logger.warn("[{}] Error fetching cover art: {}", deviceName, e.getMessage());
-        }
-    }
-
     /**
-     * Simple helper to make HTTP requests (placeholder).
+     * Clean up resources
      */
-    private @Nullable String makeRequest(String baseUrl, @Nullable String query) {
-        try {
-            String url = baseUrl + (query != null ? "?" + query : "");
-            CompletableFuture<@Nullable String> future = httpClient.sendCommand(url, "");
-            return future.get(TIMEOUT_MS, TimeUnit.MILLISECONDS);
-        } catch (Exception e) {
-            logger.warn("[{}] HTTP request failed => {}", deviceName, e.getMessage());
-            return null;
-        }
-    }
-
     public void dispose() {
         stopPolling();
     }

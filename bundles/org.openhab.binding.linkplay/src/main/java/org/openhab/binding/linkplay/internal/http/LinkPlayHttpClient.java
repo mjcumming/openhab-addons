@@ -23,6 +23,7 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.X509TrustManager;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
 import org.eclipse.jetty.client.HttpClient;
 import org.eclipse.jetty.client.api.ContentResponse;
 import org.openhab.core.io.net.http.HttpClientFactory;
@@ -68,7 +69,7 @@ public class LinkPlayHttpClient {
      */
     @Activate
     public LinkPlayHttpClient(@Reference HttpClientFactory httpClientFactory) {
-        logger.info("Initializing LinkPlay HTTP client (plain + SSL)...");
+        logger.debug("Initializing LinkPlay HTTP client (plain + SSL)...");
 
         // Plain HTTP client from openHAB's shared "commonHttpClient"
         this.httpClient = httpClientFactory.getCommonHttpClient();
@@ -82,9 +83,9 @@ public class LinkPlayHttpClient {
             this.sslHttpClient = LinkPlaySslUtil.createHttpsClient(sslContext);
             this.sslHttpClient.start();
 
-            logger.info("LinkPlay HTTPS client successfully initialized");
+            logger.debug("LinkPlay HTTPS client successfully initialized");
         } catch (Exception e) {
-            logger.error("Failed to create SSL HTTP client => {}", e.getMessage());
+            logger.error("Failed to create SSL HTTP client: {}", e.getMessage(), e);
             throw new IllegalStateException("Failed to create SSL HTTP client", e);
         }
     }
@@ -165,24 +166,26 @@ public class LinkPlayHttpClient {
     // ------------------------------------------------------------------------
     private CompletableFuture<String> sendRequest(String ipAddress, String params) {
         return CompletableFuture.supplyAsync(() -> {
-            // Attempt HTTPS
+            // Attempt HTTPS first
             for (int port : HTTPS_PORTS) {
                 String url = String.format("https://%s:%d/httpapi.asp?%s", ipAddress, port, params);
                 try {
-                    logger.trace("Trying HTTPS request => {}", url);
+                    logger.trace("Attempting HTTPS request => {}", url);
                     ContentResponse response = sslHttpClient.newRequest(url).timeout(TIMEOUT_MS, TimeUnit.MILLISECONDS)
                             .send();
 
                     if (response.getStatus() == 200) {
                         String content = response.getContentAsString();
                         if (content.contains("error") || content.contains("fail")) {
+                            logger.warn("API error response: {}", content);
                             throw new LinkPlayApiException("API error: " + content);
                         }
                         return content;
                     }
-                    logger.trace("HTTPS request => {} returned status code {}", url, response.getStatus());
+                    logger.trace("HTTPS request failed with status code {} for {}", response.getStatus(), url);
                 } catch (Exception e) {
-                    logger.trace("HTTPS request => {} failed: {}", url, e.getMessage());
+                    logger.trace("HTTPS attempt failed on port {}: {}", port, e.getMessage());
+                    // Continue to next port
                 }
             }
 
@@ -195,17 +198,22 @@ public class LinkPlayHttpClient {
                 if (response.getStatus() == 200) {
                     String content = response.getContentAsString();
                     if (content.contains("error") || content.contains("fail")) {
+                        logger.warn("API error response: {}", content);
                         throw new LinkPlayApiException("API error: " + content);
                     }
                     return content;
                 }
-                throw new LinkPlayCommunicationException("HTTP error code: " + response.getStatus());
+                String error = String.format("HTTP error code: %d", response.getStatus());
+                logger.warn(error);
+                throw new LinkPlayCommunicationException(error);
             } catch (Exception e) {
-                throw new CompletionException(new LinkPlayCommunicationException("Request failed", e));
+                String error = String.format("Request failed for %s: %s", url, e.getMessage());
+                logger.warn(error);
+                throw new CompletionException(new LinkPlayCommunicationException(error, e));
             }
         });
     }
-    
+
     /**
      * Performs a simple GET request without LinkPlay-specific fallback logic.
      */

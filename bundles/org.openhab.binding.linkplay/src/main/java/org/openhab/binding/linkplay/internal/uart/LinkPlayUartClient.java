@@ -1,3 +1,15 @@
+/**
+ * Copyright (c) 2010-2024 Contributors to the openHAB project
+ *
+ * See the NOTICE file(s) distributed with this work for additional
+ * information.
+ *
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0
+ *
+ * SPDX-License-Identifier: EPL-2.0
+ */
 package org.openhab.binding.linkplay.internal.uart;
 
 import java.io.IOException;
@@ -5,32 +17,49 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
+import org.openhab.core.common.ThreadPoolManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Low-level “Rakoit UART” TCP client for LinkPlay’s port 8899.
+ * Low-level "Rakoit UART" TCP client for LinkPlay's port 8899.
+ * Handles the socket connection and message formatting for the UART protocol.
+ *
+ * @author Michael Cumming - Initial contribution
  */
+@NonNullByDefault
 public class LinkPlayUartClient implements Runnable {
+
+    private static final String THREAD_POOL_NAME = "linkplay-uart";
 
     private final Logger logger = LoggerFactory.getLogger(LinkPlayUartClient.class);
 
     private final String host;
-    private final int port = 8899; // LinkPlay’s UART port
+    private final int port = 8899; // LinkPlay's UART port
 
+    @Nullable
     private Socket socket;
+    @Nullable
     private InputStream inputStream;
+    @Nullable
     private OutputStream outputStream;
 
-    private Thread readThread;
+    @Nullable
+    private ScheduledFuture<?> readFuture;
     private final AtomicBoolean running = new AtomicBoolean(false);
 
     // A listener/callback interface to notify higher layers about unsolicited messages
-    private final UartResponseListener listener;
+    @NonNullByDefault
+    private final LinkPlayUartResponseListener listener;
 
-    public LinkPlayUartClient(String host, UartResponseListener listener) {
+    public LinkPlayUartClient(String host, LinkPlayUartResponseListener listener) {
         this.host = host;
         this.listener = listener;
     }
@@ -47,10 +76,11 @@ public class LinkPlayUartClient implements Runnable {
         outputStream = socket.getOutputStream();
         running.set(true);
 
-        readThread = new Thread(this, "LinkPlayUartReadLoop-" + host);
-        readThread.setDaemon(true);
-        readThread.start();
-        logger.debug("UART connection opened to {}:{}", host, port);
+        // Use OpenHAB's thread pool instead of creating our own thread
+        ScheduledExecutorService scheduler = ThreadPoolManager.getScheduledPool(THREAD_POOL_NAME);
+        readFuture = scheduler.schedule(this, 0, TimeUnit.MILLISECONDS);
+
+        logger.warn("UART connection opened to {}:{}", host, port);
     }
 
     /**
@@ -58,22 +88,28 @@ public class LinkPlayUartClient implements Runnable {
      */
     @Override
     public void run() {
+        InputStream localInputStream = inputStream;
+        if (localInputStream == null) {
+            logger.warn("UART read loop aborted - input stream is null for {}:{}", host, port);
+            return;
+        }
+
         byte[] buffer = new byte[1024];
         try {
             while (running.get()) {
-                int read = inputStream.read(buffer);
+                int read = localInputStream.read(buffer);
                 if (read < 0) {
                     throw new IOException("LinkPlay UART socket closed");
                 }
-                // Some firmwares push ASCII lines like “AXX+VER:4.2.9326”, or “MCU+PAS+VOL:30&”.
+                // Some firmwares push ASCII lines like "AXX+VER:4.2.9326", or "MCU+PAS+VOL:30&"
                 String response = new String(buffer, 0, read, StandardCharsets.ISO_8859_1);
-                logger.trace("UART raw response: {}", response);
+                logger.warn("UART raw response: {}", response);
 
                 // Pass it to your manager via a listener callback
                 listener.onUartResponse(response);
             }
         } catch (IOException e) {
-            logger.debug("UART read loop ended for {}:{}", host, port);
+            logger.warn("UART read loop ended for {}:{}: {}", host, port, e.getMessage());
         } finally {
             close();
         }
@@ -81,11 +117,12 @@ public class LinkPlayUartClient implements Runnable {
 
     /**
      * Send a command with the LinkPlay Rakoit packet structure:
-     *   18 96 18 20 [len hex] 00 00 00 c1 02 00 00 00 00 00 00 00 00 00 ...
+     * 18 96 18 20 [len hex] 00 00 00 c1 02 00 00 00 00 00 00 00 00 00 ...
      */
     public synchronized void sendCommand(String cmd) throws IOException {
-        if (!running.get() || outputStream == null) {
-            throw new IOException("UART connection not open.");
+        OutputStream localOutputStream = outputStream;
+        if (!running.get() || localOutputStream == null) {
+            throw new IOException("UART connection not open to " + host + ":" + port);
         }
 
         // Convert length to 2-digit hex
@@ -93,7 +130,7 @@ public class LinkPlayUartClient implements Runnable {
         String lengthHex = String.format("%02x", length);
 
         // Build the prefix + length + suffix (16 bytes) + ASCII cmd (hex)
-        // Example: “18 96 18 20 0c 00 00 00 c1 02 ... [cmd chars in hex]”
+        // Example: "18 96 18 20 0c 00 00 00 c1 02 ... [cmd chars in hex]"
         StringBuilder packetHex = new StringBuilder("18 96 18 20 ");
         packetHex.append(lengthHex).append(" ");
         packetHex.append("00 00 00 c1 02 00 00 00 00 00 00 00 00 00 00 ");
@@ -106,10 +143,10 @@ public class LinkPlayUartClient implements Runnable {
         String finalHex = packetHex.toString().trim().replace(" ", "");
 
         byte[] bytes = hexStringToByteArray(finalHex);
-        outputStream.write(bytes);
-        outputStream.flush();
+        localOutputStream.write(bytes);
+        localOutputStream.flush();
 
-        logger.debug("UART sent command='{}' -> hex={}", cmd, finalHex);
+        logger.warn("UART sent command='{}' -> hex={}", cmd, finalHex);
     }
 
     /**
@@ -119,30 +156,53 @@ public class LinkPlayUartClient implements Runnable {
         int len = s.length();
         byte[] data = new byte[len / 2];
         for (int i = 0; i < len; i += 2) {
-            data[i / 2] = (byte) ((Character.digit(s.charAt(i),16) << 4)
-                               + Character.digit(s.charAt(i+1),16));
+            data[i / 2] = (byte) ((Character.digit(s.charAt(i), 16) << 4) + Character.digit(s.charAt(i + 1), 16));
         }
         return data;
     }
 
     public synchronized void close() {
         running.set(false);
-        try {
-            if (socket != null) {
-                socket.close();
-            }
-        } catch (IOException ignored) {
+
+        // Cancel the read future first
+        ScheduledFuture<?> localReadFuture = readFuture;
+        if (localReadFuture != null) {
+            localReadFuture.cancel(true);
+            readFuture = null;
         }
+
+        // Then close the streams and socket
+        Socket localSocket = socket;
+        InputStream localInputStream = inputStream;
+        OutputStream localOutputStream = outputStream;
+
+        if (localInputStream != null) {
+            try {
+                localInputStream.close();
+            } catch (IOException e) {
+                logger.debug("Error closing input stream for {}:{}: {}", host, port, e.getMessage());
+            }
+        }
+
+        if (localOutputStream != null) {
+            try {
+                localOutputStream.close();
+            } catch (IOException e) {
+                logger.debug("Error closing output stream for {}:{}: {}", host, port, e.getMessage());
+            }
+        }
+
+        if (localSocket != null) {
+            try {
+                localSocket.close();
+            } catch (IOException e) {
+                logger.debug("Error closing socket for {}:{}: {}", host, port, e.getMessage());
+            }
+        }
+
         socket = null;
         inputStream = null;
         outputStream = null;
         logger.debug("UART connection closed for {}:{}", host, port);
-    }
-
-    /**
-     * Callback interface for real-time data:
-     */
-    public interface UartResponseListener {
-        void onUartResponse(String rawText);
     }
 }
