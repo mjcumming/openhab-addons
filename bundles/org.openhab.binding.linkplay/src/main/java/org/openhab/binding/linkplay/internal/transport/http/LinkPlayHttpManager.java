@@ -223,27 +223,27 @@ public class LinkPlayHttpManager {
         if (rawJson.has("loop")) {
             int loopMode = getAsInt(rawJson, "loop", 0);
             switch (loopMode) {
-                case 0: // SHUFFLE: disabled REPEAT: enabled - loop
-                    cleanJson.addProperty("shuffle", false);
-                    cleanJson.addProperty("repeat", true);
-                    break;
-                case 1: // SHUFFLE: disabled REPEAT: enabled - loop once
-                    cleanJson.addProperty("shuffle", false);
-                    cleanJson.addProperty("repeat", true);
-                    break;
-                case 2: // SHUFFLE: enabled REPEAT: enabled - loop
-                    cleanJson.addProperty("shuffle", true);
-                    cleanJson.addProperty("repeat", true);
-                    break;
-                case 3: // SHUFFLE: enabled REPEAT: disabled
-                    cleanJson.addProperty("shuffle", true);
-                    cleanJson.addProperty("repeat", false);
-                    break;
-                case 4: // SHUFFLE: disabled REPEAT: disabled
+                case 0: // No repeat, no shuffle
                     cleanJson.addProperty("shuffle", false);
                     cleanJson.addProperty("repeat", false);
                     break;
-                case 5: // SHUFFLE: enabled REPEAT: enabled - loop once
+                case 1: // Repeat one, no shuffle
+                    cleanJson.addProperty("shuffle", false);
+                    cleanJson.addProperty("repeat", true);
+                    break;
+                case 2: // Repeat all, no shuffle
+                    cleanJson.addProperty("shuffle", false);
+                    cleanJson.addProperty("repeat", true);
+                    break;
+                case 3: // Shuffle on, no repeat
+                    cleanJson.addProperty("shuffle", true);
+                    cleanJson.addProperty("repeat", false);
+                    break;
+                case 4: // No repeat, no shuffle
+                    cleanJson.addProperty("shuffle", false);
+                    cleanJson.addProperty("repeat", false);
+                    break;
+                case 5: // Shuffle and repeat
                     cleanJson.addProperty("shuffle", true);
                     cleanJson.addProperty("repeat", true);
                     break;
@@ -422,12 +422,16 @@ public class LinkPlayHttpManager {
 
     private String formatRepeatCommand(Command cmd) {
         boolean isOn = cmd.toString().equalsIgnoreCase("ON");
-        return "setPlayerCmd:loop:" + (isOn ? "2" : "0");
+        // Mode 0: Shuffle disabled, Repeat enabled - loop
+        // Mode 4: Shuffle disabled, Repeat disabled
+        return "setPlayerCmd:loopmode:" + (isOn ? "0" : "4");
     }
 
     private String formatShuffleCommand(Command cmd) {
         boolean isOn = cmd.toString().equalsIgnoreCase("ON");
-        return "setPlayerCmd:random:" + (isOn ? "1" : "0");
+        // Mode 2: Shuffle enabled, Repeat enabled - loop
+        // Mode 4: Shuffle disabled, Repeat disabled
+        return "setPlayerCmd:loopmode:" + (isOn ? "2" : "4");
     }
 
     private String getDeviceIp() {

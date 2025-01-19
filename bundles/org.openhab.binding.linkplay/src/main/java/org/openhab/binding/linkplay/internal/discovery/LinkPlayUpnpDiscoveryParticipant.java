@@ -34,6 +34,7 @@ import org.openhab.binding.linkplay.internal.transport.http.LinkPlayHttpClient;
 import org.openhab.core.config.discovery.DiscoveryResult;
 import org.openhab.core.config.discovery.DiscoveryResultBuilder;
 import org.openhab.core.config.discovery.upnp.UpnpDiscoveryParticipant;
+import org.openhab.core.thing.ThingRegistry;
 import org.openhab.core.thing.ThingTypeUID;
 import org.openhab.core.thing.ThingUID;
 import org.osgi.service.component.ComponentContext;
@@ -67,10 +68,13 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
     private static final ServiceId SERVICE_ID_RENDERING_CONTROL = new UDAServiceId("RenderingControl");
 
     private final LinkPlayHttpClient httpClient;
+    private final ThingRegistry thingRegistry;
 
     @Activate
-    public LinkPlayUpnpDiscoveryParticipant(@Reference LinkPlayHttpClient httpClient) {
+    public LinkPlayUpnpDiscoveryParticipant(@Reference LinkPlayHttpClient httpClient,
+            @Reference ThingRegistry thingRegistry) {
         this.httpClient = httpClient;
+        this.thingRegistry = thingRegistry;
     }
 
     @Override
@@ -88,28 +92,35 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
         try {
             // First check if this looks like a LinkPlay device based on UPnP services
             if (!isLinkPlayDevice(device)) {
-                logger.debug("Device {} does not have required UPnP services", device.getDetails().getFriendlyName());
+                logger.trace("Device {} does not have required UPnP services", device.getDetails().getFriendlyName());
                 return null;
             }
 
-            // Use the correct UPnP device details class
-            org.jupnp.model.meta.DeviceDetails details = device.getDetails();
-            if (details.getBaseURL() == null) {
-                logger.debug("Device {} has no base URL", details.getFriendlyName());
-                return null;
+            // Try multiple methods to get the IP address
+            String ip = null;
+
+            // Method 1: Try descriptor URL first (most reliable)
+            if (device.getIdentity().getDescriptorURL() != null) {
+                ip = device.getIdentity().getDescriptorURL().getHost();
+                logger.trace("Got IP {} from descriptor URL", ip);
             }
 
-            String ip = details.getBaseURL().getHost();
+            // Method 2: Try base URL if descriptor URL failed
+            if ((ip == null || ip.isEmpty()) && device.getDetails().getBaseURL() != null) {
+                ip = device.getDetails().getBaseURL().getHost();
+                logger.trace("Got IP {} from base URL", ip);
+            }
+
             if (ip == null || ip.isEmpty()) {
-                logger.debug("Device {} has invalid IP address", details.getFriendlyName());
+                logger.trace("Could not determine IP address for device {}", device.getDetails().getFriendlyName());
                 return null;
             }
 
-            String modelName = details.getModelDetails().getModelName();
-            String friendlyName = details.getFriendlyName();
+            String modelName = device.getDetails().getModelDetails().getModelName();
+            String friendlyName = device.getDetails().getFriendlyName();
 
             // Add more detailed logging about the device we're checking
-            logger.debug("Checking potential LinkPlay device: IP={}, Model={}, Name={}", ip, modelName, friendlyName);
+            logger.trace("Checking potential LinkPlay device: IP={}, Model={}, Name={}", ip, modelName, friendlyName);
 
             // Try to validate via HTTP with increased timeout
             try {
@@ -119,21 +130,30 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
                 if (!response.isEmpty()) {
                     if (response.contains("uuid")) {
                         // Successfully validated as LinkPlay
-                        logger.warn("Confirmed LinkPlay device at {}: {}", ip, response);
-                        return new ThingUID(THING_TYPE_DEVICE, details.getSerialNumber());
+                        ThingUID thingUID = new ThingUID(THING_TYPE_DEVICE,
+                                device.getIdentity().getUdn().getIdentifierString());
+
+                        // Check if this thing already exists
+                        if (thingRegistry.get(thingUID) != null) {
+                            logger.debug("LinkPlay device {} already exists, skipping discovery", thingUID);
+                            return null;
+                        }
+
+                        logger.debug("Confirmed LinkPlay device at {}: {}", ip, response);
+                        return thingUID;
                     } else {
-                        logger.warn("Device at {} responded but no UUID found: {}", ip, response);
+                        logger.trace("Device at {} responded but no UUID found: {}", ip, response);
                     }
                 } else {
-                    logger.warn("Device at {} returned empty response", ip);
+                    logger.trace("Device at {} returned empty response", ip);
                 }
             } catch (Exception e) {
-                logger.warn("HTTP validation failed for device at {}: {}", ip, e.getMessage());
+                logger.trace("HTTP validation failed for device at {}: {}", ip, e.getMessage());
             }
 
             return null;
         } catch (Exception e) {
-            logger.warn("Discovery error for device {}: {}", device.getDetails().getFriendlyName(), e.getMessage());
+            logger.debug("Discovery error for device {}: {}", device.getDetails().getFriendlyName(), e.getMessage());
             return null;
         }
     }
@@ -149,6 +169,12 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
             return null; // not recognized
         }
 
+        // Check if this thing already exists
+        if (thingRegistry.get(thingUID) != null) {
+            logger.debug("LinkPlay device {} already exists, skipping discovery result", thingUID);
+            return null;
+        }
+
         // final check by calling getStatusEx via LinkPlayHttpClient
         logger.trace("DescriptorURL is '{}'", device.getIdentity().getDescriptorURL());
         String ipAddress = device.getIdentity().getDescriptorURL().getHost();
@@ -157,7 +183,7 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
         }
 
         if (!validateDevice(ipAddress)) {
-            logger.debug("Skipping device at {} => HTTP check did not confirm LinkPlay", ipAddress);
+            logger.trace("Skipping device at {} => HTTP check did not confirm LinkPlay", ipAddress);
             return null;
         }
 
@@ -177,7 +203,7 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
 
         String label = String.format("%s (%s)", friendlyName, ipAddress);
         return DiscoveryResultBuilder.create(thingUID).withLabel(label).withProperties(properties)
-                .withRepresentationProperty(PROPERTY_UDN).withTTL(DISCOVERY_RESULT_TTL_SECONDS).build();
+                .withRepresentationProperty(CONFIG_IP_ADDRESS).withTTL(DISCOVERY_RESULT_TTL_SECONDS).build();
     }
 
     /**
@@ -233,14 +259,14 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
         } catch (CompletionException e) {
             Throwable cause = e.getCause();
             if (cause instanceof LinkPlayApiException) {
-                logger.warn("Device {} => API error: {}", ipAddress, cause.getMessage());
+                logger.trace("Device {} => API error: {}", ipAddress, cause.getMessage());
             } else if (cause instanceof LinkPlayCommunicationException) {
-                logger.warn("Device {} => Communication error: {}", ipAddress, cause.getMessage());
+                logger.trace("Device {} => Communication error: {}", ipAddress, cause.getMessage());
             } else {
-                logger.warn("Device {} => Exception during getStatusEx: {}", ipAddress, e.getMessage());
+                logger.trace("Device {} => Exception during getStatusEx: {}", ipAddress, e.getMessage());
             }
         } catch (Exception e) {
-            logger.warn("Device {} => Unexpected exception: {}", ipAddress, e.getMessage());
+            logger.trace("Device {} => Unexpected exception: {}", ipAddress, e.getMessage());
         }
         logger.trace("validateDevice => returning false for IP={}", ipAddress);
         return false;

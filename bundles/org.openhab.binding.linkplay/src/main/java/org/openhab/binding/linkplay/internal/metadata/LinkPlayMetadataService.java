@@ -28,7 +28,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.google.gson.JsonArray;
-import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
@@ -172,28 +171,8 @@ public class LinkPlayMetadataService {
     }
 
     private @Nullable String retrieveCoverArtUrl(String releaseId) {
-        try {
-            String caaUrl = "https://coverartarchive.org/release/" + releaseId;
-            CompletableFuture<@Nullable String> futureCaa = httpClient.rawGetRequest(caaUrl);
-            String caaResponse = futureCaa.get(TIMEOUT_MS, TimeUnit.MILLISECONDS);
-
-            if (caaResponse != null) {
-                JsonObject caaJson = JsonParser.parseString(caaResponse).getAsJsonObject();
-                if (caaJson.has("images")) {
-                    JsonArray images = caaJson.getAsJsonArray("images");
-                    for (JsonElement image : images) {
-                        JsonObject imageObj = image.getAsJsonObject();
-                        if (imageObj.has("front") && imageObj.get("front").getAsBoolean()) {
-                            return imageObj.get("image").getAsString();
-                        }
-                    }
-                }
-            }
-        } catch (Exception e) {
-            logger.debug("[{}] Error retrieving cover art: {}", deviceManager.getConfig().getDeviceName(),
-                    e.getMessage());
-        }
-        return null;
+        // Return the direct front cover URL without verification
+        return "https://coverartarchive.org/release/" + releaseId + "/front";
     }
 
     /**
