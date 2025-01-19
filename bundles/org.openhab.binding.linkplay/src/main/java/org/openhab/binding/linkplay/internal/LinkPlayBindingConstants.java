@@ -78,7 +78,6 @@ public class LinkPlayBindingConstants {
     public static final String CHANNEL_FIRMWARE = "firmware";
 
     // Network Channels
-    public static final String CHANNEL_IP_ADDRESS = "ipAddress";
     public static final String CHANNEL_MAC_ADDRESS = "macAddress";
     public static final String CHANNEL_WIFI_SIGNAL = "wifiSignal";
 

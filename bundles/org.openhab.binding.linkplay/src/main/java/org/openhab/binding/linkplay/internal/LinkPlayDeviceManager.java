@@ -150,7 +150,7 @@ public class LinkPlayDeviceManager {
     // Internal Helpers
     // -------------------------------------------------------------------
 
-    private void updateState(String channelId, State state) {
+    public void updateState(String channelId, State state) {
         thingHandler.handleStateUpdate(channelId, state);
     }
 
@@ -239,14 +239,33 @@ public class LinkPlayDeviceManager {
         }
 
         // Update metadata
+        String newTitle = null;
+        String newArtist = null;
         if (json.has("title")) {
-            state.setTrackTitle(json.get("title").getAsString());
-            updateState(GROUP_PLAYBACK + "#" + CHANNEL_TITLE, new StringType(state.getTrackTitle()));
+            newTitle = json.get("title").getAsString();
+            state.setTrackTitle(newTitle);
+            updateState(GROUP_PLAYBACK + "#" + CHANNEL_TITLE, new StringType(newTitle));
         }
+
         if (json.has("artist")) {
-            state.setTrackArtist(json.get("artist").getAsString());
-            updateState(GROUP_PLAYBACK + "#" + CHANNEL_ARTIST, new StringType(state.getTrackArtist()));
+            newArtist = json.get("artist").getAsString();
+            state.setTrackArtist(newArtist);
+            updateState(GROUP_PLAYBACK + "#" + CHANNEL_ARTIST, new StringType(newArtist));
         }
+
+        // Check for album art when title or artist changes
+        if ((newTitle != null && !newTitle.equals(lastTitle)) || (newArtist != null && !newArtist.equals(lastArtist))) {
+            lastTitle = newTitle;
+            lastArtist = newArtist;
+            Optional<String> albumArtUrl = metadataService.retrieveMusicMetadata(state.getTrackArtist(),
+                    state.getTrackTitle());
+
+            if (albumArtUrl.isPresent()) {
+                state.setAlbumArtUrl(albumArtUrl.get());
+                updateState(GROUP_PLAYBACK + "#" + CHANNEL_ALBUM_ART, new StringType(albumArtUrl.get()));
+            }
+        }
+
         if (json.has("album")) {
             state.setTrackAlbum(json.get("album").getAsString());
             updateState(GROUP_PLAYBACK + "#" + CHANNEL_ALBUM, new StringType(state.getTrackAlbum()));
@@ -262,7 +281,7 @@ public class LinkPlayDeviceManager {
             updateState(GROUP_PLAYBACK + "#" + CHANNEL_MUTE, OnOffType.from(state.isMute()));
         }
 
-        // Update time values (already converted to seconds by HTTPManager)
+        // Update time values
         if (json.has("durationSeconds")) {
             state.setDurationSeconds(json.get("durationSeconds").getAsDouble());
             updateState(GROUP_PLAYBACK + "#" + CHANNEL_DURATION,
@@ -282,23 +301,6 @@ public class LinkPlayDeviceManager {
         if (json.has("repeat")) {
             state.setRepeat(json.get("repeat").getAsBoolean());
             updateState(GROUP_PLAYBACK + "#" + CHANNEL_REPEAT, OnOffType.from(state.isRepeat()));
-        }
-
-        // Check for metadata updates if title/artist changed
-        String currentTitle = state.getTrackTitle();
-        String currentArtist = state.getTrackArtist();
-
-        if ((currentTitle != null && !currentTitle.equals(lastTitle))
-                || (currentArtist != null && !currentArtist.equals(lastArtist))) {
-            Optional<String> albumArtUrl = metadataService.retrieveMusicMetadata(
-                    currentArtist != null ? currentArtist : "", currentTitle != null ? currentTitle : "");
-            String artUrl = albumArtUrl.orElse("NOT_FOUND");
-            state.setAlbumArtUrl(artUrl);
-            updateState(GROUP_PLAYBACK + "#" + CHANNEL_ALBUM_ART, new StringType(artUrl));
-            logger.debug("[{}] Updated album art URL: {}", config.getDeviceName(), artUrl);
-
-            lastTitle = currentTitle;
-            lastArtist = currentArtist;
         }
     }
 
@@ -362,6 +364,10 @@ public class LinkPlayDeviceManager {
 
     public LinkPlayConfiguration getConfig() {
         return config;
+    }
+
+    public LinkPlayThingHandler getThingHandler() {
+        return thingHandler;
     }
 
     /**

@@ -174,9 +174,22 @@ public class LinkPlayHttpManager {
     private JsonObject parsePlayerStatus(JsonObject rawJson) {
         JsonObject cleanJson = new JsonObject();
 
-        // Parse basic playback status
+        // Fix playback status mapping
         if (rawJson.has("status")) {
-            cleanJson.addProperty("playStatus", getAsString(rawJson, "status"));
+            String status = getAsString(rawJson, "status").toLowerCase();
+            switch (status) {
+                case "play":
+                    cleanJson.addProperty("playStatus", "PLAY");
+                    break;
+                case "pause":
+                    cleanJson.addProperty("playStatus", "PAUSE");
+                    break;
+                case "stop":
+                    cleanJson.addProperty("playStatus", "STOP");
+                    break;
+                default:
+                    cleanJson.addProperty("playStatus", "STOP");
+            }
         }
 
         // Parse and decode hex-encoded fields
@@ -199,18 +212,63 @@ public class LinkPlayHttpManager {
         }
 
         // Parse and convert time values to seconds
-        if (rawJson.has("duration")) {
-            cleanJson.addProperty("durationSeconds", getAsInt(rawJson, "duration", 0) / 1000.0);
+        if (rawJson.has("totlen")) {
+            cleanJson.addProperty("durationSeconds", getAsInt(rawJson, "totlen", 0) / 1000.0);
         }
-        if (rawJson.has("position")) {
-            cleanJson.addProperty("positionSeconds", getAsInt(rawJson, "position", 0) / 1000.0);
+        if (rawJson.has("curpos")) {
+            cleanJson.addProperty("positionSeconds", getAsInt(rawJson, "curpos", 0) / 1000.0);
         }
 
         // Parse loop mode into separate shuffle/repeat flags
         if (rawJson.has("loop")) {
             int loopMode = getAsInt(rawJson, "loop", 0);
-            cleanJson.addProperty("shuffle", loopMode == 2 || loopMode == 3 || loopMode == 5);
-            cleanJson.addProperty("repeat", loopMode == 0 || loopMode == 1 || loopMode == 2 || loopMode == 5);
+            switch (loopMode) {
+                case 0: // SHUFFLE: disabled REPEAT: enabled - loop
+                    cleanJson.addProperty("shuffle", false);
+                    cleanJson.addProperty("repeat", true);
+                    break;
+                case 1: // SHUFFLE: disabled REPEAT: enabled - loop once
+                    cleanJson.addProperty("shuffle", false);
+                    cleanJson.addProperty("repeat", true);
+                    break;
+                case 2: // SHUFFLE: enabled REPEAT: enabled - loop
+                    cleanJson.addProperty("shuffle", true);
+                    cleanJson.addProperty("repeat", true);
+                    break;
+                case 3: // SHUFFLE: enabled REPEAT: disabled
+                    cleanJson.addProperty("shuffle", true);
+                    cleanJson.addProperty("repeat", false);
+                    break;
+                case 4: // SHUFFLE: disabled REPEAT: disabled
+                    cleanJson.addProperty("shuffle", false);
+                    cleanJson.addProperty("repeat", false);
+                    break;
+                case 5: // SHUFFLE: enabled REPEAT: enabled - loop once
+                    cleanJson.addProperty("shuffle", true);
+                    cleanJson.addProperty("repeat", true);
+                    break;
+                default:
+                    cleanJson.addProperty("shuffle", false);
+                    cleanJson.addProperty("repeat", false);
+            }
+        }
+
+        // Map source from mode and vendor
+        String source = "UNKNOWN";
+        if (rawJson.has("vendor")) {
+            String vendor = getAsString(rawJson, "vendor");
+            if (!vendor.isEmpty()) {
+                source = vendor;
+            }
+        }
+        if (source.equals("UNKNOWN") && rawJson.has("mode")) {
+            int mode = getAsInt(rawJson, "mode", 0);
+            source = LinkPlayBindingConstants.PLAYBACK_MODES.getOrDefault(mode, "UNKNOWN");
+        }
+        cleanJson.addProperty("source", source);
+
+        if (rawJson.has("RSSI")) {
+            cleanJson.addProperty("wifiSignal", getAsInt(rawJson, "RSSI", 0));
         }
 
         return cleanJson;

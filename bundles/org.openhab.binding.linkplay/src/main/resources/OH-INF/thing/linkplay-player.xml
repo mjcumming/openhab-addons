@@ -17,13 +17,6 @@
 		</channel-groups>
 
 		<config-description>
-			<!-- IP address is still required -->
-			<parameter name="ipAddress" type="text" required="true">
-				<context>network-address</context>
-				<label>IP Address</label>
-				<description>IP address of the LinkPlay device.</description>
-			</parameter>
-
 			<parameter name="deviceName" type="text" required="false">
 				<label>Device Name</label>
 				<description>Friendly name for the LinkPlay device (populated from UPnP or getStatusEx).</description>
@@ -88,7 +81,6 @@
 		<label>Network</label>
 		<description>Network-related information</description>
 		<channels>
-			<channel id="ipAddress" typeId="ipAddress"/>
 			<channel id="macAddress" typeId="macAddress"/>
 			<channel id="wifiSignal" typeId="wifiSignal"/>
 		</channels>

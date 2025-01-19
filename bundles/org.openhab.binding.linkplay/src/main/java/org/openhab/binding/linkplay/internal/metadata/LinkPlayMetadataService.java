@@ -82,6 +82,9 @@ public class LinkPlayMetadataService {
             return Optional.empty();
         }
 
+        logger.debug("[{}] Attempting to fetch album art for artist='{}' title='{}'",
+                deviceManager.getConfig().getDeviceName(), artist, title);
+
         // Check cache first
         String cacheKey = artist.toLowerCase() + "|" + title.toLowerCase();
         CachedMetadata cached = metadataCache.get(cacheKey);
@@ -113,6 +116,7 @@ public class LinkPlayMetadataService {
             String mbUrl = String.format(
                     "https://musicbrainz.org/ws/2/recording?query=title:%s%%20AND%%20artist:%s&fmt=json", encodedTitle,
                     encodedArtist);
+            logger.debug("[{}] Querying MusicBrainz: {}", deviceManager.getConfig().getDeviceName(), mbUrl);
             CompletableFuture<@Nullable String> futureMb = httpClient.rawGetRequest(mbUrl);
 
             String mbResponse = futureMb.get(TIMEOUT_MS, TimeUnit.MILLISECONDS);
@@ -124,15 +128,24 @@ public class LinkPlayMetadataService {
             JsonObject mbJson = JsonParser.parseString(mbResponse).getAsJsonObject();
             String releaseId = extractReleaseId(mbJson);
             if (releaseId.isEmpty()) {
+                logger.debug("[{}] No release ID found for artist='{}' title='{}'",
+                        deviceManager.getConfig().getDeviceName(), artist, title);
                 return Optional.empty();
             }
+
+            logger.debug("[{}] Found MusicBrainz release ID: {} for artist='{}' title='{}'",
+                    deviceManager.getConfig().getDeviceName(), releaseId, artist, title);
 
             // Query CoverArtArchive
             String coverArtUrl = retrieveCoverArtUrl(releaseId);
             if (coverArtUrl != null) {
+                logger.debug("[{}] Found cover art URL: {}", deviceManager.getConfig().getDeviceName(), coverArtUrl);
                 // Cache the result
                 metadataCache.put(cacheKey, new CachedMetadata(coverArtUrl));
                 return Optional.of(coverArtUrl);
+            } else {
+                logger.debug("[{}] No cover art found for release ID: {}", deviceManager.getConfig().getDeviceName(),
+                        releaseId);
             }
 
         } catch (Exception e) {

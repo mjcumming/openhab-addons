@@ -241,7 +241,13 @@ public class LinkPlayGroupManager {
     public void handleStatusUpdate(JsonObject rootJson) {
         try {
             LinkPlayMultiroomInfo info = new LinkPlayMultiroomInfo(rootJson);
-            logger.debug("Processed multiroom status: role={}, masterIP={}, slaves={}", info.getRole(),
+
+            // Update channels only
+            deviceManager.updateState(GROUP_MULTIROOM + "#" + CHANNEL_ROLE, new StringType(info.getRole()));
+            deviceManager.updateState(GROUP_MULTIROOM + "#" + CHANNEL_MASTER_IP, new StringType(info.getMasterIP()));
+            deviceManager.updateState(GROUP_MULTIROOM + "#" + CHANNEL_SLAVE_IPS, new StringType(info.getSlaveIPs()));
+
+            logger.debug("Updated multiroom status: role={}, masterIP={}, slaves={}", info.getRole(),
                     info.getMasterIP(), info.getSlaveIPs());
         } catch (Exception e) {
             handleGroupError("parsing status update", e);
