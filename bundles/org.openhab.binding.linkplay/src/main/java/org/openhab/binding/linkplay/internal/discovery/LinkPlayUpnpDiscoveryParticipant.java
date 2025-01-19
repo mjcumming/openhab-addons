@@ -135,6 +135,7 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
                         String deviceId = device.getIdentity().getUdn().getIdentifierString();
                         // Remove 'uuid:' prefix if present and normalize format
                         deviceId = deviceId.replace("uuid:", "").replace("-", "");
+                        logger.debug("Creating ThingUID with deviceId: {}", deviceId);
                         ThingUID thingUID = new ThingUID(THING_TYPE_DEVICE, deviceId);
 
                         // Check if this thing already exists
@@ -173,6 +174,8 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
             return null; // not recognized
         }
 
+        logger.debug("Creating discovery result for ThingUID: {}", thingUID);
+
         // Check if this thing already exists
         if (thingRegistry.get(thingUID) != null) {
             logger.debug("LinkPlay device {} already exists, skipping discovery result", thingUID);
@@ -210,6 +213,7 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
         properties.put(PROPERTY_UDN, normalizedUDN);
 
         String label = String.format("%s (%s)", friendlyName, ipAddress);
+        logger.debug("Building discovery result for {}: label={}, properties={}", thingUID, label, properties);
         return DiscoveryResultBuilder.create(thingUID).withLabel(label).withProperties(properties)
                 .withThingType(THING_TYPE_DEVICE).withRepresentationProperty(CONFIG_IP_ADDRESS)
                 .withTTL(DISCOVERY_RESULT_TTL_SECONDS).build();
