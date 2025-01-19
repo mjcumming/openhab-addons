@@ -73,11 +73,12 @@ public class LinkPlayThingHandler extends BaseThingHandler {
         updateStatus(ThingStatus.UNKNOWN);
 
         // Initialize device manager with HTTP client first
-        deviceManager = new LinkPlayDeviceManager(this, config, httpClient, upnpIOService);
+        LinkPlayDeviceManager manager = new LinkPlayDeviceManager(this, config, httpClient, upnpIOService);
+        deviceManager = manager;
 
         // Start HTTP polling immediately - UPnP will be used if/when available
         try {
-            deviceManager.initialize();
+            manager.initialize();
             logger.debug("[{}] Device manager initialized, HTTP polling started", config.getDeviceName());
         } catch (Exception e) {
             logger.debug("[{}] Error initializing device manager: {}", config.getDeviceName(), e.getMessage());

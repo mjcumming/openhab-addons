@@ -58,7 +58,9 @@ public class LinkPlayDeviceManager {
 
     private final LinkPlayThingHandler thingHandler;
     private final LinkPlayConfiguration config;
+    @SuppressWarnings("unused") // Used by HttpManager and MetadataService
     private final LinkPlayHttpClient httpClient;
+    @SuppressWarnings("unused") // Used by UpnpManager
     private final UpnpIOService upnpIOService;
     private final LinkPlayHttpManager httpManager;
     private final LinkPlayUpnpManager upnpManager;

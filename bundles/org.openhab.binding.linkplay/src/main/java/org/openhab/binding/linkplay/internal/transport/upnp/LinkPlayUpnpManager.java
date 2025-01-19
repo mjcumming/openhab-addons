@@ -190,6 +190,11 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
         }
     }
 
+    /**
+     * Schedules periodic renewal of UPnP subscriptions to prevent expiration.
+     * This is called internally when subscriptions are added or need to be renewed.
+     */
+    @SuppressWarnings("unused") // Used internally for UPnP subscription management
     private void scheduleSubscriptionRenewal() {
         ScheduledFuture<?> future = subscriptionRenewalFuture;
         if (future != null && !future.isCancelled()) {
