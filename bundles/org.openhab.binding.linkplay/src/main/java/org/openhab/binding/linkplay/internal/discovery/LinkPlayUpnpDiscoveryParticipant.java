@@ -132,8 +132,10 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
                 if (!response.isEmpty()) {
                     if (response.contains("uuid")) {
                         // Successfully validated as LinkPlay
-                        ThingUID thingUID = new ThingUID(THING_TYPE_DEVICE,
-                                device.getIdentity().getUdn().getIdentifierString());
+                        String deviceId = device.getIdentity().getUdn().getIdentifierString();
+                        // Remove 'uuid:' prefix if present and normalize format
+                        deviceId = deviceId.replace("uuid:", "").replace("-", "");
+                        ThingUID thingUID = new ThingUID(THING_TYPE_DEVICE, deviceId);
 
                         // Check if this thing already exists
                         if (thingRegistry.get(thingUID) != null) {
@@ -194,7 +196,8 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
         String modelName = device.getDetails().getModelDetails().getModelName();
         String friendlyName = device.getDetails().getFriendlyName();
         String deviceUDN = device.getIdentity().getUdn().getIdentifierString();
-        String normalizedUDN = deviceUDN.startsWith("uuid:") ? deviceUDN : "uuid:" + deviceUDN;
+        // Remove 'uuid:' prefix if present and normalize format
+        String normalizedUDN = deviceUDN.replace("uuid:", "").replace("-", "");
 
         Map<String, Object> properties = new HashMap<>();
 
@@ -208,7 +211,8 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
 
         String label = String.format("%s (%s)", friendlyName, ipAddress);
         return DiscoveryResultBuilder.create(thingUID).withLabel(label).withProperties(properties)
-                .withRepresentationProperty(CONFIG_IP_ADDRESS).withTTL(DISCOVERY_RESULT_TTL_SECONDS).build();
+                .withThingType(THING_TYPE_DEVICE).withRepresentationProperty(CONFIG_IP_ADDRESS)
+                .withTTL(DISCOVERY_RESULT_TTL_SECONDS).build();
     }
 
     /**
