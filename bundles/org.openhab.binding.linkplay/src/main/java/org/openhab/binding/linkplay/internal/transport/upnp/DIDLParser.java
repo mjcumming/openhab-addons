@@ -10,7 +10,7 @@
  *
  * SPDX-License-Identifier: EPL-2.0
  */
-package org.openhab.binding.linkplay.internal.upnp;
+package org.openhab.binding.linkplay.internal.transport.upnp;
 
 import java.io.IOException;
 import java.io.StringReader;

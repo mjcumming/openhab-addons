@@ -28,9 +28,9 @@ import org.jupnp.model.meta.RemoteDevice;
 import org.jupnp.model.meta.Service;
 import org.jupnp.model.types.ServiceId;
 import org.jupnp.model.types.UDAServiceId;
-import org.openhab.binding.linkplay.internal.http.LinkPlayApiException;
-import org.openhab.binding.linkplay.internal.http.LinkPlayCommunicationException;
-import org.openhab.binding.linkplay.internal.http.LinkPlayHttpClient;
+import org.openhab.binding.linkplay.internal.transport.http.LinkPlayApiException;
+import org.openhab.binding.linkplay.internal.transport.http.LinkPlayCommunicationException;
+import org.openhab.binding.linkplay.internal.transport.http.LinkPlayHttpClient;
 import org.openhab.core.config.discovery.DiscoveryResult;
 import org.openhab.core.config.discovery.DiscoveryResultBuilder;
 import org.openhab.core.config.discovery.upnp.UpnpDiscoveryParticipant;
@@ -94,19 +94,29 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
 
             // Use the correct UPnP device details class
             org.jupnp.model.meta.DeviceDetails details = device.getDetails();
+            if (details.getBaseURL() == null) {
+                logger.debug("Device {} has no base URL", details.getFriendlyName());
+                return null;
+            }
+
             String ip = details.getBaseURL().getHost();
+            if (ip == null || ip.isEmpty()) {
+                logger.debug("Device {} has invalid IP address", details.getFriendlyName());
+                return null;
+            }
+
             String modelName = details.getModelDetails().getModelName();
             String friendlyName = details.getFriendlyName();
 
             // Add more detailed logging about the device we're checking
-            logger.warn("Checking potential LinkPlay device: IP={}, Model={}, Name={}", ip, modelName, friendlyName);
+            logger.debug("Checking potential LinkPlay device: IP={}, Model={}, Name={}", ip, modelName, friendlyName);
 
             // Try to validate via HTTP with increased timeout
             try {
                 CompletableFuture<String> future = httpClient.getStatusEx(ip);
                 String response = future.get(5000, TimeUnit.MILLISECONDS);
 
-                if (response != null && !response.isEmpty()) {
+                if (!response.isEmpty()) {
                     if (response.contains("uuid")) {
                         // Successfully validated as LinkPlay
                         logger.warn("Confirmed LinkPlay device at {}: {}", ip, response);

@@ -27,13 +27,13 @@ import com.google.gson.JsonObject;
  * @author Michael Cumming - Initial contribution
  */
 @NonNullByDefault
-public class MultiroomInfo {
+public class LinkPlayMultiroomInfo {
 
     private final String role; // "master", "slave", or "standalone"
     private final String masterIP; // If we're a slave, this might hold the master IP (if provided)
     private final List<String> slaveIPs;
 
-    public MultiroomInfo(JsonObject json) {
+    public LinkPlayMultiroomInfo(JsonObject json) {
         // 1) Read the 'group' integer. If it doesn't exist, default to 0.
         int groupVal = 0;
         if (json.has("group")) {

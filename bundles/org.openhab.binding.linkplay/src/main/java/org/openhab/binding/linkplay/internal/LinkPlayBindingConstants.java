@@ -14,6 +14,7 @@
 package org.openhab.binding.linkplay.internal;
 
 import java.util.Collections;
+import java.util.Map;
 import java.util.Set;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
@@ -63,7 +64,6 @@ public class LinkPlayBindingConstants {
     public static final String CHANNEL_TITLE = "title"; // Track title
     public static final String CHANNEL_ARTIST = "artist"; // Track artist
     public static final String CHANNEL_ALBUM = "album"; // Track album
-    public static final String CHANNEL_PLAYBACK_ALBUMART = "albumArt"; // URL to album art from UPnP
     public static final String CHANNEL_DURATION = "duration"; // Track duration (Number:Time)
     public static final String CHANNEL_POSITION = "position"; // Current track position (Number:Time)
     public static final String CHANNEL_VOLUME = "volume"; // Playback volume
@@ -71,6 +71,7 @@ public class LinkPlayBindingConstants {
     public static final String CHANNEL_REPEAT = "repeat"; // On/off repeat
     public static final String CHANNEL_SHUFFLE = "shuffle"; // On/off shuffle
     public static final String CHANNEL_SOURCE = "source"; // Audio source selection
+    public static final String CHANNEL_ALBUM_ART = "albumArt";
 
     // System Channels
     public static final String CHANNEL_DEVICE_NAME = "deviceName";
@@ -101,6 +102,13 @@ public class LinkPlayBindingConstants {
     public static final String UPNP_DISCOVERY_THING_TYPE = "urn:schemas-upnp-org:device:MediaRenderer:1";
     public static final String UPNP_MANUFACTURER = "LinkPlay";
     public static final String UPNP_DEVICE_TYPE_PREFIX = "urn:schemas-upnp-org:device:";
+
+    // Source/Mode mappings
+    public static final Map<Integer, String> PLAYBACK_MODES = Map.ofEntries(Map.entry(0, "IDLE"),
+            Map.entry(1, "AIRPLAY"), Map.entry(2, "DLNA"), Map.entry(10, "NETWORK"), Map.entry(11, "USB_DISK"),
+            Map.entry(20, "HTTP_API"), Map.entry(31, "SPOTIFY"), Map.entry(40, "LINE_IN"), Map.entry(41, "BLUETOOTH"),
+            Map.entry(43, "OPTICAL"), Map.entry(47, "LINE_IN_2"), Map.entry(51, "USB_DAC"),
+            Map.entry(99, "MULTIROOM_GUEST"));
 
     private LinkPlayBindingConstants() {
         // Constants class - prevent instantiation

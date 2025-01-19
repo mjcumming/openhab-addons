@@ -10,23 +10,25 @@
  *
  * SPDX-License-Identifier: EPL-2.0
  */
-package org.openhab.binding.linkplay.internal.uart;
+package org.openhab.binding.linkplay.internal.transport.http;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 
 /**
- * Listener interface for LinkPlay UART responses.
- * Implementations will receive raw UART messages from the device.
+ * Exception thrown when the LinkPlay API returns an error response
  *
  * @author Michael Cumming - Initial contribution
  */
 @NonNullByDefault
-public interface LinkPlayUartResponseListener {
+public class LinkPlayApiException extends Exception {
 
-    /**
-     * Called when a raw UART message is received from the device.
-     *
-     * @param rawText The raw text received from the UART connection
-     */
-    void onUartResponse(String rawText);
+    private static final long serialVersionUID = 1L;
+
+    public LinkPlayApiException(String message) {
+        super(message);
+    }
+
+    public LinkPlayApiException(String message, Throwable cause) {
+        super(message, cause);
+    }
 }

@@ -14,8 +14,9 @@ package org.openhab.binding.linkplay.internal.handler;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
+import org.openhab.binding.linkplay.internal.LinkPlayDeviceManager;
 import org.openhab.binding.linkplay.internal.config.LinkPlayConfiguration;
-import org.openhab.binding.linkplay.internal.http.LinkPlayHttpClient;
+import org.openhab.binding.linkplay.internal.transport.http.LinkPlayHttpClient;
 import org.openhab.core.config.core.Configuration;
 import org.openhab.core.io.transport.upnp.UpnpIOService;
 import org.openhab.core.thing.Channel;
@@ -42,14 +43,11 @@ public class LinkPlayThingHandler extends BaseThingHandler {
 
     private final UpnpIOService upnpIOService;
     private final LinkPlayHttpClient httpClient;
-    private final LinkPlayConfiguration config; // The validated config passed from factory
+    private LinkPlayConfiguration config;
 
     private @Nullable LinkPlayDeviceManager deviceManager;
 
-    /**
-     * Updated constructor that receives an already validated LinkPlayConfiguration.
-     */
-    public LinkPlayThingHandler(Thing thing, UpnpIOService upnpIOService, LinkPlayHttpClient httpClient,
+    public LinkPlayThingHandler(Thing thing, LinkPlayHttpClient httpClient, UpnpIOService upnpIOService,
             LinkPlayConfiguration config) {
         super(thing);
         this.upnpIOService = upnpIOService;
@@ -59,17 +57,32 @@ public class LinkPlayThingHandler extends BaseThingHandler {
 
     @Override
     public void initialize() {
-        logger.info("Initializing LinkPlayThingHandler for Thing: {}", getThing().getUID());
+        logger.debug("[{}] Initializing handler...", config.getDeviceName());
 
-        try {
-            LinkPlayDeviceManager manager = new LinkPlayDeviceManager(this, config, httpClient, upnpIOService);
-            deviceManager = manager;
-            manager.initialize();
-            updateStatus(ThingStatus.ONLINE);
-        } catch (Exception e) {
-            logger.error("Failed to initialize LinkPlay device: {}", e.getMessage(), e);
+        // Get configuration
+        config = getConfigAs(LinkPlayConfiguration.class);
+
+        // Validate configuration
+        if (!config.isValid()) {
             updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR,
-                    "Failed to initialize: " + e.getMessage());
+                    "Invalid configuration - IP address required");
+            return;
+        }
+
+        // Set initial status to UNKNOWN while we try to connect
+        updateStatus(ThingStatus.UNKNOWN);
+
+        // Initialize device manager with HTTP client first
+        deviceManager = new LinkPlayDeviceManager(this, config, httpClient, upnpIOService);
+
+        // Start HTTP polling immediately - UPnP will be used if/when available
+        try {
+            deviceManager.initialize();
+            logger.debug("[{}] Device manager initialized, HTTP polling started", config.getDeviceName());
+        } catch (Exception e) {
+            logger.debug("[{}] Error initializing device manager: {}", config.getDeviceName(), e.getMessage());
+            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
+                    "Error initializing device manager: " + e.getMessage());
         }
     }
 
@@ -102,24 +115,30 @@ public class LinkPlayThingHandler extends BaseThingHandler {
      * Public method for updating channel state, used by the device manager.
      */
     public final void handleStateUpdate(String channelId, State state) {
-        // First try to find the channel in its group
-        for (String groupId : new String[] { "playback", "system", "network", "multiroom" }) {
-            Channel channel = getThing().getChannel(groupId + "#" + channelId);
-            if (channel != null) {
-                // Found the channel in this group
-                logger.trace("Updating state for channel {}/{} to {}", groupId, channelId, state);
-                updateState(channel.getUID(), state);
-                return;
-            }
-        }
-
-        // If no grouped channel found, try updating directly (though this shouldn't happen)
+        // First check if the channelId already includes a group prefix
         Channel channel = getThing().getChannel(channelId);
         if (channel != null) {
-            logger.trace("Updating state for ungrouped channel {} to {}", channelId, state);
+            logger.trace("Updating state for channel {} to {}", channelId, state);
             updateState(channel.getUID(), state);
+            return;
+        }
+
+        // If not found and doesn't contain a group prefix, try to find the channel in its group
+        if (!channelId.contains("#")) {
+            // Try to find the channel in each group
+            for (String groupId : new String[] { "playback", "system", "network", "multiroom" }) {
+                String fullChannelId = groupId + "#" + channelId;
+                channel = getThing().getChannel(fullChannelId);
+                if (channel != null) {
+                    // Found the channel in this group
+                    logger.trace("Updating state for channel {}/{} to {}", groupId, channelId, state);
+                    updateState(channel.getUID(), state);
+                    return;
+                }
+            }
+            logger.debug("Channel not found in any group: {}", channelId);
         } else {
-            logger.debug("Channel not found: {}", channelId);
+            logger.debug("Channel not found with group prefix: {}", channelId);
         }
     }
 

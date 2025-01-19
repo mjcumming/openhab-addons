@@ -10,11 +10,12 @@
  *
  * SPDX-License-Identifier: EPL-2.0
  */
-package org.openhab.binding.linkplay.internal.upnp;
+package org.openhab.binding.linkplay.internal.transport.upnp;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -23,7 +24,7 @@ import java.util.concurrent.TimeUnit;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.binding.linkplay.internal.LinkPlayBindingConstants;
-import org.openhab.binding.linkplay.internal.handler.LinkPlayDeviceManager;
+import org.openhab.binding.linkplay.internal.LinkPlayDeviceManager;
 import org.openhab.core.common.ThreadPoolManager;
 import org.openhab.core.io.transport.upnp.UpnpIOParticipant;
 import org.openhab.core.io.transport.upnp.UpnpIOService;
@@ -59,7 +60,6 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
 
     private final UpnpIOService upnpIOService;
     private final LinkPlayDeviceManager deviceManager;
-    private final String deviceId;
 
     private final ScheduledExecutorService scheduler;
     private @Nullable ScheduledFuture<?> subscriptionRenewalFuture;
@@ -69,11 +69,18 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
     private static final String SERVICE_AVTRANSPORT = "urn:schemas-upnp-org:service:AVTransport:1";
     private static final String SERVICE_RENDERING_CONTROL = "urn:schemas-upnp-org:service:RenderingControl:1";
 
-    public LinkPlayUpnpManager(UpnpIOService upnpIOService, LinkPlayDeviceManager deviceManager, String deviceId) {
+    public LinkPlayUpnpManager(UpnpIOService upnpIOService, LinkPlayDeviceManager deviceManager) {
         this.upnpIOService = upnpIOService;
         this.deviceManager = deviceManager;
-        this.deviceId = deviceId;
         this.scheduler = ThreadPoolManager.getScheduledPool(LinkPlayBindingConstants.BINDING_ID + "-upnp");
+
+        // If we have a UDN in config, use it
+        String configUdn = deviceManager.getConfig().getUdn();
+        if (!configUdn.isEmpty()) {
+            logger.debug("[{}] Registering UPnP device with UDN={}", deviceManager.getConfig().getDeviceName(),
+                    configUdn);
+            upnpIOService.registerParticipant(this);
+        }
     }
 
     /**
@@ -81,54 +88,31 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
      * Sets up the participant registration and subscriptions.
      */
     public void register(String udn) {
-        if (isDisposed) {
-            logger.debug("[{}] Ignoring register request - manager is disposed", deviceId);
+        if (udn.isEmpty()) {
+            logger.warn("Cannot register UPnP - UDN is empty");
             return;
         }
 
-        // Validate UDN format
-        if (!udn.startsWith("uuid:")) {
-            udn = "uuid:" + udn;
-            logger.debug("[{}] Added 'uuid:' prefix to UDN: {}", deviceId, udn);
-        }
+        // Normalize UDN format
+        String normalizedUdn = udn.startsWith("uuid:") ? udn : "uuid:" + udn;
+        logger.debug("Registering UPnP for device with UDN: {}", normalizedUdn);
 
-        this.udn = udn;
-
+        // Register with UPnP service asynchronously
         try {
-            logger.debug("[{}] Registering UPnP participant with UDN: {}", deviceId, udn);
+            upnpIOService.registerParticipant(this);
+            this.udn = normalizedUdn;
 
-            // Verify UPnP service is available before proceeding
-            if (!upnpIOService.isRegistered(this)) {
-                upnpIOService.registerParticipant(this);
-            } else {
-                logger.debug("[{}] Device already registered with UPnP service", deviceId);
-            }
-
-            // Add subscriptions with validation
-            if (supportsService(SERVICE_AVTRANSPORT)) {
-                addSubscription("AVTransport");
-            }
-            if (supportsService(SERVICE_RENDERING_CONTROL)) {
-                addSubscription("RenderingControl");
-            }
-
-            // Only indicate active subscription if we successfully subscribed
-            synchronized (upnpLock) {
-                if (!subscriptions.isEmpty()) {
-                    deviceManager.setUpnpSubscriptionState(true);
-                    scheduleSubscriptionRenewal();
-                } else {
-                    logger.warn("[{}] No UPnP subscriptions were established", deviceId);
-                    retryRegistration();
+            // Subscribe to events asynchronously
+            CompletableFuture.runAsync(() -> {
+                try {
+                    upnpIOService.addSubscription(this, SERVICE_AVTRANSPORT, SUBSCRIPTION_DURATION_SECONDS);
+                    upnpIOService.addSubscription(this, SERVICE_RENDERING_CONTROL, SUBSCRIPTION_DURATION_SECONDS);
+                } catch (Exception e) {
+                    logger.warn("Failed to subscribe to UPnP events: {}", e.getMessage());
                 }
-            }
-        } catch (RuntimeException e) {
-            logger.warn("[{}] Failed to register UPnP participant: {}", deviceId, e.getMessage());
-            if (logger.isDebugEnabled()) {
-                logger.debug("[{}] Registration error details:", deviceId, e);
-            }
-            deviceManager.setUpnpSubscriptionState(false);
-            retryRegistration();
+            });
+        } catch (Exception e) {
+            logger.warn("Failed to register UPnP participant: {}", e.getMessage());
         }
     }
 
@@ -136,26 +120,25 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
      * Unregister and clear tracking.
      */
     public void unregister() {
-        logger.debug("[{}] Unregistering UPnP participant", deviceId);
+        logger.debug("[{}] Unregistering UPnP participant", deviceManager.getConfig().getDeviceName());
         try {
             unregisterUpnpParticipant();
         } catch (RuntimeException e) {
-            logger.warn("[{}] Failed to unregister UPnP participant: {}", deviceId, e.getMessage());
+            logger.warn("[{}] Failed to unregister UPnP participant: {}", deviceManager.getConfig().getDeviceName(),
+                    e.getMessage());
             if (logger.isDebugEnabled()) {
-                logger.debug("[{}] Unregistration error details:", deviceId, e);
+                logger.debug("[{}] Unregistration error details:", deviceManager.getConfig().getDeviceName(), e);
             }
         }
     }
 
     public void unregisterUpnpParticipant() {
         upnpIOService.unregisterParticipant(this);
-        deviceManager.setUpnpSubscriptionState(false);
-
         synchronized (upnpLock) {
             subscriptions.clear();
         }
         udn = null;
-        logger.debug("[{}] UPnP participant unregistered", deviceId);
+        logger.debug("[{}] UPnP participant unregistered", deviceManager.getConfig().getDeviceName());
     }
 
     /**
@@ -172,14 +155,17 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
                 try {
                     // Verify manager is actually registered
                     if (!upnpIOService.isRegistered(this)) {
-                        logger.warn("[{}] Cannot subscribe to {} - device not registered", deviceId, serviceShortName);
+                        logger.warn("[{}] Cannot subscribe to {} - device not registered",
+                                deviceManager.getConfig().getDeviceName(), serviceShortName);
                         String localUdn = udn;
                         if (localUdn != null && validateDeviceReady(localUdn)) {
                             upnpIOService.addSubscription(this, fullService, SUBSCRIPTION_DURATION_SECONDS);
                             subscriptions.put(fullService, Instant.now());
-                            logger.debug("[{}] Subscribed to service: {}", deviceId, fullService);
+                            logger.debug("[{}] Subscribed to service: {}", deviceManager.getConfig().getDeviceName(),
+                                    fullService);
                         } else {
-                            logger.warn("[{}] Device is not ready, retrying subscription registration...", deviceId);
+                            logger.warn("[{}] Device is not ready, retrying subscription registration...",
+                                    deviceManager.getConfig().getDeviceName());
                             retryRegistration();
                         }
                         return;
@@ -187,16 +173,19 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
 
                     upnpIOService.addSubscription(this, fullService, SUBSCRIPTION_DURATION_SECONDS);
                     subscriptions.put(fullService, Instant.now());
-                    logger.debug("[{}] Subscribed to service: {}", deviceId, fullService);
+                    logger.debug("[{}] Subscribed to service: {}", deviceManager.getConfig().getDeviceName(),
+                            fullService);
                 } catch (RuntimeException e) {
-                    logger.warn("[{}] Failed to subscribe to service {}: {}", deviceId, fullService, e.getMessage());
+                    logger.warn("[{}] Failed to subscribe to service {}: {}", deviceManager.getConfig().getDeviceName(),
+                            fullService, e.getMessage());
                     if (logger.isDebugEnabled()) {
-                        logger.debug("[{}] Subscription error details:", deviceId, e);
+                        logger.debug("[{}] Subscription error details:", deviceManager.getConfig().getDeviceName(), e);
                     }
                     retryRegistration();
                 }
             } else {
-                logger.trace("[{}] Subscription already exists for service: {}", deviceId, fullService);
+                logger.trace("[{}] Subscription already exists for service: {}",
+                        deviceManager.getConfig().getDeviceName(), fullService);
             }
         }
     }
@@ -218,7 +207,8 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
                     subscriptions.entrySet().removeIf(entry -> {
                         Instant lastRenewed = entry.getValue();
                         if (now.isAfter(lastRenewed.plus(SUBSCRIPTION_EXPIRY))) {
-                            logger.debug("[{}] Removing expired subscription: {}", deviceId, entry.getKey());
+                            logger.debug("[{}] Removing expired subscription: {}",
+                                    deviceManager.getConfig().getDeviceName(), entry.getKey());
                             return true;
                         }
                         return false;
@@ -231,12 +221,14 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
                         if (now.isAfter(lastSubscribed.plus(SUBSCRIPTION_RENEWAL_PERIOD))) {
                             upnpIOService.addSubscription(this, service, SUBSCRIPTION_DURATION_SECONDS);
                             subscriptions.put(service, now);
-                            logger.debug("[{}] Renewed subscription for: {}", deviceId, service);
+                            logger.debug("[{}] Renewed subscription for: {}", deviceManager.getConfig().getDeviceName(),
+                                    service);
                         }
                     }
                 }
             } catch (RuntimeException e) {
-                logger.warn("[{}] Failed to renew UPnP subscriptions: {}", deviceId, e.getMessage());
+                logger.warn("[{}] Failed to renew UPnP subscriptions: {}", deviceManager.getConfig().getDeviceName(),
+                        e.getMessage());
                 retryRegistration();
             }
         }, SUBSCRIPTION_RENEWAL_PERIOD.toMinutes(), SUBSCRIPTION_RENEWAL_PERIOD.toMinutes(), TimeUnit.MINUTES);
@@ -251,9 +243,9 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
             if (localUdn != null && subscriptions.isEmpty()) {
                 try {
                     upnpIOService.registerParticipant(this);
-                    logger.debug("[{}] UPnP subscription restored", deviceId);
+                    logger.debug("[{}] UPnP subscription restored", deviceManager.getConfig().getDeviceName());
                 } catch (RuntimeException e) {
-                    logger.warn("[{}] Retrying UPnP registration failed: {}", deviceId, e.getMessage());
+                    deviceManager.handleUpnpError("Retrying UPnP registration failed: " + e.getMessage());
                 }
             }
         }, SUBSCRIPTION_RETRY_DELAY.toSeconds(), TimeUnit.SECONDS);
@@ -266,62 +258,66 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
             return;
         }
 
-        logger.debug("[{}] UPnP event - Service: {}, Variable: {}, Value: {}", deviceId, service, variable, value);
+        logger.debug("[{}] UPnP event - Service: {}, Variable: {}, Value: {}",
+                deviceManager.getConfig().getDeviceName(), service, variable, value);
 
         try {
             switch (service) {
                 case SERVICE_AVTRANSPORT:
-                    handleAVTransportEvent(variable, value);
+                    processAVTransportUpdate(variable, value);
                     break;
                 case SERVICE_RENDERING_CONTROL:
-                    handleRenderingControlEvent(variable, value);
+                    processRenderingControlUpdate(variable, value);
                     break;
                 default:
-                    logger.trace("[{}] Unknown UPnP service: {}", deviceId, service);
+                    logger.trace("[{}] Unknown UPnP service: {}", deviceManager.getConfig().getDeviceName(), service);
             }
         } catch (Exception e) {
-            logger.warn("[{}] Error processing UPnP event: {}", deviceId, e.getMessage());
+            logger.warn("[{}] Error processing UPnP event: {}", deviceManager.getConfig().getDeviceName(),
+                    e.getMessage());
             if (logger.isDebugEnabled()) {
-                logger.debug("[{}] Exception detail:", deviceId, e);
+                logger.debug("[{}] Exception detail:", deviceManager.getConfig().getDeviceName(), e);
             }
         }
     }
 
-    private void handleAVTransportEvent(String variable, String value) {
+    private void processAVTransportUpdate(String variable, String value) {
+        logger.debug("[{}] Processing AVTransport update - {} : {}", deviceManager.getConfig().getDeviceName(),
+                variable, value);
+
         switch (variable) {
             case "TransportState":
-                deviceManager.updatePlaybackState(value);
-                break;
-            case "CurrentTrackMetaData":
-                if (!value.isEmpty()) {
-                    @Nullable
-                    Map<String, String> metadata = DIDLParser.parseMetadata(value);
-                    if (metadata != null && !metadata.isEmpty()) {
-                        deviceManager.updateMetadata(metadata);
-                    }
-                }
+                // TODO: Implement proper channel update mechanism for playback state
+                logger.debug("[{}] Received playback state: {}", deviceManager.getConfig().getDeviceName(), value);
                 break;
             case "AVTransportURI":
-                deviceManager.updateTransportUri(value);
+                // TODO: Implement proper channel update mechanism for transport URI
+                logger.debug("[{}] Received transport URI: {}", deviceManager.getConfig().getDeviceName(), value);
                 break;
             case "CurrentTrackDuration":
-                deviceManager.updateDuration(value);
+                // TODO: Implement proper channel update mechanism for duration
+                logger.debug("[{}] Received track duration: {}", deviceManager.getConfig().getDeviceName(), value);
+                break;
+            case "CurrentTrackMetaData":
+                // TODO: Implement proper channel update mechanism for metadata
+                logger.debug("[{}] Received track metadata: {}", deviceManager.getConfig().getDeviceName(), value);
                 break;
             default:
-                logger.trace("[{}] Unhandled AVTransport var: {}", deviceId, variable);
+                logger.debug("[{}] Unhandled AVTransport variable: {}", deviceManager.getConfig().getDeviceName(),
+                        variable);
         }
     }
 
-    private void handleRenderingControlEvent(String variable, String value) {
-        switch (variable) {
-            case "Volume":
-                deviceManager.updateVolume(value);
-                break;
-            case "Mute":
-                deviceManager.updateMute("1".equals(value));
-                break;
-            default:
-                logger.trace("[{}] Unhandled RenderingControl var: {}", deviceId, variable);
+    private void processRenderingControlUpdate(String variable, String value) {
+        logger.debug("[{}] Processing RenderingControl update - {} : {}", deviceManager.getConfig().getDeviceName(),
+                variable, value);
+
+        if ("Volume".equals(variable)) {
+            // TODO: Implement proper channel update mechanism for volume
+            logger.debug("[{}] Received volume update: {}", deviceManager.getConfig().getDeviceName(), value);
+        } else {
+            logger.debug("[{}] Unhandled RenderingControl variable: {}", deviceManager.getConfig().getDeviceName(),
+                    variable);
         }
     }
 
@@ -331,17 +327,16 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
             return;
         }
         if (succeeded) {
-            logger.debug("[{}] Successfully subscribed to service: {}", deviceId, service);
+            logger.debug("[{}] Successfully subscribed to service: {}", deviceManager.getConfig().getDeviceName(),
+                    service);
             synchronized (upnpLock) {
                 subscriptions.put(service, Instant.now());
             }
-            deviceManager.setUpnpSubscriptionState(true);
         } else {
-            logger.warn("[{}] Failed to subscribe to service: {}", deviceId, service);
+            deviceManager.handleUpnpError("Failed to subscribe to service: " + service);
             synchronized (upnpLock) {
                 subscriptions.remove(service);
             }
-            deviceManager.setUpnpSubscriptionState(false);
             retryRegistration();
         }
     }
@@ -352,28 +347,38 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
         return localUdn != null ? localUdn : null;
     }
 
+    /**
+     * Dispose of UPnP resources
+     */
     public void dispose() {
         isDisposed = true;
-        logger.debug("[{}] Disposing UPnP manager", deviceId);
-        try {
-            ScheduledFuture<?> future = subscriptionRenewalFuture;
-            if (future != null) {
-                future.cancel(true);
-                subscriptionRenewalFuture = null;
+        logger.debug("[{}] Disposing UPnP manager", deviceManager.getConfig().getDeviceName());
+
+        // Cancel any scheduled subscription renewal
+        ScheduledFuture<?> future = subscriptionRenewalFuture;
+        if (future != null) {
+            future.cancel(true);
+            subscriptionRenewalFuture = null;
+        }
+
+        // Unregister from UPnP service
+        String udn = getUDN();
+        if (udn != null && !udn.isEmpty()) {
+            try {
+                upnpIOService.unregisterParticipant(this);
+                logger.debug("[{}] Unregistered UPnP participant", deviceManager.getConfig().getDeviceName());
+            } catch (Exception e) {
+                logger.debug("[{}] Error unregistering UPnP participant: {}", deviceManager.getConfig().getDeviceName(),
+                        e.getMessage());
             }
-            unregister();
-            scheduler.shutdownNow();
-            logger.debug("[{}] UPnP manager disposed", deviceId);
-        } catch (RuntimeException e) {
-            logger.warn("[{}] Error disposing UPnP manager: {}", deviceId, e.getMessage());
         }
     }
 
     @Override
     public void onStatusChanged(boolean status) {
         String localUdn = getUDN();
-        logger.debug("[{}] UPnP device {} is {}", deviceId, localUdn != null ? localUdn : "<unknown>",
-                (status ? "present" : "absent"));
+        logger.debug("[{}] UPnP device {} is {}", deviceManager.getConfig().getDeviceName(),
+                localUdn != null ? localUdn : "<unknown>", (status ? "present" : "absent"));
         // We do not set device offline or online here; HTTP logic does that.
     }
 
@@ -386,7 +391,8 @@ public class LinkPlayUpnpManager implements UpnpIOParticipant {
         try {
             return upnpIOService.isRegistered(this);
         } catch (Exception e) {
-            logger.debug("[{}] Device validation failed: {}", deviceId, e.getMessage());
+            logger.debug("[{}] Device validation failed: {}", deviceManager.getConfig().getDeviceName(),
+                    e.getMessage());
             return false;
         }
     }

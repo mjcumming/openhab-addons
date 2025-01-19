@@ -11,7 +11,7 @@
  * SPDX-License-Identifier: EPL-2.0
  */
 
-package org.openhab.binding.linkplay.internal.http;
+package org.openhab.binding.linkplay.internal.transport.http;
 
 import java.io.ByteArrayInputStream;
 import java.security.KeyFactory;

@@ -66,12 +66,13 @@ public class LinkPlayConfiguration {
     }
 
     /**
-     * Validates the IP address and normalizes the UDN if present.
+     * Validates the configuration. Only IP address is required.
+     * UDN will be discovered via HTTP if not provided.
      *
      * @return true if config is valid, false otherwise
      */
     public boolean isValid() {
-        // IP address is required
+        // Only IP address is required
         if (ipAddress.isEmpty()) {
             return false;
         }
@@ -91,11 +92,6 @@ public class LinkPlayConfiguration {
             }
         } catch (NumberFormatException e) {
             return false;
-        }
-
-        // Normalize UDN if present
-        if (!udn.isEmpty() && !udn.startsWith("uuid:")) {
-            udn = "uuid:" + udn;
         }
 
         return true;
@@ -137,22 +133,5 @@ public class LinkPlayConfiguration {
         return String.format(
                 "LinkPlayConfiguration [ipAddress=%s, deviceName=%s, udn=%s, playerStatusPollingInterval=%d, deviceStatusPollingInterval=%d]",
                 ipAddress, deviceName, udn, playerStatusPollingInterval, deviceStatusPollingInterval);
-    }
-
-    // ---- Helper methods ----
-    private static String getString(Configuration config, String key, String defaultVal) {
-        Object val = config.get(key);
-        if (val instanceof String) {
-            return (String) val;
-        }
-        return defaultVal;
-    }
-
-    private static int getInteger(Configuration config, String key, int defaultVal) {
-        Object val = config.get(key);
-        if (val instanceof Number) {
-            return ((Number) val).intValue();
-        }
-        return defaultVal;
     }
 }

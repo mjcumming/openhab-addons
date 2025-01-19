@@ -11,7 +11,7 @@
  * SPDX-License-Identifier: EPL-2.0
  */
 
-package org.openhab.binding.linkplay.internal.http;
+package org.openhab.binding.linkplay.internal.transport.http;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ScheduledFuture;
@@ -20,8 +20,9 @@ import java.util.concurrent.TimeUnit;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.binding.linkplay.internal.LinkPlayBindingConstants;
+import org.openhab.binding.linkplay.internal.LinkPlayDeviceManager;
 import org.openhab.binding.linkplay.internal.config.LinkPlayConfiguration;
-import org.openhab.binding.linkplay.internal.handler.LinkPlayDeviceManager;
+import org.openhab.binding.linkplay.internal.utils.HexConverter;
 import org.openhab.core.common.ThreadPoolManager;
 import org.openhab.core.types.Command;
 import org.slf4j.Logger;
@@ -46,38 +47,24 @@ public class LinkPlayHttpManager {
     private final LinkPlayDeviceManager deviceManager;
     private final int playerStatusPollingInterval;
     private final int deviceStatusPollingInterval;
-    private final String deviceName;
+    private final LinkPlayConfiguration config;
 
     private @Nullable ScheduledFuture<?> playerStatusPollingJob;
     private @Nullable ScheduledFuture<?> deviceStatusPollingJob;
     private static final int TIMEOUT_MS = 10000; // 10-second timeout
 
-    // Keep original constants for max retries, delay, etc.
-    private static final int MAX_RETRIES = 3;
-    private static final int RETRY_DELAY_MS = 1000;
-
-    private final LinkPlayConfiguration config;
-
-    private @Nullable String lastArtist;
-    private @Nullable String lastTitle;
-
-    public LinkPlayHttpManager(LinkPlayHttpClient client, LinkPlayDeviceManager deviceManager,
-            LinkPlayConfiguration config, String deviceName) {
+    public LinkPlayHttpManager(LinkPlayHttpClient client, LinkPlayDeviceManager deviceManager) {
         this.httpClient = client;
         this.deviceManager = deviceManager;
-        this.config = config;
-        this.deviceName = deviceName;
+        this.config = deviceManager.getConfig();
 
         // Get intervals from config
         this.playerStatusPollingInterval = config.getPlayerStatusPollingInterval();
         this.deviceStatusPollingInterval = config.getDeviceStatusPollingInterval();
 
-        logger.trace("[{}] LinkPlayHttpManager created => playerPoll={}s, devicePoll={}s", deviceName,
-                this.playerStatusPollingInterval, this.deviceStatusPollingInterval);
-
-        // Start polling automatically
-        startPlayerStatusPolling();
-        startDeviceStatusPolling();
+        logger.trace("[{}] LinkPlayHttpManager created => playerPoll={}s, devicePoll={}s",
+                deviceManager.getDeviceState().getDeviceName(), this.playerStatusPollingInterval,
+                this.deviceStatusPollingInterval);
     }
 
     // ------------------------------------------------------------------------
@@ -85,23 +72,32 @@ public class LinkPlayHttpManager {
     // ------------------------------------------------------------------------
 
     /**
+     * Starts both player and device status polling.
+     */
+    public void startPolling() {
+        startPlayerStatusPolling();
+        startDeviceStatusPolling();
+    }
+
+    /**
      * Starts player status polling using the configured interval.
      */
     public void startPlayerStatusPolling() {
         if (playerStatusPollingInterval <= 0) {
-            logger.debug("[{}] Player status polling is disabled (interval=0).", deviceName);
+            logger.debug("[{}] Player status polling is disabled (interval=0).", config.getDeviceName());
             return;
         }
 
         final @Nullable ScheduledFuture<?> currentJob = playerStatusPollingJob;
         if (currentJob != null && !currentJob.isCancelled()) {
-            logger.debug("[{}] Player status polling already running.", deviceName);
+            logger.debug("[{}] Player status polling already running.", config.getDeviceName());
             return;
         }
 
         playerStatusPollingJob = ThreadPoolManager.getScheduledPool(LinkPlayBindingConstants.BINDING_ID + "-http")
-                .scheduleWithFixedDelay(this::pollPlayerStatus, 0, playerStatusPollingInterval, TimeUnit.SECONDS);
-        logger.debug("[{}] Started player status polling every {}s", deviceName, playerStatusPollingInterval);
+                .scheduleWithFixedDelay(this::pollPlayerStatus, 2, playerStatusPollingInterval, TimeUnit.SECONDS);
+        logger.debug("[{}] Started player status polling every {}s", config.getDeviceName(),
+                playerStatusPollingInterval);
     }
 
     /**
@@ -109,19 +105,20 @@ public class LinkPlayHttpManager {
      */
     public void startDeviceStatusPolling() {
         if (deviceStatusPollingInterval <= 0) {
-            logger.debug("[{}] Device status polling is disabled (interval=0).", deviceName);
+            logger.debug("[{}] Device status polling is disabled (interval=0).", config.getDeviceName());
             return;
         }
 
         final @Nullable ScheduledFuture<?> currentJob = deviceStatusPollingJob;
         if (currentJob != null && !currentJob.isCancelled()) {
-            logger.debug("[{}] Device status polling already running.", deviceName);
+            logger.debug("[{}] Device status polling already running.", config.getDeviceName());
             return;
         }
 
         deviceStatusPollingJob = ThreadPoolManager.getScheduledPool(LinkPlayBindingConstants.BINDING_ID + "-http")
-                .scheduleWithFixedDelay(this::pollDeviceStatus, 0, deviceStatusPollingInterval, TimeUnit.SECONDS);
-        logger.debug("[{}] Started device status polling every {}s", deviceName, deviceStatusPollingInterval);
+                .scheduleWithFixedDelay(this::pollDeviceStatus, 1, deviceStatusPollingInterval, TimeUnit.SECONDS);
+        logger.debug("[{}] Started device status polling every {}s", config.getDeviceName(),
+                deviceStatusPollingInterval);
     }
 
     /**
@@ -132,14 +129,14 @@ public class LinkPlayHttpManager {
         if (playerJob != null) {
             playerJob.cancel(true);
             playerStatusPollingJob = null;
-            logger.debug("[{}] Stopped player status polling", deviceName);
+            logger.debug("[{}] Stopped player status polling", config.getDeviceName());
         }
 
         final @Nullable ScheduledFuture<?> deviceJob = deviceStatusPollingJob;
         if (deviceJob != null) {
             deviceJob.cancel(true);
             deviceStatusPollingJob = null;
-            logger.debug("[{}] Stopped device status polling", deviceName);
+            logger.debug("[{}] Stopped device status polling", config.getDeviceName());
         }
     }
 
@@ -152,25 +149,71 @@ public class LinkPlayHttpManager {
      */
     private void pollPlayerStatus() {
         String ip = getDeviceIp();
-        logger.trace("[{}] Polling player status at IP={}", deviceName, ip);
+        logger.trace("[{}] Polling player status at IP={}", config.getDeviceName(), ip);
 
         try {
             CompletableFuture<String> future = httpClient.getPlayerStatus(ip);
             String response = future.get(TIMEOUT_MS, TimeUnit.MILLISECONDS);
-            logger.trace("[{}] pollPlayerStatus() -> JSON: {}", deviceName, response);
+            logger.trace("[{}] pollPlayerStatus() -> JSON: {}", config.getDeviceName(), response);
 
             try {
-                JsonObject json = JsonParser.parseString(response).getAsJsonObject();
-                deviceManager.updateChannelsFromHttp(json);
+                JsonObject rawJson = JsonParser.parseString(response).getAsJsonObject();
+                JsonObject cleanJson = parsePlayerStatus(rawJson);
+                deviceManager.handleGetPlayerStatusResponse(cleanJson);
                 deviceManager.handleCommunicationResult(true);
             } catch (JsonSyntaxException e) {
-                logger.warn("[{}] Failed to parse player status JSON: {}", deviceName, e.getMessage());
+                logger.warn("[{}] Failed to parse player status JSON: {}", config.getDeviceName(), e.getMessage());
                 deviceManager.handleCommunicationResult(false);
             }
         } catch (Exception e) {
-            logger.warn("[{}] Player status poll failed: {}", deviceName, e.getMessage());
+            logger.warn("[{}] Player status poll failed: {}", config.getDeviceName(), e.getMessage());
             deviceManager.handleCommunicationResult(false);
         }
+    }
+
+    private JsonObject parsePlayerStatus(JsonObject rawJson) {
+        JsonObject cleanJson = new JsonObject();
+
+        // Parse basic playback status
+        if (rawJson.has("status")) {
+            cleanJson.addProperty("playStatus", getAsString(rawJson, "status"));
+        }
+
+        // Parse and decode hex-encoded fields
+        if (rawJson.has("Title")) {
+            cleanJson.addProperty("title", HexConverter.hexToString(getAsString(rawJson, "Title")));
+        }
+        if (rawJson.has("Artist")) {
+            cleanJson.addProperty("artist", HexConverter.hexToString(getAsString(rawJson, "Artist")));
+        }
+        if (rawJson.has("Album")) {
+            cleanJson.addProperty("album", HexConverter.hexToString(getAsString(rawJson, "Album")));
+        }
+
+        // Parse volume and mute
+        if (rawJson.has("vol")) {
+            cleanJson.addProperty("volume", getAsInt(rawJson, "vol", 0));
+        }
+        if (rawJson.has("mute")) {
+            cleanJson.addProperty("mute", getAsBoolean(rawJson, "mute"));
+        }
+
+        // Parse and convert time values to seconds
+        if (rawJson.has("duration")) {
+            cleanJson.addProperty("durationSeconds", getAsInt(rawJson, "duration", 0) / 1000.0);
+        }
+        if (rawJson.has("position")) {
+            cleanJson.addProperty("positionSeconds", getAsInt(rawJson, "position", 0) / 1000.0);
+        }
+
+        // Parse loop mode into separate shuffle/repeat flags
+        if (rawJson.has("loop")) {
+            int loopMode = getAsInt(rawJson, "loop", 0);
+            cleanJson.addProperty("shuffle", loopMode == 2 || loopMode == 3 || loopMode == 5);
+            cleanJson.addProperty("repeat", loopMode == 0 || loopMode == 1 || loopMode == 2 || loopMode == 5);
+        }
+
+        return cleanJson;
     }
 
     /**
@@ -178,23 +221,23 @@ public class LinkPlayHttpManager {
      */
     private void pollDeviceStatus() {
         String ip = getDeviceIp();
-        logger.trace("[{}] Polling device status at IP={}", deviceName, ip);
+        logger.trace("[{}] Polling device status at IP={}", config.getDeviceName(), ip);
 
         try {
             CompletableFuture<String> future = httpClient.getStatusEx(ip);
             String response = future.get(TIMEOUT_MS, TimeUnit.MILLISECONDS);
-            logger.trace("[{}] pollDeviceStatus() -> JSON: {}", deviceName, response);
+            logger.trace("[{}] pollDeviceStatus() -> JSON: {}", config.getDeviceName(), response);
 
             try {
                 JsonObject json = JsonParser.parseString(response).getAsJsonObject();
-                deviceManager.updateMultiroomChannelsFromHttp(json);
+                deviceManager.handleGetStatusExResponse(json);
                 deviceManager.handleCommunicationResult(true);
             } catch (JsonSyntaxException e) {
-                logger.warn("[{}] Failed to parse device status JSON: {}", deviceName, e.getMessage());
+                logger.warn("[{}] Failed to parse device status JSON: {}", config.getDeviceName(), e.getMessage());
                 deviceManager.handleCommunicationResult(false);
             }
         } catch (Exception e) {
-            logger.warn("[{}] Device status poll failed: {}", deviceName, e.getMessage());
+            logger.warn("[{}] Device status poll failed: {}", config.getDeviceName(), e.getMessage());
             deviceManager.handleCommunicationResult(false);
         }
     }
@@ -204,16 +247,18 @@ public class LinkPlayHttpManager {
         @Nullable
         String cmd = formatCommand(channelId, command);
         if (cmd == null) {
-            logger.trace("[{}] No mapping for channel='{}' => command='{}'", deviceName, channelId, command);
+            logger.trace("[{}] No mapping for channel='{}' => command='{}'", config.getDeviceName(), channelId,
+                    command);
             return;
         }
 
-        logger.trace("[{}] Sending command='{}' to IP={}", deviceName, cmd, ip);
+        logger.trace("[{}] Sending command='{}' to IP={}", config.getDeviceName(), cmd, ip);
         try {
             CompletableFuture<@Nullable String> futureResponse = httpClient.sendCommand(ip, cmd)
                     .handle((@Nullable String result, @Nullable Throwable ex) -> {
                         if (ex != null) {
-                            logger.warn("[{}] Error sending command='{}' => {}", deviceName, cmd, ex.getMessage());
+                            logger.warn("[{}] Error sending command='{}' => {}", config.getDeviceName(), cmd,
+                                    ex.getMessage());
                             return null;
                         }
                         return result;
@@ -221,9 +266,9 @@ public class LinkPlayHttpManager {
 
             @Nullable
             String response = futureResponse.get(TIMEOUT_MS, TimeUnit.MILLISECONDS);
-            logger.trace("[{}] Command response => {}", deviceName, response);
+            logger.trace("[{}] Command response => {}", config.getDeviceName(), response);
         } catch (Exception ex) {
-            logger.warn("[{}] Exception sending command='{}' => {}", deviceName, cmd, ex.getMessage());
+            logger.warn("[{}] Exception sending command='{}' => {}", config.getDeviceName(), cmd, ex.getMessage());
             deviceManager.handleCommunicationResult(false);
         }
     }
@@ -234,7 +279,8 @@ public class LinkPlayHttpManager {
             CompletableFuture<@Nullable String> future = httpClient.sendCommand(ip, command)
                     .handle((@Nullable String result, @Nullable Throwable ex) -> {
                         if (ex != null) {
-                            logger.warn("[{}] Error sending command='{}': {}", deviceName, command, ex.getMessage());
+                            logger.warn("[{}] Error sending command='{}': {}", config.getDeviceName(), command,
+                                    ex.getMessage());
                             return null;
                         }
                         return result;
@@ -242,6 +288,13 @@ public class LinkPlayHttpManager {
 
             @Nullable
             String response = future.get(TIMEOUT_MS, TimeUnit.MILLISECONDS);
+
+            // For group commands, immediately poll status
+            if (command.startsWith("joinGroup:") || command.startsWith("leaveGroup") || command.startsWith("ungroup")
+                    || command.startsWith("kickoutSlave:")) {
+                pollDeviceStatus();
+            }
+
             if (response == null) {
                 return null;
             }
@@ -249,13 +302,14 @@ public class LinkPlayHttpManager {
             try {
                 return JsonParser.parseString(response).getAsJsonObject();
             } catch (JsonSyntaxException e) {
-                logger.warn("[{}] Failed to parse response for command='{}': {}", deviceName, command, e.getMessage());
+                logger.warn("[{}] Failed to parse response for command='{}': {}", config.getDeviceName(), command,
+                        e.getMessage());
                 deviceManager.handleCommunicationResult(false);
                 return null;
             }
 
         } catch (Exception e) {
-            logger.warn("[{}] Exception sending command='{}': {}", deviceName, command, e.getMessage());
+            logger.warn("[{}] Exception sending command='{}': {}", config.getDeviceName(), command, e.getMessage());
             return null;
         }
     }
@@ -289,7 +343,7 @@ public class LinkPlayHttpManager {
         } else if ("PAUSE".equals(c)) {
             return "setPlayerCmd:pause";
         }
-        logger.trace("[{}] Unhandled control command => {}", deviceName, cmd);
+        logger.trace("[{}] Unhandled control command => {}", config.getDeviceName(), cmd);
         return "";
     }
 
@@ -298,7 +352,7 @@ public class LinkPlayHttpManager {
             int volume = Integer.parseInt(cmd.toString());
             return "setPlayerCmd:vol:" + volume;
         } catch (NumberFormatException e) {
-            logger.warn("[{}] Volume command not an integer => {}", deviceName, cmd);
+            logger.warn("[{}] Volume command not an integer => {}", config.getDeviceName(), cmd);
             return "";
         }
     }
@@ -321,7 +375,7 @@ public class LinkPlayHttpManager {
     private String getDeviceIp() {
         String ip = config.getIpAddress();
         if (ip.isEmpty()) {
-            logger.warn("[{}] Device IP address is empty. Using default IP '0.0.0.0'.", deviceName);
+            logger.warn("[{}] Device IP address is empty. Using default IP '0.0.0.0'.", config.getDeviceName());
             return "0.0.0.0";
         }
         return ip;
@@ -332,5 +386,49 @@ public class LinkPlayHttpManager {
      */
     public void dispose() {
         stopPolling();
+    }
+
+    // Add utility methods for JSON parsing
+    private String getAsString(JsonObject obj, String key) {
+        try {
+            if (!obj.has(key) || obj.get(key).isJsonNull()) {
+                return "";
+            }
+            return obj.get(key).getAsString();
+        } catch (Exception e) {
+            logger.trace("[{}] Failed to get string value for '{}': {}", config.getDeviceName(), key, e.getMessage());
+            return "";
+        }
+    }
+
+    private int getAsInt(JsonObject obj, String key, int defaultValue) {
+        try {
+            if (!obj.has(key) || obj.get(key).isJsonNull()) {
+                return defaultValue;
+            }
+            return obj.get(key).getAsInt();
+        } catch (Exception e) {
+            logger.trace("[{}] Failed to get int value for '{}': {}", config.getDeviceName(), key, e.getMessage());
+            return defaultValue;
+        }
+    }
+
+    private boolean getAsBoolean(JsonObject obj, String key) {
+        try {
+            if (!obj.has(key) || obj.get(key).isJsonNull()) {
+                return false;
+            }
+            // Attempt direct boolean
+            try {
+                return obj.get(key).getAsBoolean();
+            } catch (Exception ignored) {
+                // fallback
+            }
+            String val = obj.get(key).getAsString();
+            return "true".equalsIgnoreCase(val) || "1".equals(val) || "on".equalsIgnoreCase(val);
+        } catch (Exception e) {
+            logger.trace("[{}] Failed to get boolean value for '{}': {}", config.getDeviceName(), key, e.getMessage());
+            return false;
+        }
     }
 }

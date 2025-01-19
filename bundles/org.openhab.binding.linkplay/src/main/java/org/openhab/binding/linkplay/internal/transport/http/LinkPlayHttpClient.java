@@ -11,7 +11,7 @@
  * SPDX-License-Identifier: EPL-2.0
  */
 
-package org.openhab.binding.linkplay.internal.http;
+package org.openhab.binding.linkplay.internal.transport.http;
 
 import static org.openhab.binding.linkplay.internal.LinkPlayBindingConstants.CHANNEL_VOLUME;
 

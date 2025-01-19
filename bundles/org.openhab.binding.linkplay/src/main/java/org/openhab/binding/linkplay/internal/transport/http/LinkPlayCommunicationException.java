@@ -10,25 +10,25 @@
  *
  * SPDX-License-Identifier: EPL-2.0
  */
-package org.openhab.binding.linkplay.internal.http;
+package org.openhab.binding.linkplay.internal.transport.http;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 
 /**
- * Exception thrown when the LinkPlay API returns an error response
+ * Exception thrown when there is a communication error with the LinkPlay device
  *
  * @author Michael Cumming - Initial contribution
  */
 @NonNullByDefault
-public class LinkPlayApiException extends Exception {
+public class LinkPlayCommunicationException extends Exception {
 
     private static final long serialVersionUID = 1L;
 
-    public LinkPlayApiException(String message) {
+    public LinkPlayCommunicationException(String message) {
         super(message);
     }
 
-    public LinkPlayApiException(String message, Throwable cause) {
+    public LinkPlayCommunicationException(String message, Throwable cause) {
         super(message, cause);
     }
 }

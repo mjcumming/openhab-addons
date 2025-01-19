@@ -22,7 +22,7 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.binding.linkplay.internal.config.LinkPlayConfiguration;
 import org.openhab.binding.linkplay.internal.handler.LinkPlayThingHandler;
-import org.openhab.binding.linkplay.internal.http.LinkPlayHttpClient;
+import org.openhab.binding.linkplay.internal.transport.http.LinkPlayHttpClient;
 import org.openhab.core.config.core.Configuration;
 import org.openhab.core.io.transport.upnp.UpnpIOService;
 import org.openhab.core.thing.Thing;
@@ -93,37 +93,35 @@ public class LinkPlayHandlerFactory extends BaseThingHandlerFactory {
     protected @Nullable ThingHandler createHandler(Thing thing) {
         ThingTypeUID thingTypeUID = thing.getThingTypeUID();
 
-        // Double-check the type is actually supported
-        if (!SUPPORTED_THING_TYPES_UIDS.contains(thingTypeUID)) {
-            logger.trace("Cannot create handler for unsupported thing type {}", thingTypeUID);
-            return null;
+        // Create handler immediately for any supported device type
+        if (SUPPORTED_THING_TYPES_UIDS.contains(thingTypeUID)) {
+            // Extract config from the Thing's config map
+            Configuration config = thing.getConfiguration();
+            LinkPlayConfiguration linkplayConfig = LinkPlayConfiguration.fromConfiguration(config);
+
+            // Validate minimum required config (IP address)
+            if (!linkplayConfig.isValid()) {
+                logger.error("Invalid configuration for LinkPlay thing {} - missing IP address", thing.getUID());
+                return null;
+            }
+
+            logger.debug("Creating LinkPlayThingHandler for thing '{}' with IP '{}'", thing.getUID(),
+                    linkplayConfig.getIpAddress());
+
+            try {
+                // Create handler with validated config
+                LinkPlayThingHandler handler = new LinkPlayThingHandler(thing, httpClient, upnpIOService,
+                        linkplayConfig);
+                handlers.put(thing.getUID(), handler);
+                return handler;
+            } catch (Exception e) {
+                logger.error("Failed to create LinkPlayThingHandler for thing {} => {}", thing.getUID(),
+                        e.getMessage());
+                return null;
+            }
         }
 
-        // Extract config from the Thing's config map
-        Configuration config = thing.getConfiguration();
-
-        // Convert to a domain-specific config object that verifies IP/UDN
-        LinkPlayConfiguration linkplayConfig = LinkPlayConfiguration.fromConfiguration(config);
-
-        // If config is invalid, we do not create a handler
-        if (!linkplayConfig.isValid()) {
-            logger.error("Invalid configuration for LinkPlay thing {}", thing.getUID());
-            return null;
-        }
-
-        logger.debug("Creating LinkPlayThingHandler for thing '{}' => UDN='{}', IP='{}'", thing.getUID(),
-                linkplayConfig.getUdn(), linkplayConfig.getIpAddress());
-
-        try {
-            // Create the actual device handler with the validated config
-            LinkPlayThingHandler handler = new LinkPlayThingHandler(thing, upnpIOService, httpClient, linkplayConfig);
-            // Store it in the local map for reference (optional but can be useful)
-            handlers.put(thing.getUID(), handler);
-            return handler;
-        } catch (Exception e) {
-            logger.error("Failed to create LinkPlayThingHandler for thing {} => {}", thing.getUID(), e.getMessage());
-            return null;
-        }
+        return null;
     }
 
     /**
