@@ -177,7 +177,12 @@ public class LinkPlayHttpClient {
                     if (response.getStatus() == 200) {
                         String content = response.getContentAsString();
                         if (content.contains("error") || content.contains("fail")) {
-                            logger.warn("API error response: {}", content);
+                            // Use trace for getStatusEx during discovery, warn for other API calls
+                            if (params.contains("getStatusEx")) {
+                                logger.trace("API error response: {}", content);
+                            } else {
+                                logger.warn("API error response: {}", content);
+                            }
                             throw new LinkPlayApiException("API error: " + content);
                         }
                         return content;
@@ -198,17 +203,32 @@ public class LinkPlayHttpClient {
                 if (response.getStatus() == 200) {
                     String content = response.getContentAsString();
                     if (content.contains("error") || content.contains("fail")) {
-                        logger.warn("API error response: {}", content);
+                        // Use trace for getStatusEx during discovery, warn for other API calls
+                        if (params.contains("getStatusEx")) {
+                            logger.trace("API error response: {}", content);
+                        } else {
+                            logger.warn("API error response: {}", content);
+                        }
                         throw new LinkPlayApiException("API error: " + content);
                     }
                     return content;
                 }
                 String error = String.format("HTTP error code: %d", response.getStatus());
-                logger.warn(error);
+                // Use trace for getStatusEx during discovery, warn for other API calls
+                if (params.contains("getStatusEx")) {
+                    logger.trace(error);
+                } else {
+                    logger.warn(error);
+                }
                 throw new LinkPlayCommunicationException(error);
             } catch (Exception e) {
                 String error = String.format("Request failed for %s: %s", url, e.getMessage());
-                logger.warn(error);
+                // Use trace for getStatusEx during discovery, warn for other API calls
+                if (params.contains("getStatusEx")) {
+                    logger.trace(error);
+                } else {
+                    logger.warn(error);
+                }
                 throw new CompletionException(new LinkPlayCommunicationException(error, e));
             }
         });

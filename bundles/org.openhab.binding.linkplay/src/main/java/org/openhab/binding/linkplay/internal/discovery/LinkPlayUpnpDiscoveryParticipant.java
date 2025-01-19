@@ -31,9 +31,11 @@ import org.jupnp.model.types.UDAServiceId;
 import org.openhab.binding.linkplay.internal.transport.http.LinkPlayApiException;
 import org.openhab.binding.linkplay.internal.transport.http.LinkPlayCommunicationException;
 import org.openhab.binding.linkplay.internal.transport.http.LinkPlayHttpClient;
+import org.openhab.core.config.core.Configuration;
 import org.openhab.core.config.discovery.DiscoveryResult;
 import org.openhab.core.config.discovery.DiscoveryResultBuilder;
 import org.openhab.core.config.discovery.upnp.UpnpDiscoveryParticipant;
+import org.openhab.core.thing.Thing;
 import org.openhab.core.thing.ThingRegistry;
 import org.openhab.core.thing.ThingTypeUID;
 import org.openhab.core.thing.ThingUID;
@@ -195,8 +197,11 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
         String normalizedUDN = deviceUDN.startsWith("uuid:") ? deviceUDN : "uuid:" + deviceUDN;
 
         Map<String, Object> properties = new HashMap<>();
+
+        // Add both configuration and property values to the properties map
         properties.put(CONFIG_IP_ADDRESS, ipAddress);
         properties.put(CONFIG_UDN, normalizedUDN);
+        properties.put(CONFIG_DEVICE_NAME, friendlyName);
         properties.put(PROPERTY_MODEL, modelName);
         properties.put(PROPERTY_MANUFACTURER, manufacturer);
         properties.put(PROPERTY_UDN, normalizedUDN);
@@ -247,6 +252,19 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
      */
     private boolean validateDevice(String ipAddress) {
         logger.trace("validateDevice => Checking IP={}", ipAddress);
+
+        // First check if we already have a thing with this IP
+        for (Thing thing : thingRegistry.getAll()) {
+            if (thing.getThingTypeUID().equals(THING_TYPE_DEVICE)) {
+                Configuration config = thing.getConfiguration();
+                if (ipAddress.equals(config.get(CONFIG_IP_ADDRESS))) {
+                    logger.debug("Device at {} already exists as thing {}, skipping validation", ipAddress,
+                            thing.getUID());
+                    return false;
+                }
+            }
+        }
+
         try {
             String response = httpClient.getStatusEx(ipAddress).get();
             logger.info("LinkPlay device found at {} => getStatusEx response: '{}'", ipAddress, response);
