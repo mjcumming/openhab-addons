@@ -14,6 +14,9 @@ package org.openhab.binding.linkplay.internal.multiroom;
 
 import static org.openhab.binding.linkplay.internal.LinkPlayBindingConstants.*;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.openhab.binding.linkplay.internal.LinkPlayDeviceManager;
 import org.openhab.binding.linkplay.internal.model.LinkPlayMultiroomState;
@@ -98,15 +101,29 @@ public class LinkPlayGroupManager {
         boolean isGrouped = status.has("group") && status.get("group").getAsInt() == 1;
 
         if (!isGrouped) {
-            state.setStandaloneState();
+            // Check if this device might be a master by querying slave list
+            JsonObject slaveListStatus = httpManager.sendCommand(API_GET_SLAVE_LIST);
+            if (slaveListStatus != null && slaveListStatus.has("slave_list")
+                    && !slaveListStatus.get("slave_list").getAsJsonArray().isEmpty()) {
+                handleMasterStatus(slaveListStatus);
+            } else {
+                state.setStandaloneState();
+            }
             updateChannels();
             return;
         }
 
         if (status.has("master_ip") || status.has("host_ip")) {
             handleSlaveStatus(status);
-        } else if (status.has("slave_list")) {
-            handleMasterStatus(status);
+        } else {
+            // This device might be a master - query for slave list
+            JsonObject slaveListStatus = httpManager.sendCommand(API_GET_SLAVE_LIST);
+            if (slaveListStatus != null && slaveListStatus.has("slave_list")) {
+                handleMasterStatus(slaveListStatus);
+            } else {
+                // No slave list found, treat as standalone
+                state.setStandaloneState();
+            }
         }
 
         // Update group name if available
@@ -123,7 +140,23 @@ public class LinkPlayGroupManager {
     private void handleMasterStatus(JsonObject status) {
         state.setMasterState();
         if (status.has("slave_list")) {
-            processSlaveList(status.getAsJsonArray("slave_list"));
+            JsonArray slaveList = status.getAsJsonArray("slave_list");
+            if (slaveList != null && !slaveList.isEmpty()) {
+                List<String> slaveIPs = new ArrayList<>();
+                for (JsonElement slave : slaveList) {
+                    JsonObject slaveObj = slave.getAsJsonObject();
+                    if (slaveObj.has("ip")) {
+                        slaveIPs.add(slaveObj.get("ip").getAsString());
+                    }
+                }
+                // Convert list to comma-separated string
+                state.setSlaveIPs(String.join(",", slaveIPs));
+
+                // Also add each slave with default values for volume/mute
+                for (String ip : slaveIPs) {
+                    state.addSlave(ip, "", 50, false); // Default volume 50%, unmuted
+                }
+            }
         }
         updateChannels();
     }
@@ -140,18 +173,6 @@ public class LinkPlayGroupManager {
         }
 
         state.setSlaveState(masterIP);
-    }
-
-    private void processSlaveList(JsonArray slaveList) {
-        state.clearSlaves();
-        for (JsonElement slave : slaveList) {
-            JsonObject slaveObj = slave.getAsJsonObject();
-            String ip = slaveObj.get("ip").getAsString();
-            String name = slaveObj.get("name").getAsString();
-            int volume = slaveObj.get("volume").getAsInt();
-            boolean muted = slaveObj.get("mute").getAsBoolean();
-            state.addSlave(ip, name, volume, muted);
-        }
     }
 
     // Command methods - pure business logic
