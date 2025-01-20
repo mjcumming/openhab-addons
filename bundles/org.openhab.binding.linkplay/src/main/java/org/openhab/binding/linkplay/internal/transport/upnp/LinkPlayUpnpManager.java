@@ -12,393 +12,238 @@
  */
 package org.openhab.binding.linkplay.internal.transport.upnp;
 
-import java.time.Duration;
-import java.time.Instant;
+import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
-import org.openhab.binding.linkplay.internal.LinkPlayBindingConstants;
 import org.openhab.binding.linkplay.internal.LinkPlayDeviceManager;
-import org.openhab.core.common.ThreadPoolManager;
-import org.openhab.core.io.transport.upnp.UpnpIOParticipant;
 import org.openhab.core.io.transport.upnp.UpnpIOService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
  * The {@link LinkPlayUpnpManager} handles UPnP communication with a LinkPlay device.
- * It manages UPnP subscriptions, renewals, and event handling.
+ * It uses SOAP calls to manage playback queues, metadata, and playlists.
  * <p>
- * This class follows a structure similar to other UPnP-based bindings (e.g., Samsung TV),
- * keeping all subscription logic and event processing here. The device-specific business
- * logic (e.g., how to update playback state) is delegated to the {@link LinkPlayDeviceManager}.
- * <p>
- * Note: This class uses {@link DIDLParser} to parse DIDL-Lite or other XML metadata returned
- * by the device in UPnP events.
+ * Any changes to the queue trigger a callback to the device manager.
  * 
  * @author Michael Cumming - Initial Contribution
  */
 @NonNullByDefault
-public class LinkPlayUpnpManager implements UpnpIOParticipant {
+public class LinkPlayUpnpManager {
 
     private static final Logger logger = LoggerFactory.getLogger(LinkPlayUpnpManager.class);
-
-    // Timing constants
-    private static final Duration SUBSCRIPTION_RENEWAL_PERIOD = Duration.ofMinutes(25);
-    private static final Duration SUBSCRIPTION_RETRY_DELAY = Duration.ofSeconds(10);
-    private static final Duration SUBSCRIPTION_EXPIRY = Duration.ofMinutes(30);
-    private static final int SUBSCRIPTION_DURATION_SECONDS = 1800; // 30 minutes
-
-    private final Object upnpLock = new Object();
-    private final Map<String, Instant> subscriptions = new ConcurrentHashMap<>();
 
     private final UpnpIOService upnpIOService;
     private final LinkPlayDeviceManager deviceManager;
 
-    private final ScheduledExecutorService scheduler;
-    private @Nullable ScheduledFuture<?> subscriptionRenewalFuture;
-    private @Nullable String udn;
-    private volatile boolean isDisposed = false;
-
+    private static final String SERVICE_PLAYQUEUE = "urn:schemas-wiimu-com:service:PlayQueue:1";
     private static final String SERVICE_AVTRANSPORT = "urn:schemas-upnp-org:service:AVTransport:1";
-    private static final String SERVICE_RENDERING_CONTROL = "urn:schemas-upnp-org:service:RenderingControl:1";
 
+    private @Nullable String udn;
+
+    /**
+     * Constructor.
+     * 
+     * @param upnpIOService The openHAB UPnP IO service
+     * @param deviceManager The device manager handling device logic
+     */
     public LinkPlayUpnpManager(UpnpIOService upnpIOService, LinkPlayDeviceManager deviceManager) {
         this.upnpIOService = upnpIOService;
         this.deviceManager = deviceManager;
-        this.scheduler = ThreadPoolManager.getScheduledPool(LinkPlayBindingConstants.BINDING_ID + "-upnp");
 
-        // If we have a UDN in config, use it
+        // Register UDN from device config, if available
         String configUdn = deviceManager.getConfig().getUdn();
         if (!configUdn.isEmpty()) {
-            logger.debug("[{}] Registering UPnP device with UDN={}", deviceManager.getConfig().getDeviceName(),
-                    configUdn);
-            upnpIOService.registerParticipant(this);
+            this.udn = configUdn.startsWith("uuid:") ? configUdn : "uuid:" + configUdn;
+            logger.debug("[{}] Initialized LinkPlayUpnpManager with UDN={}", deviceManager.getConfig().getDeviceName(),
+                    this.udn);
         }
     }
 
     /**
-     * Called once we actually know the device UDN (from config or HTTP).
-     * Sets up the participant registration and subscriptions.
+     * Fetch the current playback queue.
      */
-    public void register(String udn) {
-        if (udn.isEmpty()) {
-            logger.warn("Cannot register UPnP - UDN is empty");
+    public void fetchQueue() {
+        if (udn == null) {
+            logger.warn("Cannot fetch queue - UDN is not set.");
             return;
         }
 
-        // Normalize UDN format
-        String normalizedUdn = udn.startsWith("uuid:") ? udn : "uuid:" + udn;
-        logger.debug("Registering UPnP for device with UDN: {}", normalizedUdn);
+        logger.debug("[{}] Fetching playback queue via SOAP BrowseQueue...",
+                deviceManager.getConfig().getDeviceName());
 
-        // Register with UPnP service asynchronously
         try {
-            upnpIOService.registerParticipant(this);
-            this.udn = normalizedUdn;
+            Map<String, String> arguments = new HashMap<>();
+            arguments.put("QueueName", "TotalQueue");
 
-            // Subscribe to events asynchronously
-            CompletableFuture.runAsync(() -> {
-                try {
-                    upnpIOService.addSubscription(this, SERVICE_AVTRANSPORT, SUBSCRIPTION_DURATION_SECONDS);
-                    upnpIOService.addSubscription(this, SERVICE_RENDERING_CONTROL, SUBSCRIPTION_DURATION_SECONDS);
-                } catch (Exception e) {
-                    logger.warn("Failed to subscribe to UPnP events: {}", e.getMessage());
-                }
-            });
+            String response = upnpIOService.execute(udn, SERVICE_PLAYQUEUE, "BrowseQueue", arguments);
+            logger.debug("[{}] Received SOAP response for BrowseQueue: {}", deviceManager.getConfig().getDeviceName(),
+                    response);
+
+            Map<String, String> queueDetails = DIDLParser.parsePlaylist(response);
+            deviceManager.updatePlayerQueue(queueDetails);
+
         } catch (Exception e) {
-            logger.warn("Failed to register UPnP participant: {}", e.getMessage());
+            logger.error("[{}] Failed to fetch playback queue: {}", deviceManager.getConfig().getDeviceName(),
+                    e.getMessage(), e);
         }
     }
 
     /**
-     * Unregister and clear tracking.
+     * Play a specific track in the queue by its index.
+     * 
+     * @param index The index of the track to play (0-based).
      */
-    public void unregister() {
-        logger.debug("[{}] Unregistering UPnP participant", deviceManager.getConfig().getDeviceName());
-        try {
-            unregisterUpnpParticipant();
-        } catch (RuntimeException e) {
-            logger.warn("[{}] Failed to unregister UPnP participant: {}", deviceManager.getConfig().getDeviceName(),
-                    e.getMessage());
-            if (logger.isDebugEnabled()) {
-                logger.debug("[{}] Unregistration error details:", deviceManager.getConfig().getDeviceName(), e);
-            }
-        }
-    }
-
-    public void unregisterUpnpParticipant() {
-        upnpIOService.unregisterParticipant(this);
-        synchronized (upnpLock) {
-            subscriptions.clear();
-        }
-        udn = null;
-        logger.debug("[{}] UPnP participant unregistered", deviceManager.getConfig().getDeviceName());
-    }
-
-    /**
-     * Subscribe to a short-named service ("AVTransport" or "RenderingControl").
-     */
-    public void addSubscription(String serviceShortName) {
-        if (isDisposed) {
+    public void playTrackAtIndex(int index) {
+        if (udn == null) {
+            logger.warn("Cannot play track - UDN is not set.");
             return;
         }
 
-        String fullService = "urn:schemas-upnp-org:service:" + serviceShortName + ":1";
-        synchronized (upnpLock) {
-            if (!subscriptions.containsKey(fullService)) {
-                try {
-                    // Verify manager is actually registered
-                    if (!upnpIOService.isRegistered(this)) {
-                        logger.warn("[{}] Cannot subscribe to {} - device not registered",
-                                deviceManager.getConfig().getDeviceName(), serviceShortName);
-                        String localUdn = udn;
-                        if (localUdn != null && validateDeviceReady(localUdn)) {
-                            upnpIOService.addSubscription(this, fullService, SUBSCRIPTION_DURATION_SECONDS);
-                            subscriptions.put(fullService, Instant.now());
-                            logger.debug("[{}] Subscribed to service: {}", deviceManager.getConfig().getDeviceName(),
-                                    fullService);
-                        } else {
-                            logger.warn("[{}] Device is not ready, retrying subscription registration...",
-                                    deviceManager.getConfig().getDeviceName());
-                            retryRegistration();
-                        }
-                        return;
-                    }
-
-                    upnpIOService.addSubscription(this, fullService, SUBSCRIPTION_DURATION_SECONDS);
-                    subscriptions.put(fullService, Instant.now());
-                    logger.debug("[{}] Subscribed to service: {}", deviceManager.getConfig().getDeviceName(),
-                            fullService);
-                } catch (RuntimeException e) {
-                    logger.warn("[{}] Failed to subscribe to service {}: {}", deviceManager.getConfig().getDeviceName(),
-                            fullService, e.getMessage());
-                    if (logger.isDebugEnabled()) {
-                        logger.debug("[{}] Subscription error details:", deviceManager.getConfig().getDeviceName(), e);
-                    }
-                    retryRegistration();
-                }
-            } else {
-                logger.trace("[{}] Subscription already exists for service: {}",
-                        deviceManager.getConfig().getDeviceName(), fullService);
-            }
-        }
-    }
-
-    /**
-     * Schedules periodic renewal of UPnP subscriptions to prevent expiration.
-     * This is called internally when subscriptions are added or need to be renewed.
-     */
-    @SuppressWarnings("unused") // Used internally for UPnP subscription management
-    private void scheduleSubscriptionRenewal() {
-        ScheduledFuture<?> future = subscriptionRenewalFuture;
-        if (future != null && !future.isCancelled()) {
-            future.cancel(true);
-        }
-
-        subscriptionRenewalFuture = scheduler.scheduleWithFixedDelay(() -> {
-            if (isDisposed) {
-                return;
-            }
-            try {
-                Instant now = Instant.now();
-                synchronized (upnpLock) {
-                    // Remove stale subscriptions
-                    subscriptions.entrySet().removeIf(entry -> {
-                        Instant lastRenewed = entry.getValue();
-                        if (now.isAfter(lastRenewed.plus(SUBSCRIPTION_EXPIRY))) {
-                            logger.debug("[{}] Removing expired subscription: {}",
-                                    deviceManager.getConfig().getDeviceName(), entry.getKey());
-                            return true;
-                        }
-                        return false;
-                    });
-
-                    // Renew those approaching expiration
-                    for (Map.Entry<String, Instant> entry : subscriptions.entrySet()) {
-                        String service = entry.getKey();
-                        Instant lastSubscribed = entry.getValue();
-                        if (now.isAfter(lastSubscribed.plus(SUBSCRIPTION_RENEWAL_PERIOD))) {
-                            upnpIOService.addSubscription(this, service, SUBSCRIPTION_DURATION_SECONDS);
-                            subscriptions.put(service, now);
-                            logger.debug("[{}] Renewed subscription for: {}", deviceManager.getConfig().getDeviceName(),
-                                    service);
-                        }
-                    }
-                }
-            } catch (RuntimeException e) {
-                logger.warn("[{}] Failed to renew UPnP subscriptions: {}", deviceManager.getConfig().getDeviceName(),
-                        e.getMessage());
-                retryRegistration();
-            }
-        }, SUBSCRIPTION_RENEWAL_PERIOD.toMinutes(), SUBSCRIPTION_RENEWAL_PERIOD.toMinutes(), TimeUnit.MINUTES);
-    }
-
-    private void retryRegistration() {
-        if (isDisposed) {
-            return;
-        }
-        scheduler.schedule(() -> {
-            String localUdn = udn;
-            if (localUdn != null && subscriptions.isEmpty()) {
-                try {
-                    upnpIOService.registerParticipant(this);
-                    logger.debug("[{}] UPnP subscription restored", deviceManager.getConfig().getDeviceName());
-                } catch (RuntimeException e) {
-                    deviceManager.handleUpnpError("Retrying UPnP registration failed: " + e.getMessage());
-                }
-            }
-        }, SUBSCRIPTION_RETRY_DELAY.toSeconds(), TimeUnit.SECONDS);
-    }
-
-    // Called by the Upnp framework for incoming events
-    @Override
-    public void onValueReceived(@Nullable String variable, @Nullable String value, @Nullable String service) {
-        if (isDisposed || variable == null || value == null || service == null) {
-            return;
-        }
-
-        logger.debug("[{}] UPnP event - Service: {}, Variable: {}, Value: {}",
-                deviceManager.getConfig().getDeviceName(), service, variable, value);
+        logger.debug("[{}] Playing track at index {} via SOAP PlayQueueWithIndex...",
+                deviceManager.getConfig().getDeviceName(), index);
 
         try {
-            switch (service) {
-                case SERVICE_AVTRANSPORT:
-                    processAVTransportUpdate(variable, value);
-                    break;
-                case SERVICE_RENDERING_CONTROL:
-                    processRenderingControlUpdate(variable, value);
-                    break;
-                default:
-                    logger.trace("[{}] Unknown UPnP service: {}", deviceManager.getConfig().getDeviceName(), service);
-            }
+            Map<String, String> arguments = new HashMap<>();
+            arguments.put("QueueName", "TotalQueue");
+            arguments.put("Index", String.valueOf(index));
+
+            upnpIOService.execute(udn, SERVICE_PLAYQUEUE, "PlayQueueWithIndex", arguments);
+
+            logger.info("[{}] Track at index {} is now playing.", deviceManager.getConfig().getDeviceName(), index);
+
         } catch (Exception e) {
-            logger.warn("[{}] Error processing UPnP event: {}", deviceManager.getConfig().getDeviceName(),
-                    e.getMessage());
-            if (logger.isDebugEnabled()) {
-                logger.debug("[{}] Exception detail:", deviceManager.getConfig().getDeviceName(), e);
-            }
+            logger.error("[{}] Failed to play track at index {}: {}", deviceManager.getConfig().getDeviceName(), index,
+                    e.getMessage(), e);
         }
-    }
-
-    private void processAVTransportUpdate(String variable, String value) {
-        logger.debug("[{}] Processing AVTransport update - {} : {}", deviceManager.getConfig().getDeviceName(),
-                variable, value);
-
-        switch (variable) {
-            case "TransportState":
-                // TODO: Implement proper channel update mechanism for playback state
-                logger.debug("[{}] Received playback state: {}", deviceManager.getConfig().getDeviceName(), value);
-                break;
-            case "AVTransportURI":
-                // TODO: Implement proper channel update mechanism for transport URI
-                logger.debug("[{}] Received transport URI: {}", deviceManager.getConfig().getDeviceName(), value);
-                break;
-            case "CurrentTrackDuration":
-                // TODO: Implement proper channel update mechanism for duration
-                logger.debug("[{}] Received track duration: {}", deviceManager.getConfig().getDeviceName(), value);
-                break;
-            case "CurrentTrackMetaData":
-                // TODO: Implement proper channel update mechanism for metadata
-                logger.debug("[{}] Received track metadata: {}", deviceManager.getConfig().getDeviceName(), value);
-                break;
-            default:
-                logger.debug("[{}] Unhandled AVTransport variable: {}", deviceManager.getConfig().getDeviceName(),
-                        variable);
-        }
-    }
-
-    private void processRenderingControlUpdate(String variable, String value) {
-        logger.debug("[{}] Processing RenderingControl update - {} : {}", deviceManager.getConfig().getDeviceName(),
-                variable, value);
-
-        if ("Volume".equals(variable)) {
-            // TODO: Implement proper channel update mechanism for volume
-            logger.debug("[{}] Received volume update: {}", deviceManager.getConfig().getDeviceName(), value);
-        } else {
-            logger.debug("[{}] Unhandled RenderingControl variable: {}", deviceManager.getConfig().getDeviceName(),
-                    variable);
-        }
-    }
-
-    @Override
-    public void onServiceSubscribed(@Nullable String service, boolean succeeded) {
-        if (service == null) {
-            return;
-        }
-        if (succeeded) {
-            logger.debug("[{}] Successfully subscribed to service: {}", deviceManager.getConfig().getDeviceName(),
-                    service);
-            synchronized (upnpLock) {
-                subscriptions.put(service, Instant.now());
-            }
-        } else {
-            deviceManager.handleUpnpError("Failed to subscribe to service: " + service);
-            synchronized (upnpLock) {
-                subscriptions.remove(service);
-            }
-            retryRegistration();
-        }
-    }
-
-    @Override
-    public @Nullable String getUDN() {
-        String localUdn = udn;
-        return localUdn != null ? localUdn : null;
     }
 
     /**
-     * Dispose of UPnP resources
+     * Add a track to the queue.
+     * 
+     * @param metadata Metadata or URI of the track to append.
      */
-    public void dispose() {
-        isDisposed = true;
-        logger.debug("[{}] Disposing UPnP manager", deviceManager.getConfig().getDeviceName());
-
-        // Cancel any scheduled subscription renewal
-        ScheduledFuture<?> future = subscriptionRenewalFuture;
-        if (future != null) {
-            future.cancel(true);
-            subscriptionRenewalFuture = null;
+    public void addTrackToQueue(String metadata) {
+        if (udn == null) {
+            logger.warn("Cannot add track - UDN is not set.");
+            return;
         }
 
-        // Unregister from UPnP service
-        String udn = getUDN();
-        if (udn != null && !udn.isEmpty()) {
-            try {
-                upnpIOService.unregisterParticipant(this);
-                logger.debug("[{}] Unregistered UPnP participant", deviceManager.getConfig().getDeviceName());
-            } catch (Exception e) {
-                logger.debug("[{}] Error unregistering UPnP participant: {}", deviceManager.getConfig().getDeviceName(),
-                        e.getMessage());
-            }
-        }
-    }
+        logger.debug("[{}] Adding track to queue via SOAP AppendQueue...",
+                deviceManager.getConfig().getDeviceName());
 
-    @Override
-    public void onStatusChanged(boolean status) {
-        String localUdn = getUDN();
-        logger.debug("[{}] UPnP device {} is {}", deviceManager.getConfig().getDeviceName(),
-                localUdn != null ? localUdn : "<unknown>", (status ? "present" : "absent"));
-        // We do not set device offline or online here; HTTP logic does that.
-    }
-
-    public boolean supportsService(String service) {
-        // Removed redundant null check as 'service' is @NonNull
-        return service.equals(SERVICE_AVTRANSPORT) || service.equals(SERVICE_RENDERING_CONTROL);
-    }
-
-    private boolean validateDeviceReady(String udn) {
         try {
-            return upnpIOService.isRegistered(this);
+            Map<String, String> arguments = new HashMap<>();
+            arguments.put("QueueContext", metadata);
+
+            upnpIOService.execute(udn, SERVICE_PLAYQUEUE, "AppendQueue", arguments);
+
+            logger.info("[{}] Track added to queue.", deviceManager.getConfig().getDeviceName());
+
+            // Trigger queue update
+            fetchQueue();
+
         } catch (Exception e) {
-            logger.debug("[{}] Device validation failed: {}", deviceManager.getConfig().getDeviceName(),
-                    e.getMessage());
-            return false;
+            logger.error("[{}] Failed to add track to queue: {}", deviceManager.getConfig().getDeviceName(),
+                    e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Remove tracks from the queue by range.
+     * 
+     * @param startIndex The start index of the range.
+     * @param endIndex   The end index of the range.
+     */
+    public void removeTracksFromQueue(int startIndex, int endIndex) {
+        if (udn == null) {
+            logger.warn("Cannot remove tracks - UDN is not set.");
+            return;
+        }
+
+        logger.debug("[{}] Removing tracks from index {} to {} via SOAP RemoveTracksInQueue...",
+                deviceManager.getConfig().getDeviceName(), startIndex, endIndex);
+
+        try {
+            Map<String, String> arguments = new HashMap<>();
+            arguments.put("QueueName", "TotalQueue");
+            arguments.put("RangStart", String.valueOf(startIndex));
+            arguments.put("RangEnd", String.valueOf(endIndex));
+
+            upnpIOService.execute(udn, SERVICE_PLAYQUEUE, "RemoveTracksInQueue", arguments);
+
+            logger.info("[{}] Tracks from index {} to {} removed from queue.",
+                    deviceManager.getConfig().getDeviceName(), startIndex, endIndex);
+
+            // Trigger queue update
+            fetchQueue();
+
+        } catch (Exception e) {
+            logger.error("[{}] Failed to remove tracks from queue: {}", deviceManager.getConfig().getDeviceName(),
+                    e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Set the playback loop mode.
+     * 
+     * @param mode The loop mode (0: no loop, 1: loop one, 2: loop all).
+     */
+    public void setLoopMode(int mode) {
+        if (udn == null) {
+            logger.warn("Cannot set loop mode - UDN is not set.");
+            return;
+        }
+
+        logger.debug("[{}] Setting loop mode to {} via SOAP SetQueueLoopMode...",
+                deviceManager.getConfig().getDeviceName(), mode);
+
+        try {
+            Map<String, String> arguments = new HashMap<>();
+            arguments.put("LoopMode", String.valueOf(mode));
+
+            upnpIOService.execute(udn, SERVICE_PLAYQUEUE, "SetQueueLoopMode", arguments);
+
+            logger.info("[{}] Loop mode set to {}.", deviceManager.getConfig().getDeviceName(), mode);
+
+        } catch (Exception e) {
+            logger.error("[{}] Failed to set loop mode: {}", deviceManager.getConfig().getDeviceName(), e.getMessage(),
+                    e);
+        }
+    }
+
+    /**
+     * Search for tracks in the queue by a search key.
+     * 
+     * @param searchKey The search term.
+     */
+    public void searchQueue(String searchKey) {
+        if (udn == null) {
+            logger.warn("Cannot search queue - UDN is not set.");
+            return;
+        }
+
+        logger.debug("[{}] Searching queue for '{}' via SOAP SearchQueueOnline...",
+                deviceManager.getConfig().getDeviceName(), searchKey);
+
+        try {
+            Map<String, String> arguments = new HashMap<>();
+            arguments.put("QueueName", "TotalQueue");
+            arguments.put("SearchKey", searchKey);
+            arguments.put("Queuelimit", "10"); // Optional limit
+
+            String response = upnpIOService.execute(udn, SERVICE_PLAYQUEUE, "SearchQueueOnline", arguments);
+            logger.debug("[{}] Received SOAP response for SearchQueueOnline: {}", deviceManager.getConfig().getDeviceName(),
+                    response);
+
+            Map<String, String> searchResults = DIDLParser.parsePlaylist(response);
+            deviceManager.updatePlayerQueue(searchResults);
+
+        } catch (Exception e) {
+            logger.error("[{}] Failed to search queue: {}", deviceManager.getConfig().getDeviceName(), e.getMessage(),
+                    e);
         }
     }
 }
