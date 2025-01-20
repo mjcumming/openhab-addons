@@ -99,14 +99,36 @@ public class LinkPlayHandlerFactory extends BaseThingHandlerFactory {
             Configuration config = thing.getConfiguration();
             LinkPlayConfiguration linkplayConfig = LinkPlayConfiguration.fromConfiguration(config);
 
+            // When re-enabling a disabled thing, restore configuration from properties
+            Map<String, String> properties = thing.getProperties();
+            if (!linkplayConfig.isValid()) {
+                // Restore IP address from properties
+                if (properties.containsKey(PROPERTY_IP)) {
+                    String ip = properties.get(PROPERTY_IP);
+                    config.put(CONFIG_IP_ADDRESS, ip);
+                }
+                // Restore UDN from properties, handling different formats
+                if (properties.containsKey(PROPERTY_UDN)) {
+                    String udn = properties.get(PROPERTY_UDN);
+                    // Remove "uuid:" prefix if present
+                    if (udn.startsWith("uuid:")) {
+                        udn = udn.substring(5);
+                    }
+                    // Remove dashes if present
+                    udn = udn.replace("-", "");
+                    config.put(CONFIG_UDN, udn);
+                }
+                linkplayConfig = LinkPlayConfiguration.fromConfiguration(config);
+            }
+
             // Validate minimum required config (IP address)
             if (!linkplayConfig.isValid()) {
                 logger.error("Invalid configuration for LinkPlay thing {} - missing IP address", thing.getUID());
                 return null;
             }
 
-            logger.debug("Creating LinkPlayThingHandler for thing '{}' with IP '{}'", thing.getUID(),
-                    linkplayConfig.getIpAddress());
+            logger.debug("Creating LinkPlayThingHandler for thing '{}' with IP '{}' and UDN '{}'", thing.getUID(),
+                    linkplayConfig.getIpAddress(), linkplayConfig.getUdn());
 
             try {
                 // Create handler with validated config
@@ -157,12 +179,15 @@ public class LinkPlayHandlerFactory extends BaseThingHandlerFactory {
         properties.put(PROPERTY_IP, ipAddress);
 
         // Optionally handle UDN if present
-        String udn = (String) configuration.get(CONFIG_UDN);
-        if (udn != null && !udn.isEmpty()) {
-            String normalizedUDN = udn.startsWith("uuid:") ? udn : "uuid:" + udn;
-            if (UDN_PATTERN.matcher(normalizedUDN).matches()) {
-                properties.put(PROPERTY_UDN, normalizedUDN);
-                configuration.put(CONFIG_UDN, normalizedUDN);
+        Object udnObj = configuration.get(CONFIG_UDN);
+        if (udnObj instanceof String) {
+            String udn = (String) udnObj;
+            if (!udn.isEmpty()) {
+                String normalizedUDN = udn.startsWith("uuid:") ? udn : "uuid:" + udn;
+                if (UDN_PATTERN.matcher(normalizedUDN).matches()) {
+                    properties.put(PROPERTY_UDN, normalizedUDN);
+                    configuration.put(CONFIG_UDN, normalizedUDN);
+                }
             }
         }
 

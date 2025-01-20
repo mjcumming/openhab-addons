@@ -99,7 +99,6 @@
 			<channel id="role" typeId="role"/>
 			<channel id="masterIP" typeId="masterIP"/>
 			<channel id="slaveIPs" typeId="slaveIPs"/>
-			<!-- new channel for groupName -->
 			<channel id="groupName" typeId="groupName"/>
 			<channel id="join" typeId="join"/>
 			<channel id="leave" typeId="leave"/>
@@ -220,11 +219,11 @@
 		<state readOnly="true"/>
 	</channel-type>
 
-	<!-- groupName => readOnly String (the new channel) -->
+	<!-- groupName => readOnly String -->
 	<channel-type id="groupName">
 		<item-type>String</item-type>
 		<label>Group Name</label>
-		<description>Group Name from device's JSON config if available</description>
+		<description>Group Name from device's configuration</description>
 		<state readOnly="true"/>
 	</channel-type>
 

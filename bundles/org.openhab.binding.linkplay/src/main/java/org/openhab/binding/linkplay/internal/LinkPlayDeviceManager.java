@@ -68,7 +68,7 @@ public class LinkPlayDeviceManager {
     private final LinkPlayMetadataService metadataService;
     private final LinkPlayUartManager uartManager;
 
-    private LinkPlayDeviceState deviceState = new LinkPlayDeviceState();
+    private final LinkPlayDeviceState deviceState;
 
     private @Nullable String lastArtist;
     private @Nullable String lastTitle;
@@ -83,6 +83,7 @@ public class LinkPlayDeviceManager {
         this.lastTitle = null;
 
         // Initialize device state from config
+        deviceState = new LinkPlayDeviceState();
         deviceState.initializeFromConfig(config);
 
         // Create managers with simplified dependencies
@@ -128,6 +129,30 @@ public class LinkPlayDeviceManager {
      * @param command The command to handle
      */
     public void handleCommand(String channelId, Command command) {
+        String group = channelId.contains("#") ? channelId.split("#")[0] : "";
+        String channel = channelId.contains("#") ? channelId.split("#")[1] : channelId;
+
+        if (GROUP_MULTIROOM.equals(group)) {
+            switch (channel) {
+                case CHANNEL_JOIN:
+                    if (command instanceof StringType) {
+                        groupManager.joinGroup(command.toString());
+                    }
+                    break;
+                case CHANNEL_UNGROUP:
+                    if (command instanceof OnOffType && command == OnOffType.ON) {
+                        groupManager.ungroup();
+                    }
+                    break;
+                case CHANNEL_KICKOUT:
+                    if (command instanceof StringType) {
+                        groupManager.kickSlave(command.toString());
+                    }
+                    break;
+            }
+            return;
+        }
+
         logger.trace("[{}] Handling command {} for channel {}", config.getDeviceName(), command, channelId);
         this.httpManager.sendChannelCommand(channelId, command);
     }
@@ -310,6 +335,15 @@ public class LinkPlayDeviceManager {
      * Handles parsed device status response from HTTP Manager
      */
     public void handleGetStatusExResponse(JsonObject json) {
+        // Process multiroom status first via GroupManager
+        groupManager.handleDeviceStatus(json);
+
+        // Handle rest of device status...
+        if (json.has("type")) {
+            int type = getAsInt(json, "type", 0);
+            logger.warn("[{}] Device type: {} (0=Main/Standalone, 1=Multiroom Guest)", config.getDeviceName(), type);
+        }
+
         // First check for UDN if we don't have one
         if (config.getUdn().isEmpty() && json.has("upnp_uuid")) {
             String discoveredUdn = getAsString(json, "upnp_uuid");
@@ -350,9 +384,6 @@ public class LinkPlayDeviceManager {
                 logger.debug("[{}] Updated device name to: {}", config.getDeviceName(), newName);
             }
         }
-
-        // Let group manager handle any multiroom status updates
-        groupManager.handleStatusUpdate(json);
     }
 
     /**
