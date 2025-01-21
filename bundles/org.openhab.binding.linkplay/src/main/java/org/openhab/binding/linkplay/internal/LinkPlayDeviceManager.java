@@ -15,11 +15,9 @@ package org.openhab.binding.linkplay.internal;
 
 import static org.openhab.binding.linkplay.internal.LinkPlayBindingConstants.*;
 
-import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
-import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.binding.linkplay.internal.config.LinkPlayConfiguration;
 import org.openhab.binding.linkplay.internal.handler.LinkPlayThingHandler;
 import org.openhab.binding.linkplay.internal.metadata.LinkPlayMetadataService;
@@ -28,7 +26,6 @@ import org.openhab.binding.linkplay.internal.multiroom.LinkPlayGroupManager;
 import org.openhab.binding.linkplay.internal.transport.http.LinkPlayHttpClient;
 import org.openhab.binding.linkplay.internal.transport.http.LinkPlayHttpManager;
 import org.openhab.binding.linkplay.internal.transport.uart.LinkPlayUartManager;
-import org.openhab.binding.linkplay.internal.transport.upnp.LinkPlayUpnpManager;
 import org.openhab.core.io.transport.upnp.UpnpIOService;
 import org.openhab.core.library.types.OnOffType;
 import org.openhab.core.library.types.PercentType;
@@ -63,15 +60,14 @@ public class LinkPlayDeviceManager {
     @SuppressWarnings("unused") // Used by UpnpManager
     private final UpnpIOService upnpIOService;
     private final LinkPlayHttpManager httpManager;
-    private final LinkPlayUpnpManager upnpManager;
     private final LinkPlayGroupManager groupManager;
     private final LinkPlayMetadataService metadataService;
     private final LinkPlayUartManager uartManager;
 
     private final LinkPlayDeviceState deviceState;
 
-    private @Nullable String lastArtist;
-    private @Nullable String lastTitle;
+    private String lastArtist = "";
+    private String lastTitle = "";
 
     public LinkPlayDeviceManager(LinkPlayThingHandler thingHandler, LinkPlayConfiguration config,
             LinkPlayHttpClient httpClient, UpnpIOService upnpIOService) {
@@ -79,8 +75,6 @@ public class LinkPlayDeviceManager {
         this.config = config;
         this.httpClient = httpClient;
         this.upnpIOService = upnpIOService;
-        this.lastArtist = null;
-        this.lastTitle = null;
 
         // Initialize device state from config
         deviceState = new LinkPlayDeviceState();
@@ -88,12 +82,15 @@ public class LinkPlayDeviceManager {
 
         // Create managers with simplified dependencies
         this.httpManager = new LinkPlayHttpManager(httpClient, this);
-        this.upnpManager = new LinkPlayUpnpManager(upnpIOService, this);
         this.uartManager = new LinkPlayUartManager(this);
         this.metadataService = new LinkPlayMetadataService(httpClient, this);
         this.groupManager = new LinkPlayGroupManager(this);
 
         logger.debug("[{}] DeviceManager created with config: {}", config.getDeviceName(), config);
+
+        // Clear any cached metadata
+        lastArtist = "";
+        lastTitle = "";
     }
 
     /**
@@ -108,18 +105,19 @@ public class LinkPlayDeviceManager {
         // Start HTTP polling immediately - this is our primary communication method
         httpManager.startPolling();
 
-        // If we have a UDN, register UPnP asynchronously as an optional enhancement
-        String existingUdn = config.getUdn();
-        if (!existingUdn.isEmpty()) {
-            CompletableFuture.runAsync(() -> {
-                try {
-                    upnpManager.register(existingUdn);
-                    logger.debug("[{}] UPnP registered for UDN: {}", config.getDeviceName(), existingUdn);
-                } catch (Exception e) {
-                    logger.debug("[{}] Optional UPnP registration failed: {}", config.getDeviceName(), e.getMessage());
+        // Initialize UPnP manager - it will handle registration when UDN becomes available
+        CompletableFuture.runAsync(() -> {
+            try {
+                String existingUdn = config.getUdn();
+                if (!existingUdn.isEmpty()) {
+                    logger.debug("[{}] UPnP initialized for UDN: {}", config.getDeviceName(), existingUdn);
+                } else {
+                    logger.debug("[{}] UPnP manager initialized but waiting for UDN discovery", config.getDeviceName());
                 }
-            });
-        }
+            } catch (Exception e) {
+                logger.debug("[{}] Optional UPnP initialization failed: {}", config.getDeviceName(), e.getMessage());
+            }
+        });
     }
 
     /**
@@ -132,29 +130,22 @@ public class LinkPlayDeviceManager {
         String group = channelId.contains("#") ? channelId.split("#")[0] : "";
         String channel = channelId.contains("#") ? channelId.split("#")[1] : channelId;
 
-        if (GROUP_MULTIROOM.equals(group)) {
-            switch (channel) {
-                case CHANNEL_JOIN:
-                    if (command instanceof StringType) {
-                        groupManager.joinGroup(command.toString());
-                    }
-                    break;
-                case CHANNEL_UNGROUP:
-                    if (command instanceof OnOffType && command == OnOffType.ON) {
-                        groupManager.ungroup();
-                    }
-                    break;
-                case CHANNEL_KICKOUT:
-                    if (command instanceof StringType) {
-                        groupManager.kickSlave(command.toString());
-                    }
-                    break;
-            }
+        logger.trace("[{}] Handling command {} for channel {}", config.getDeviceName(), command, channelId);
+
+        // Handle multiroom commands through the group manager
+        if (GROUP_MULTIROOM.equals(group) || isMultiroomChannel(channel)) {
+            groupManager.handleCommand(channel, command);
             return;
         }
 
-        logger.trace("[{}] Handling command {} for channel {}", config.getDeviceName(), command, channelId);
+        // For all other commands, send through HTTP manager
         this.httpManager.sendChannelCommand(channelId, command);
+    }
+
+    private boolean isMultiroomChannel(String channel) {
+        return channel.equals(CHANNEL_JOIN) || channel.equals(CHANNEL_LEAVE) || channel.equals(CHANNEL_UNGROUP)
+                || channel.equals(CHANNEL_KICKOUT) || channel.equals(CHANNEL_GROUP_VOLUME)
+                || channel.equals(CHANNEL_GROUP_MUTE);
     }
 
     /**
@@ -165,12 +156,11 @@ public class LinkPlayDeviceManager {
 
         // Dispose all managers
         httpManager.dispose();
-        upnpManager.dispose();
         uartManager.dispose();
 
         // Clear any cached metadata
-        lastArtist = null;
-        lastTitle = null;
+        lastArtist = "";
+        lastTitle = "";
     }
 
     // -------------------------------------------------------------------
@@ -211,15 +201,6 @@ public class LinkPlayDeviceManager {
             logger.trace("[{}] Failed to get int value for '{}': {}", config.getDeviceName(), key, e.getMessage());
             return defaultValue;
         }
-    }
-
-    /**
-     * Handle UPnP communication error
-     * 
-     * @param message Error message to log
-     */
-    public void handleUpnpError(String message) {
-        logger.warn("[{}] UPnP error: {}", config.getDeviceName(), message);
     }
 
     /**
@@ -266,32 +247,22 @@ public class LinkPlayDeviceManager {
         }
 
         // Update metadata
-        String newTitle = null;
-        String newArtist = null;
         if (json.has("title")) {
-            newTitle = json.get("title").getAsString();
+            String newTitle = json.get("title").getAsString();
             state.setTrackTitle(newTitle);
             updateState(GROUP_PLAYBACK + "#" + CHANNEL_TITLE, new StringType(newTitle));
+            lastTitle = newTitle;
         }
 
         if (json.has("artist")) {
-            newArtist = json.get("artist").getAsString();
+            String newArtist = json.get("artist").getAsString();
             state.setTrackArtist(newArtist);
             updateState(GROUP_PLAYBACK + "#" + CHANNEL_ARTIST, new StringType(newArtist));
+            lastArtist = newArtist;
         }
 
         // Check for album art when title or artist changes
-        if ((newTitle != null && !newTitle.equals(lastTitle)) || (newArtist != null && !newArtist.equals(lastArtist))) {
-            lastTitle = newTitle;
-            lastArtist = newArtist;
-            Optional<String> albumArtUrl = metadataService.retrieveMusicMetadata(state.getTrackArtist(),
-                    state.getTrackTitle());
-
-            if (albumArtUrl.isPresent()) {
-                state.setAlbumArtUrl(albumArtUrl.get());
-                updateState(GROUP_PLAYBACK + "#" + CHANNEL_ALBUM_ART, new StringType(albumArtUrl.get()));
-            }
-        }
+        updateMetadata();
 
         if (json.has("album")) {
             state.setTrackAlbum(json.get("album").getAsString());
@@ -351,7 +322,6 @@ public class LinkPlayDeviceManager {
                 logger.debug("[{}] Discovered UDN via HTTP: {}", config.getDeviceName(), discoveredUdn);
                 // Store in config and optionally register UPnP
                 thingHandler.updateUdnInConfig(discoveredUdn);
-                upnpManager.register(discoveredUdn);
             }
         }
 
@@ -410,5 +380,18 @@ public class LinkPlayDeviceManager {
      */
     public LinkPlayDeviceState getDeviceState() {
         return deviceState;
+    }
+
+    private void updateMetadata() {
+        String artist = deviceState.getTrackArtist();
+        String title = deviceState.getTrackTitle();
+
+        // Only query if we have both non-null values
+        if (artist != null && title != null) {
+            metadataService.retrieveMusicMetadata(artist, title).ifPresent(url -> {
+                deviceState.setAlbumArtUrl(url);
+                updateState(GROUP_PLAYBACK + "#" + CHANNEL_ALBUM_ART, new StringType(url));
+            });
+        }
     }
 }

@@ -357,6 +357,14 @@ public class LinkPlayHttpManager {
                 return null;
             }
 
+            // Special case: some commands like ungroup return "OK"
+            if ("OK".equals(response)) {
+                JsonObject okResponse = new JsonObject();
+                okResponse.addProperty("status", "OK");
+                deviceManager.handleCommunicationResult(true);
+                return okResponse;
+            }
+
             try {
                 return JsonParser.parseString(response).getAsJsonObject();
             } catch (JsonSyntaxException e) {
@@ -368,6 +376,52 @@ public class LinkPlayHttpManager {
 
         } catch (Exception e) {
             logger.warn("[{}] Exception sending command='{}': {}", config.getDeviceName(), command, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Send a command to a specific IP address (for master control from a slave)
+     */
+    public @Nullable JsonObject sendCommand(String command, String targetIp) {
+        try {
+            CompletableFuture<@Nullable String> future = httpClient.sendCommand(targetIp, command)
+                    .handle((@Nullable String result, @Nullable Throwable ex) -> {
+                        if (ex != null) {
+                            logger.warn("[{}] Error sending command='{}' to {}: {}", config.getDeviceName(), command,
+                                    targetIp, ex.getMessage());
+                            return null;
+                        }
+                        return result;
+                    });
+
+            @Nullable
+            String response = future.get(TIMEOUT_MS, TimeUnit.MILLISECONDS);
+
+            if (response == null) {
+                return null;
+            }
+
+            // Special case: some commands like ungroup return "OK"
+            if ("OK".equals(response)) {
+                JsonObject okResponse = new JsonObject();
+                okResponse.addProperty("status", "OK");
+                deviceManager.handleCommunicationResult(true);
+                return okResponse;
+            }
+
+            try {
+                return JsonParser.parseString(response).getAsJsonObject();
+            } catch (JsonSyntaxException e) {
+                logger.warn("[{}] Failed to parse response for command='{}' to {}: {}", config.getDeviceName(), command,
+                        targetIp, e.getMessage());
+                deviceManager.handleCommunicationResult(false);
+                return null;
+            }
+
+        } catch (Exception e) {
+            logger.warn("[{}] Exception sending command='{}' to {}: {}", config.getDeviceName(), command, targetIp,
+                    e.getMessage());
             return null;
         }
     }

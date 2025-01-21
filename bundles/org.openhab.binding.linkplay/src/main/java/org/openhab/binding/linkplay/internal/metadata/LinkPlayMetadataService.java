@@ -12,6 +12,8 @@
  */
 package org.openhab.binding.linkplay.internal.metadata;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
@@ -20,6 +22,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
+import org.eclipse.jdt.annotation.NonNull;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.binding.linkplay.internal.LinkPlayDeviceManager;
@@ -68,15 +71,16 @@ public class LinkPlayMetadataService {
     }
 
     /**
-     * Retrieves cover art and metadata for a track from MusicBrainz/CoverArtArchive
-     *
-     * @param artist The track artist
-     * @param title The track title
-     * @return Optional containing the cover art URL if found
+     * Retrieve music metadata for the given artist and title
+     * 
+     * @param artist The artist name, must not be null
+     * @param title The track title, must not be null
+     * @return Optional containing album art URL if found
      */
-    public Optional<String> retrieveMusicMetadata(@Nullable String artist, @Nullable String title) {
-        if (artist == null || title == null) {
-            logger.debug("[{}] Artist or title is missing, cannot fetch metadata",
+    public Optional<String> retrieveMusicMetadata(@NonNull String artist, @NonNull String title) {
+        // Skip metadata lookup for Unknown tracks
+        if ("Unknown".equals(artist) || "Unknown".equals(title) || artist.isEmpty() || title.isEmpty()) {
+            logger.debug("[{}] Skipping metadata lookup for Unknown/empty track",
                     deviceManager.getConfig().getDeviceName());
             return Optional.empty();
         }
@@ -107,16 +111,14 @@ public class LinkPlayMetadataService {
         lastRequestTime = now;
 
         try {
-            // URL encode the artist and title parameters
-            String encodedTitle = java.net.URLEncoder.encode(title, "UTF-8");
-            String encodedArtist = java.net.URLEncoder.encode(artist, "UTF-8");
+            // Build MusicBrainz query URL
+            String query = String.format("title:%s AND artist:%s",
+                    URLEncoder.encode(title, StandardCharsets.UTF_8.name()),
+                    URLEncoder.encode(artist, StandardCharsets.UTF_8.name()));
+            String url = String.format("https://musicbrainz.org/ws/2/recording?query=%s&fmt=json", query);
 
-            // Query MusicBrainz with properly encoded parameters
-            String mbUrl = String.format(
-                    "https://musicbrainz.org/ws/2/recording?query=title:%s%%20AND%%20artist:%s&fmt=json", encodedTitle,
-                    encodedArtist);
-            logger.debug("[{}] Querying MusicBrainz: {}", deviceManager.getConfig().getDeviceName(), mbUrl);
-            CompletableFuture<@Nullable String> futureMb = httpClient.rawGetRequest(mbUrl);
+            logger.debug("[{}] Querying MusicBrainz: {}", deviceManager.getConfig().getDeviceName(), url);
+            CompletableFuture<@Nullable String> futureMb = httpClient.rawGetRequest(url);
 
             String mbResponse = futureMb.get(TIMEOUT_MS, TimeUnit.MILLISECONDS);
             if (mbResponse == null) {
@@ -148,7 +150,8 @@ public class LinkPlayMetadataService {
             }
 
         } catch (Exception e) {
-            logger.warn("[{}] Error fetching metadata: {}", deviceManager.getConfig().getDeviceName(), e.getMessage());
+            logger.warn("[{}] Error retrieving metadata: {}", deviceManager.getConfig().getDeviceName(),
+                    e.getMessage());
         }
         return Optional.empty();
     }

@@ -15,7 +15,10 @@ package org.openhab.binding.linkplay.internal.multiroom;
 import static org.openhab.binding.linkplay.internal.LinkPlayBindingConstants.*;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.openhab.binding.linkplay.internal.LinkPlayDeviceManager;
@@ -73,7 +76,47 @@ public class LinkPlayGroupManager {
                 break;
             case CHANNEL_UNGROUP:
                 if (command instanceof OnOffType && command == OnOffType.ON) {
-                    ungroup();
+                    if (state.isMaster()) {
+                        ungroup();
+                    } else if (state.isStandalone()) {
+                        logger.info("[{}] Cannot ungroup - device is standalone",
+                                deviceManager.getConfig().getDeviceName());
+                    } else {
+                        logger.info("[{}] Cannot ungroup - device is a slave",
+                                deviceManager.getConfig().getDeviceName());
+                    }
+                    // Reset switch to OFF state
+                    deviceManager.updateState(GROUP_MULTIROOM + "#" + CHANNEL_UNGROUP, OnOffType.OFF);
+                }
+                break;
+            case CHANNEL_LEAVE:
+                if (command instanceof OnOffType && command == OnOffType.ON) {
+                    if (state.isSlave()) {
+                        // Get our own IP and have the master kick us
+                        String masterIP = state.getMasterIP();
+                        String myIP = deviceManager.getConfig().getIpAddress();
+                        if (!masterIP.isEmpty() && !myIP.isEmpty()) {
+                            // Send kickout command to the master device
+                            JsonObject response = httpManager.sendCommand(String.format(API_SLAVE_KICKOUT, myIP),
+                                    masterIP);
+                            if (response != null) {
+                                logger.debug("[{}] Successfully requested to leave group via master kickout",
+                                        deviceManager.getConfig().getDeviceName());
+                                updateMultiroomStatus();
+                            }
+                        } else {
+                            logger.warn("[{}] Cannot leave group - missing master IP or device IP",
+                                    deviceManager.getConfig().getDeviceName());
+                        }
+                    } else if (state.isStandalone()) {
+                        logger.info("[{}] Cannot leave group - device is standalone",
+                                deviceManager.getConfig().getDeviceName());
+                    } else {
+                        logger.info("[{}] Cannot leave group - device is a master",
+                                deviceManager.getConfig().getDeviceName());
+                    }
+                    // Always reset switch to OFF state
+                    deviceManager.updateState(GROUP_MULTIROOM + "#" + CHANNEL_LEAVE, OnOffType.OFF);
                 }
                 break;
             case CHANNEL_KICKOUT:
@@ -129,7 +172,7 @@ public class LinkPlayGroupManager {
         // Update group name if available
         if (status.has("GroupName")) {
             String groupName = status.get("GroupName").getAsString();
-            if (groupName != null && !groupName.isEmpty()) {
+            if (!groupName.isEmpty()) {
                 state.setGroupName(groupName);
             }
         }
@@ -141,7 +184,7 @@ public class LinkPlayGroupManager {
         state.setMasterState();
         if (status.has("slave_list")) {
             JsonArray slaveList = status.getAsJsonArray("slave_list");
-            if (slaveList != null && !slaveList.isEmpty()) {
+            if (!slaveList.isEmpty()) {
                 List<String> slaveIPs = new ArrayList<>();
                 for (JsonElement slave : slaveList) {
                     JsonObject slaveObj = slave.getAsJsonObject();
@@ -165,7 +208,7 @@ public class LinkPlayGroupManager {
         String masterIP = status.has("master_ip") ? status.get("master_ip").getAsString()
                 : status.get("host_ip").getAsString();
 
-        if (masterIP == null || masterIP.isEmpty()) {
+        if (masterIP.isEmpty()) {
             logger.warn("[{}] Invalid master IP received in slave status update",
                     deviceManager.getConfig().getDeviceName());
             state.setStandaloneState();
@@ -177,7 +220,7 @@ public class LinkPlayGroupManager {
 
     // Command methods - pure business logic
     public void joinGroup(String masterIP) {
-        if (masterIP == null || masterIP.isEmpty() || state.isMaster()) {
+        if (masterIP.isEmpty() || state.isMaster()) {
             logger.debug("[{}] Invalid join group request - masterIP empty or device is already master",
                     deviceManager.getConfig().getDeviceName());
             return;
@@ -185,12 +228,34 @@ public class LinkPlayGroupManager {
         executeCommand(String.format(API_JOIN_GROUP, masterIP), "Successfully joined group with master " + masterIP);
     }
 
+    /**
+     * Handle ungroup command for master device
+     */
     public void ungroup() {
-        if (state.isStandalone()) {
-            logger.debug("[{}] Device is already standalone", deviceManager.getConfig().getDeviceName());
-            return;
+        // Store current slave IPs before ungrouping
+        Set<String> previousSlaves = new HashSet<>(Arrays.asList(state.getSlaveIPs().split(",")));
+        String masterIP = deviceManager.getConfig().getIpAddress();
+
+        JsonObject response = httpManager.sendCommand(API_UNGROUP);
+        if (response != null) {
+            logger.debug("[{}] Successfully sent ungroup command", deviceManager.getConfig().getDeviceName());
+
+            // Force status update on this device (master)
+            httpManager.sendCommand("getStatusEx");
+
+            // Force status update on all previous slaves
+            for (String slaveIP : previousSlaves) {
+                if (!slaveIP.isEmpty()) {
+                    // Use the device's HTTP manager to send command to slave
+                    deviceManager.getHttpManager().sendCommand("getStatusEx");
+                }
+            }
+
+            // Update local state
+            updateMultiroomStatus();
+        } else {
+            logger.warn("[{}] Failed to send ungroup command", deviceManager.getConfig().getDeviceName());
         }
-        executeCommand(API_UNGROUP, "Successfully left group");
     }
 
     public void kickSlave(String slaveIP) {
@@ -249,6 +314,9 @@ public class LinkPlayGroupManager {
         deviceManager.updateState(GROUP_MULTIROOM + "#" + CHANNEL_MASTER_IP, new StringType(state.getMasterIP()));
         deviceManager.updateState(GROUP_MULTIROOM + "#" + CHANNEL_SLAVE_IPS, new StringType(state.getSlaveIPs()));
         deviceManager.updateState(GROUP_MULTIROOM + "#" + CHANNEL_GROUP_NAME, new StringType(state.getGroupName()));
+        // Ensure switches are OFF at startup/update
+        deviceManager.updateState(GROUP_MULTIROOM + "#" + CHANNEL_UNGROUP, OnOffType.OFF);
+        deviceManager.updateState(GROUP_MULTIROOM + "#" + CHANNEL_LEAVE, OnOffType.OFF);
     }
 
     private void updateMultiroomStatus() {
