@@ -85,8 +85,6 @@ public class LinkPlayGroupManager {
                         logger.info("[{}] Cannot ungroup - device is a slave",
                                 deviceManager.getConfig().getDeviceName());
                     }
-                    // Reset switch to OFF state
-                    deviceManager.updateState(GROUP_MULTIROOM + "#" + CHANNEL_UNGROUP, OnOffType.OFF);
                 }
                 break;
             case CHANNEL_LEAVE:
@@ -115,8 +113,6 @@ public class LinkPlayGroupManager {
                         logger.info("[{}] Cannot leave group - device is a master",
                                 deviceManager.getConfig().getDeviceName());
                     }
-                    // Always reset switch to OFF state
-                    deviceManager.updateState(GROUP_MULTIROOM + "#" + CHANNEL_LEAVE, OnOffType.OFF);
                 }
                 break;
             case CHANNEL_KICKOUT:

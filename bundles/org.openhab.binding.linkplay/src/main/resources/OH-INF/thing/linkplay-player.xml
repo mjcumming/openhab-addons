@@ -232,13 +232,27 @@
 		<item-type>String</item-type>
 		<label>Join Group</label>
 		<description>Join a multiroom group by master IP.</description>
+		<state>
+			<options>
+				<option value="">Not In Group</option>
+			</options>
+			<pattern>^$|^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$</pattern> <!-- Empty or valid IP -->
+		</state>
+		<autoUpdatePolicy>veto</autoUpdatePolicy> <!-- Prevent storing the command value -->
 	</channel-type>
 
 	<!-- leave => Switch -->
 	<channel-type id="leave">
 		<item-type>Switch</item-type>
 		<label>Leave Group</label>
-		<description>Leave current multiroom group.</description>
+		<description>Leave current multiroom group (if slave).</description>
+		<category>Switch</category>
+		<state readOnly="false">
+			<options>
+				<option value="OFF">Ready</option>
+			</options>
+		</state>
+		<autoUpdatePolicy>veto</autoUpdatePolicy>
 	</channel-type>
 
 	<!-- ungroup => Switch -->
@@ -246,6 +260,13 @@
 		<item-type>Switch</item-type>
 		<label>Ungroup</label>
 		<description>Disband current multiroom group (if master).</description>
+		<category>Switch</category>
+		<state readOnly="false">
+			<options>
+				<option value="OFF">Ready</option>
+			</options>
+		</state>
+		<autoUpdatePolicy>veto</autoUpdatePolicy>
 	</channel-type>
 
 	<!-- kickout => String -->
