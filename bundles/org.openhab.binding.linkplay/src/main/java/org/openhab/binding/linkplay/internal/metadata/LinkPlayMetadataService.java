@@ -111,10 +111,10 @@ public class LinkPlayMetadataService {
         lastRequestTime = now;
 
         try {
-            // Build MusicBrainz query URL
-            String query = String.format("title:%s AND artist:%s",
-                    URLEncoder.encode(title, StandardCharsets.UTF_8.name()),
-                    URLEncoder.encode(artist, StandardCharsets.UTF_8.name()));
+            // Build MusicBrainz query URL with proper URL encoding
+            String encodedTitle = URLEncoder.encode("title:" + title, StandardCharsets.UTF_8.name());
+            String encodedArtist = URLEncoder.encode("artist:" + artist, StandardCharsets.UTF_8.name());
+            String query = encodedTitle + "%20AND%20" + encodedArtist;
             String url = String.format("https://musicbrainz.org/ws/2/recording?query=%s&fmt=json", query);
 
             logger.debug("[{}] Querying MusicBrainz: {}", deviceManager.getConfig().getDeviceName(), url);
