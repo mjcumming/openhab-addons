@@ -1,0 +1,24 @@
+name: Linkplay Directory Workflow
+
+on:
+  pull_request:
+    paths:
+      - 'bundles/org.openhab.binding.linkplay/**'
+    branches:
+      - linkplay-4.3.x
+  push:
+    paths:
+      - 'bundles/org.openhab.binding.linkplay/**'
+    branches:
+      - linkplay-4.3.x
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Run your custom action or script
+        run: echo "Workflow triggered for org.openhab.binding.linkplay directory!"
