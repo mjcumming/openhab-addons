@@ -30,9 +30,9 @@ public class LinkPlayBindingConstants {
 
     public static final String BINDING_ID = "linkplay";
 
-    // Thing Types
-    public static final ThingTypeUID THING_TYPE_DEVICE = new ThingTypeUID(BINDING_ID, "device");
-    public static final Set<ThingTypeUID> SUPPORTED_THING_TYPES_UIDS = Collections.singleton(THING_TYPE_DEVICE);
+    // Thing Type UIDs - using mediastreamer
+    public static final ThingTypeUID THING_TYPE_MEDIASTREAMER = new ThingTypeUID(BINDING_ID, "mediastreamer");
+    public static final Set<ThingTypeUID> SUPPORTED_THING_TYPES_UIDS = Collections.singleton(THING_TYPE_MEDIASTREAMER);
 
     // Thing Configuration parameters
     public static final String CONFIG_IP_ADDRESS = "ipAddress";
@@ -46,7 +46,7 @@ public class LinkPlayBindingConstants {
     public static final int DEFAULT_DEVICE_STATUS_POLLING_INTERVAL = 10;
 
     // Thing Properties
-    public static final String PROPERTY_UDN = "UDN";
+    public static final String PROPERTY_UDN = "udn";
     public static final String PROPERTY_FIRMWARE = "firmwareVersion";
     public static final String PROPERTY_MODEL = "model";
     public static final String PROPERTY_IP = "ipAddress";
@@ -102,12 +102,21 @@ public class LinkPlayBindingConstants {
     public static final String UPNP_MANUFACTURER = "LinkPlay";
     public static final String UPNP_DEVICE_TYPE_PREFIX = "urn:schemas-upnp-org:device:";
 
-    // Source/Mode mappings
-    public static final Map<Integer, String> PLAYBACK_MODES = Map.ofEntries(Map.entry(0, "IDLE"),
-            Map.entry(1, "AIRPLAY"), Map.entry(2, "DLNA"), Map.entry(10, "NETWORK"), Map.entry(11, "USB_DISK"),
-            Map.entry(20, "HTTP_API"), Map.entry(31, "SPOTIFY"), Map.entry(40, "LINE_IN"), Map.entry(41, "BLUETOOTH"),
-            Map.entry(43, "OPTICAL"), Map.entry(47, "LINE_IN_2"), Map.entry(51, "USB_DAC"),
-            Map.entry(99, "MULTIROOM_GUEST"));
+    // Source/Mode mappings - from official LinkPlay API documentation
+    public static final Map<Integer, String> PLAYBACK_MODES = Map.ofEntries(Map.entry(0, "IDLE"), // Idling
+            Map.entry(1, "AIRPLAY"), // AirPlay streaming
+            Map.entry(2, "DLNA"), // DLNA streaming
+            Map.entry(10, "NETWORK"), // Network content (vTuner, Home Media Share, etc)
+            Map.entry(11, "USB_DISK"), // Playing from local USB disk
+            Map.entry(20, "HTTP_API"), // Playback started by HTTP API
+            Map.entry(31, "SPOTIFY"), // Spotify Connect streaming
+            Map.entry(40, "LINE_IN"), // Line-In input mode
+            Map.entry(41, "BLUETOOTH"), // Bluetooth input mode
+            Map.entry(43, "OPTICAL"), // Optical input mode
+            Map.entry(47, "LINE_IN_2"), // Line-In #2 input mode
+            Map.entry(51, "USB_DAC"), // USB DAC input mode
+            Map.entry(99, "MULTIROOM_GUEST") // Device is a Guest in Multiroom Zone
+    );
 
     private LinkPlayBindingConstants() {
         // Constants class - prevent instantiation

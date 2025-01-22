@@ -159,46 +159,56 @@ public class LinkPlayHandlerFactory extends BaseThingHandlerFactory {
                     "Thing type " + thingTypeUID + " is not supported by the linkplay binding");
         }
 
-        // We require 'ipAddress' at a minimum
-        if (!configuration.containsKey(CONFIG_IP_ADDRESS)) {
-            throw new IllegalArgumentException("IP address is required for a LinkPlay device");
-        }
-
+        // Handle both discovery and manual configuration cases
         String ipAddress = (String) configuration.get(CONFIG_IP_ADDRESS);
-        // Basic IP address validation
-        if (!IP_PATTERN.matcher(ipAddress).matches()) {
-            throw new IllegalArgumentException("Invalid IP address format: " + ipAddress);
-        }
-
-        // If the user didn't specify a ThingUID, build a default one using IP
-        ThingUID finalThingUID = (thingUID != null) ? thingUID
-                : new ThingUID(thingTypeUID, ipAddress.replace('.', '_'));
-
-        // Prepare the property map for the new Thing
-        Map<String, String> properties = new HashMap<>();
-        properties.put(PROPERTY_IP, ipAddress);
-
-        // Optionally handle UDN if present
-        Object udnObj = configuration.get(CONFIG_UDN);
-        if (udnObj instanceof String) {
-            String udn = (String) udnObj;
-            if (!udn.isEmpty()) {
-                String normalizedUDN = udn.startsWith("uuid:") ? udn : "uuid:" + udn;
-                if (UDN_PATTERN.matcher(normalizedUDN).matches()) {
-                    properties.put(PROPERTY_UDN, normalizedUDN);
-                    configuration.put(CONFIG_UDN, normalizedUDN);
-                }
+        if (ipAddress == null || ipAddress.isEmpty()) {
+            // Try to get IP from properties for discovery case
+            Object ipObj = configuration.get(PROPERTY_IP);
+            ipAddress = ipObj instanceof String ? (String) ipObj : null;
+            if (ipAddress != null) {
+                configuration.put(CONFIG_IP_ADDRESS, ipAddress);
             }
         }
 
-        // Let the base factory create the actual Thing instance
-        Thing createdThing = super.createThing(thingTypeUID, configuration, finalThingUID, bridgeUID);
-
-        // If createdThing is not null, attach these properties
-        if (createdThing != null) {
-            createdThing.setProperties(properties);
+        // Validate IP address
+        if (ipAddress == null || !IP_PATTERN.matcher(ipAddress).matches()) {
+            throw new IllegalArgumentException("Invalid or missing IP address: " + ipAddress);
         }
-        return createdThing;
+
+        // Build ThingUID if not provided
+        ThingUID finalThingUID = thingUID;
+        if (finalThingUID == null) {
+            // For discovered devices, try to use UDN first
+            String udn = (String) configuration.get(CONFIG_UDN);
+            if (udn != null && !udn.isEmpty()) {
+                finalThingUID = new ThingUID(thingTypeUID, udn.replaceAll("[^a-zA-Z0-9_]", "_"));
+            } else {
+                // Fallback to IP-based UID
+                finalThingUID = new ThingUID(thingTypeUID, ipAddress.replace('.', '_'));
+            }
+        }
+
+        // Prepare properties
+        Map<String, String> properties = new HashMap<>();
+        properties.put(PROPERTY_IP, ipAddress);
+
+        // Handle UDN normalization
+        String udn = (String) configuration.get(CONFIG_UDN);
+        if (udn != null && !udn.isEmpty()) {
+            // Ensure UDN has proper format
+            String normalizedUDN = udn.startsWith("uuid:") ? udn : "uuid:" + udn;
+            if (UDN_PATTERN.matcher(normalizedUDN).matches()) {
+                properties.put(PROPERTY_UDN, normalizedUDN);
+                configuration.put(CONFIG_UDN, normalizedUDN);
+            }
+        }
+
+        // Create the thing
+        Thing thing = super.createThing(thingTypeUID, configuration, finalThingUID, bridgeUID);
+        if (thing != null) {
+            thing.setProperties(properties);
+        }
+        return thing;
     }
 
     /**

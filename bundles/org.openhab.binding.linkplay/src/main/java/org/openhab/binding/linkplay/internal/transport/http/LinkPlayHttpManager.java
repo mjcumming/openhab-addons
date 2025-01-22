@@ -263,7 +263,7 @@ public class LinkPlayHttpManager {
         }
         if ("UNKNOWN".equals(source) && rawJson.has("mode")) {
             int mode = getAsInt(rawJson, "mode", 0);
-            source = LinkPlayBindingConstants.PLAYBACK_MODES.getOrDefault(mode, "UNKNOWN");
+            source = LinkPlayBindingConstants.PLAYBACK_MODES.getOrDefault(mode, "UNKNOWN MODE");
         }
         cleanJson.addProperty("source", source);
 

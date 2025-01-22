@@ -12,6 +12,10 @@
  */
 package org.openhab.binding.linkplay.internal.handler;
 
+import static org.openhab.binding.linkplay.internal.LinkPlayBindingConstants.*;
+
+import java.util.Map;
+
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.binding.linkplay.internal.LinkPlayDeviceManager;
@@ -62,6 +66,22 @@ public class LinkPlayThingHandler extends BaseThingHandler {
         // Get configuration
         config = getConfigAs(LinkPlayConfiguration.class);
 
+        // Try to restore configuration from properties if needed
+        if (!config.isValid()) {
+            Map<String, String> properties = thing.getProperties();
+            Configuration configuration = editConfiguration();
+
+            if (properties.containsKey(PROPERTY_IP)) {
+                configuration.put(CONFIG_IP_ADDRESS, properties.get(PROPERTY_IP));
+            }
+            if (properties.containsKey(PROPERTY_UDN)) {
+                configuration.put(CONFIG_UDN, properties.get(PROPERTY_UDN));
+            }
+
+            updateConfiguration(configuration);
+            config = getConfigAs(LinkPlayConfiguration.class);
+        }
+
         // Validate configuration
         if (!config.isValid()) {
             updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR,
@@ -72,7 +92,7 @@ public class LinkPlayThingHandler extends BaseThingHandler {
         // Set initial status to UNKNOWN while we try to connect
         updateStatus(ThingStatus.UNKNOWN);
 
-        // Initialize device manager with HTTP client first
+        // Initialize device manager with both HTTP and UPnP support
         LinkPlayDeviceManager manager = new LinkPlayDeviceManager(this, config, httpClient, upnpIOService);
         deviceManager = manager;
 

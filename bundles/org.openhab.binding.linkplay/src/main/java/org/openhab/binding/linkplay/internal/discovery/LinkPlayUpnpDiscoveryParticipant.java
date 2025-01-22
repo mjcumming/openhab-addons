@@ -82,7 +82,7 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
     @Override
     public Set<ThingTypeUID> getSupportedThingTypeUIDs() {
         // We only declare the "device" type from your binding
-        return Collections.singleton(THING_TYPE_DEVICE);
+        return Collections.singleton(THING_TYPE_MEDIASTREAMER);
     }
 
     /**
@@ -136,7 +136,7 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
                         // Remove 'uuid:' prefix if present and normalize format
                         deviceId = deviceId.replace("uuid:", "").replace("-", "");
                         logger.debug("Creating ThingUID with deviceId: {}", deviceId);
-                        ThingUID thingUID = new ThingUID(THING_TYPE_DEVICE, deviceId);
+                        ThingUID thingUID = new ThingUID(THING_TYPE_MEDIASTREAMER, deviceId);
 
                         // Check if this thing already exists
                         if (thingRegistry.get(thingUID) != null) {
@@ -215,7 +215,7 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
         String label = String.format("%s (%s)", friendlyName, ipAddress);
         logger.debug("Building discovery result for {}: label={}, properties={}", thingUID, label, properties);
         return DiscoveryResultBuilder.create(thingUID).withLabel(label).withProperties(properties)
-                .withThingType(THING_TYPE_DEVICE).withRepresentationProperty(CONFIG_IP_ADDRESS)
+                .withThingType(THING_TYPE_MEDIASTREAMER).withRepresentationProperty(CONFIG_IP_ADDRESS)
                 .withTTL(DISCOVERY_RESULT_TTL_SECONDS).build();
     }
 
@@ -263,7 +263,7 @@ public class LinkPlayUpnpDiscoveryParticipant implements UpnpDiscoveryParticipan
 
         // First check if we already have a thing with this IP
         for (Thing thing : thingRegistry.getAll()) {
-            if (thing.getThingTypeUID().equals(THING_TYPE_DEVICE)) {
+            if (thing.getThingTypeUID().equals(THING_TYPE_MEDIASTREAMER)) {
                 Configuration config = thing.getConfiguration();
                 if (ipAddress.equals(config.get(CONFIG_IP_ADDRESS))) {
                     logger.debug("Device at {} already exists as thing {}, skipping validation", ipAddress,
