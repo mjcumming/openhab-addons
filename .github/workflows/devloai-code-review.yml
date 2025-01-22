@@ -1,6 +1,7 @@
-name: Linkplay Directory Workflow
+name: Devlo.ai Code Review
 
 on:
+  workflow_dispatch: # Enables manual triggering
   pull_request:
     paths:
       - 'bundles/org.openhab.binding.linkplay/**'
@@ -20,5 +21,5 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Run your custom action or script
-        run: echo "Workflow triggered for org.openhab.binding.linkplay directory!"
+      - name: Run Devlo.ai Code Review
+        run: echo "Running Devlo.ai code review!"
