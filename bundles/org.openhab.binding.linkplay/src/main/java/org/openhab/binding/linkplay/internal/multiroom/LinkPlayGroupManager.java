@@ -197,6 +197,17 @@ public class LinkPlayGroupManager {
                 }
             }
         }
+
+        // Initialize group volume and mute when becoming master
+        initializeGroupVolume();
+
+        // Set initial group mute state based on master's mute state
+        JsonObject masterMute = httpManager.sendCommand("getPlayerCmd:mute");
+        if (masterMute != null && masterMute.has("mute")) {
+            boolean isMuted = "1".equals(masterMute.get("mute").getAsString());
+            deviceManager.updateState(GROUP_MULTIROOM + "#" + CHANNEL_GROUP_MUTE, OnOffType.from(isMuted));
+        }
+
         updateChannels();
     }
 
