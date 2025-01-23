@@ -237,7 +237,7 @@
 				<option value="">Not In Group</option>
 			</options>
 		</state>
-		<autoUpdatePolicy>veto</autoUpdatePolicy> <!-- Prevent storing the command value -->
+		<autoUpdatePolicy>veto</autoUpdatePolicy>
 	</channel-type>
 
 	<!-- leave => Switch -->
