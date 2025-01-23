@@ -262,6 +262,50 @@ public class LinkPlayGroupManager {
         executeCommand(String.format(API_SLAVE_KICKOUT, slaveIP), "Successfully kicked slave " + slaveIP);
     }
 
+    /**
+     * Calculate and set initial group volume when group is created
+     */
+    private void initializeGroupVolume() {
+        if (!state.isMaster()) {
+            return;
+        }
+
+        // Get master volume from current device status
+        JsonObject masterStatus = httpManager.sendCommand("getPlayerCmd:vol");
+        int masterVolume = 50; // Default volume if can't get status
+        if (masterStatus != null && masterStatus.has("vol")) {
+            try {
+                masterVolume = masterStatus.get("vol").getAsInt();
+            } catch (NumberFormatException e) {
+                logger.debug("[{}] Invalid master volume response", deviceManager.getConfig().getDeviceName());
+            }
+        }
+
+        int totalVolume = masterVolume;
+        int deviceCount = 1;
+
+        // Get slave volumes
+        for (String slaveIP : state.getSlaveIPs().split(",")) {
+            if (!slaveIP.isEmpty()) {
+                JsonObject response = httpManager.sendCommand("getPlayerCmd:vol", slaveIP);
+                if (response != null && response.has("vol")) {
+                    try {
+                        int slaveVolume = response.get("vol").getAsInt();
+                        totalVolume += slaveVolume;
+                        deviceCount++;
+                    } catch (NumberFormatException e) {
+                        logger.debug("[{}] Invalid volume response from slave {}",
+                                deviceManager.getConfig().getDeviceName(), slaveIP);
+                    }
+                }
+            }
+        }
+
+        // Set average volume for the group
+        int groupVolume = totalVolume / deviceCount;
+        setGroupVolume(groupVolume);
+    }
+
     public void setGroupVolume(int volume) {
         if (!state.isMaster()) {
             logger.debug("[{}] Cannot set group volume - device is not master",
@@ -269,6 +313,10 @@ public class LinkPlayGroupManager {
             return;
         }
 
+        // Set master volume using standard command
+        httpManager.sendCommand("setPlayerCmd:vol:" + volume);
+
+        // Set each slave volume using multiroom command
         for (String slaveIP : state.getSlaveIPs().split(",")) {
             if (!slaveIP.isEmpty()) {
                 executeCommand(String.format(API_SLAVE_VOLUME, slaveIP, volume), "Set volume for slave " + slaveIP);
@@ -284,6 +332,10 @@ public class LinkPlayGroupManager {
             return;
         }
 
+        // Set master mute using standard command
+        httpManager.sendCommand("setPlayerCmd:mute:" + (mute ? "1" : "0"));
+
+        // Set each slave mute using multiroom command
         for (String slaveIP : state.getSlaveIPs().split(",")) {
             if (!slaveIP.isEmpty()) {
                 executeCommand(String.format(API_SLAVE_MUTE, slaveIP, mute ? 1 : 0), "Set mute for slave " + slaveIP);
@@ -324,5 +376,39 @@ public class LinkPlayGroupManager {
 
     public void dispose() {
         logger.debug("[{}] Disposing LinkPlayGroupManager", deviceManager.getConfig().getDeviceName());
+    }
+
+    /**
+     * Handle group volume changes
+     * 
+     * @param volume New volume level (0-100)
+     */
+    public void handleGroupVolumeChange(int volume) {
+        // Update master volume using standard command
+        httpManager.sendCommand("setPlayerCmd:vol:" + volume);
+
+        // Update each slave using multiroom command
+        for (String slaveIP : state.getSlaveIPs().split(",")) {
+            if (!slaveIP.isEmpty()) {
+                httpManager.sendCommand("multiroom:SlaveVolume:" + slaveIP + ":" + volume);
+            }
+        }
+    }
+
+    /**
+     * Handle group mute changes
+     * 
+     * @param mute True to mute, false to unmute
+     */
+    public void handleGroupMuteChange(boolean mute) {
+        // Update master volume using standard command
+        httpManager.sendCommand("setPlayerCmd:mute:" + (mute ? "1" : "0"));
+
+        // Update each slave using multiroom command
+        for (String slaveIP : state.getSlaveIPs().split(",")) {
+            if (!slaveIP.isEmpty()) {
+                httpManager.sendCommand("multiroom:SlaveMute:" + slaveIP + ":" + (mute ? "1" : "0"));
+            }
+        }
     }
 }
