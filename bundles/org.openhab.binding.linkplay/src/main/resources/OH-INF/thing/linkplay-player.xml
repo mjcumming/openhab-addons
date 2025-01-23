@@ -115,14 +115,18 @@
 	<channel-type id="repeat">
 		<item-type>Switch</item-type>
 		<label>Repeat</label>
-		<description>Enable or disable Repeat mode.</description>
+		<description>Enable/disable repeat mode</description>
+		<category>MediaControl</category>
+		<state readOnly="false"/>
 	</channel-type>
 
 	<!-- "shuffle" => Switch -->
 	<channel-type id="shuffle">
 		<item-type>Switch</item-type>
 		<label>Shuffle</label>
-		<description>Shuffle mode for playback (on/off).</description>
+		<description>Enable/disable shuffle mode</description>
+		<category>MediaControl</category>
+		<state readOnly="false"/>
 	</channel-type>
 
 	<!-- "source" => String with enumerations -->
