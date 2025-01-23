@@ -267,7 +267,7 @@ public class LinkPlayDeviceManager {
                     break;
                 case "pause":
                 case "paused":
-                case "none":
+                case "none": // Handle "none" status explicitly
                 case "stop":
                 case "stopped":
                 default:
@@ -279,10 +279,10 @@ public class LinkPlayDeviceManager {
             updateState(GROUP_PLAYBACK + "#" + CHANNEL_CONTROL, newState);
             logger.debug("[{}] Updated playback control to: {} (raw: {})", config.getDeviceName(), newState, status);
         } else {
-            // Default to PAUSE if no status
+            // Only log when truly empty/missing
             state.setPlayStatus("stop");
             updateState(GROUP_PLAYBACK + "#" + CHANNEL_CONTROL, PlayPauseType.PAUSE);
-            logger.debug("[{}] No status field in JSON, defaulting control to PAUSE", config.getDeviceName());
+            logger.debug("[{}] Empty status field in JSON, defaulting control to PAUSE", config.getDeviceName());
         }
 
         // Update metadata with proper change detection
@@ -325,6 +325,9 @@ public class LinkPlayDeviceManager {
             int volume = getAsInt(json, "vol", 0);
             state.setVolume(volume);
             updateState(GROUP_PLAYBACK + "#" + CHANNEL_VOLUME, new PercentType(volume));
+
+            // update group volume, if needed
+            groupManager.handleDeviceVolumeChange(config.getIpAddress(), volume);
         }
         if (json.has("mute")) {
             // Handle mute as integer (0/1) or string ("0"/"1")

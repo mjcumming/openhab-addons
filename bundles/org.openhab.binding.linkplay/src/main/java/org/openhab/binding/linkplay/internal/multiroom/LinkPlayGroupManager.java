@@ -22,6 +22,7 @@ import java.util.Set;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.openhab.binding.linkplay.internal.LinkPlayDeviceManager;
+import org.openhab.binding.linkplay.internal.model.LinkPlayDeviceState;
 import org.openhab.binding.linkplay.internal.model.LinkPlayMultiroomState;
 import org.openhab.binding.linkplay.internal.transport.http.LinkPlayHttpManager;
 import org.openhab.core.library.types.OnOffType;
@@ -191,22 +192,20 @@ public class LinkPlayGroupManager {
                 // Convert list to comma-separated string
                 state.setSlaveIPs(String.join(",", slaveIPs));
 
-                // Also add each slave with default values for volume/mute
+                // Also add each slave with current values from device state
+                LinkPlayDeviceState deviceState = deviceManager.getDeviceState();
                 for (String ip : slaveIPs) {
-                    state.addSlave(ip, "", 50, false); // Default volume 50%, unmuted
+                    state.addSlave(ip, "", deviceState.getVolume(), deviceState.isMute());
                 }
             }
         }
 
         // Initialize group volume and mute when becoming master
-        initializeGroupVolume();
+        calculateAndSetGroupVolume();
 
-        // Set initial group mute state based on master's mute state
-        JsonObject masterMute = httpManager.sendCommand("getPlayerCmd:mute");
-        if (masterMute != null && masterMute.has("mute")) {
-            boolean isMuted = "1".equals(masterMute.get("mute").getAsString());
-            deviceManager.updateState(GROUP_MULTIROOM + "#" + CHANNEL_GROUP_MUTE, OnOffType.from(isMuted));
-        }
+        // Set initial group mute state based on device state
+        deviceManager.updateState(GROUP_MULTIROOM + "#" + CHANNEL_GROUP_MUTE,
+                OnOffType.from(deviceManager.getDeviceState().isMute()));
 
         updateChannels();
     }
@@ -274,35 +273,34 @@ public class LinkPlayGroupManager {
     }
 
     /**
-     * Calculate and set initial group volume when group is created
+     * Calculate and set group volume based on all devices
      */
-    private void initializeGroupVolume() {
-        if (!state.isMaster()) {
+    private void calculateAndSetGroupVolume() {
+        if (!state.isMaster() && !state.isSlave()) {
             return;
         }
 
-        // Get master volume from current device status
-        JsonObject masterStatus = httpManager.sendCommand("getPlayerCmd:vol");
-        int masterVolume = 50; // Default volume if can't get status
+        int totalVolume = 0;
+        int deviceCount = 0;
+
+        // Get master volume from player status
+        JsonObject masterStatus = httpManager.sendCommand("getPlayerStatus");
         if (masterStatus != null && masterStatus.has("vol")) {
             try {
-                masterVolume = masterStatus.get("vol").getAsInt();
+                totalVolume += masterStatus.get("vol").getAsInt();
+                deviceCount++;
             } catch (NumberFormatException e) {
                 logger.debug("[{}] Invalid master volume response", deviceManager.getConfig().getDeviceName());
             }
         }
 
-        int totalVolume = masterVolume;
-        int deviceCount = 1;
-
         // Get slave volumes
         for (String slaveIP : state.getSlaveIPs().split(",")) {
             if (!slaveIP.isEmpty()) {
-                JsonObject response = httpManager.sendCommand("getPlayerCmd:vol", slaveIP);
+                JsonObject response = httpManager.sendCommand("getPlayerStatus", slaveIP);
                 if (response != null && response.has("vol")) {
                     try {
-                        int slaveVolume = response.get("vol").getAsInt();
-                        totalVolume += slaveVolume;
+                        totalVolume += response.get("vol").getAsInt();
                         deviceCount++;
                     } catch (NumberFormatException e) {
                         logger.debug("[{}] Invalid volume response from slave {}",
@@ -312,9 +310,21 @@ public class LinkPlayGroupManager {
             }
         }
 
-        // Set average volume for the group
-        int groupVolume = totalVolume / deviceCount;
-        setGroupVolume(groupVolume);
+        // Only update if we got at least one valid volume
+        if (deviceCount > 0) {
+            int groupVolume = totalVolume / deviceCount;
+            deviceManager.updateState(GROUP_MULTIROOM + "#" + CHANNEL_GROUP_VOLUME, new PercentType(groupVolume));
+        }
+    }
+
+    /**
+     * Handle individual device volume change
+     * 
+     * @param deviceIP IP of the device whose volume changed
+     * @param newVolume New volume value (0-100)
+     */
+    public void handleDeviceVolumeChange(String deviceIP, int newVolume) {
+        calculateAndSetGroupVolume();
     }
 
     public void setGroupVolume(int volume) {
