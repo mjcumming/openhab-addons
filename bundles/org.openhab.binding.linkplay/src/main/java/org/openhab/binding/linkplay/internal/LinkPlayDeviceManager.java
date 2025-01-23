@@ -15,8 +15,6 @@ package org.openhab.binding.linkplay.internal;
 
 import static org.openhab.binding.linkplay.internal.LinkPlayBindingConstants.*;
 
-import java.util.concurrent.CompletableFuture;
-
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.openhab.binding.linkplay.internal.config.LinkPlayConfiguration;
 import org.openhab.binding.linkplay.internal.handler.LinkPlayThingHandler;
@@ -104,20 +102,22 @@ public class LinkPlayDeviceManager {
 
         // Start HTTP polling immediately - this is our primary communication method
         httpManager.startPolling();
+    }
 
-        // Initialize UPnP manager - it will handle registration when UDN becomes available
-        CompletableFuture.runAsync(() -> {
-            try {
-                String existingUdn = config.getUdn();
-                if (!existingUdn.isEmpty()) {
-                    logger.debug("[{}] UPnP initialized for UDN: {}", config.getDeviceName(), existingUdn);
-                } else {
-                    logger.debug("[{}] UPnP manager initialized but waiting for UDN discovery", config.getDeviceName());
-                }
-            } catch (Exception e) {
-                logger.debug("[{}] Optional UPnP initialization failed: {}", config.getDeviceName(), e.getMessage());
-            }
-        });
+    /**
+     * Initialize additional features like UPnP and metadata services
+     */
+    public void initializeAdditionalFeatures() {
+        // Initialize UPnP if we have a UDN
+        String existingUdn = config.getUdn();
+        if (!existingUdn.isEmpty()) {
+            logger.debug("[{}] UPnP initialized for UDN: {}", config.getDeviceName(), existingUdn);
+            // TODO: Implement UPnP initialization
+        } else {
+            logger.debug("[{}] UPnP manager initialized but waiting for UDN discovery", config.getDeviceName());
+        }
+
+        logger.debug("[{}] Additional features initialized", config.getDeviceName());
     }
 
     /**

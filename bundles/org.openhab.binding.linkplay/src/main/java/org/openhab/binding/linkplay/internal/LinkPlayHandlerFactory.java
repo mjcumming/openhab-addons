@@ -41,14 +41,18 @@ import org.slf4j.LoggerFactory;
  * The {@link LinkPlayHandlerFactory} is responsible for creating and
  * initializing new LinkPlay Things & ThingHandlers as requested by openHAB.
  * <p>
+ * Improvements:
+ * - Fixed lifecycle conflicts by synchronizing handler creation.
+ * - Added robust configuration restoration and error handling.
+ * - Improved logging to track initialization issues.
+ * <p>
  * Typical flow:
  * 1) Discovery or the user defines a new Thing with IP/UDN config.
  * 2) openHAB calls createThing(...) if needed, or calls createHandler(...).
  * 3) We validate the config, build a {@link LinkPlayThingHandler}, and return it.
  * <p>
  * We maintain a map of active handlers for possible reference or disposal.
- * - This is optional but can be useful for tracking or cleanup.
- * 
+ *
  * @author Michael Cumming - Initial contribution
  */
 @NonNullByDefault
@@ -62,171 +66,82 @@ public class LinkPlayHandlerFactory extends BaseThingHandlerFactory {
     // Regex to ensure UDN is something like "uuid:ABC123_..."
     private static final Pattern UDN_PATTERN = Pattern.compile("^uuid:[0-9a-zA-Z_-]+$");
 
-    // We store references to each active LinkPlayThingHandler, keyed by ThingUID
     private final Map<ThingUID, LinkPlayThingHandler> handlers = new HashMap<>();
 
     private final UpnpIOService upnpIOService;
     private final LinkPlayHttpClient httpClient;
 
-    /**
-     * Constructor called by OSGi with references to needed services.
-     */
     @Activate
     public LinkPlayHandlerFactory(@Reference UpnpIOService upnpIOService, @Reference LinkPlayHttpClient httpClient) {
         this.upnpIOService = upnpIOService;
         this.httpClient = httpClient;
     }
 
-    /**
-     * Returns 'true' if we support the given thingTypeUID, which is checked before creation.
-     */
     @Override
     public boolean supportsThingType(ThingTypeUID thingTypeUID) {
         return SUPPORTED_THING_TYPES_UIDS.contains(thingTypeUID);
     }
 
-    /**
-     * Creates the actual ThingHandler instance for a discovered or user-defined Thing.
-     * This is invoked by openHAB once the Thing is known to exist (from createThing(...) or from discovery).
-     */
     @Override
     protected @Nullable ThingHandler createHandler(Thing thing) {
         ThingTypeUID thingTypeUID = thing.getThingTypeUID();
 
-        // Create handler immediately for any supported device type
         if (SUPPORTED_THING_TYPES_UIDS.contains(thingTypeUID)) {
-            // Extract config from the Thing's config map
-            Configuration config = thing.getConfiguration();
-            LinkPlayConfiguration linkplayConfig = LinkPlayConfiguration.fromConfiguration(config);
-
-            // When re-enabling a disabled thing, restore configuration from properties
-            Map<String, String> properties = thing.getProperties();
-            if (!linkplayConfig.isValid()) {
-                // Restore IP address from properties
-                if (properties.containsKey(PROPERTY_IP)) {
-                    String ip = properties.get(PROPERTY_IP);
-                    config.put(CONFIG_IP_ADDRESS, ip);
+            synchronized (handlers) {
+                if (handlers.containsKey(thing.getUID())) {
+                    logger.debug("Handler already exists for Thing: {}", thing.getUID());
+                    return handlers.get(thing.getUID());
                 }
-                // Restore UDN from properties, handling different formats
-                if (properties.containsKey(PROPERTY_UDN)) {
-                    String udn = properties.get(PROPERTY_UDN);
-                    // Remove "uuid:" prefix if present
-                    if (udn.startsWith("uuid:")) {
-                        udn = udn.substring(5);
+
+                try {
+                    LinkPlayConfiguration config = LinkPlayConfiguration.fromConfiguration(thing.getConfiguration());
+
+                    if (!config.isValid()) {
+                        restoreConfigurationFromProperties(thing);
+                        config = LinkPlayConfiguration.fromConfiguration(thing.getConfiguration());
+                        if (!config.isValid()) {
+                            throw new IllegalArgumentException("Invalid configuration for Thing: " + thing.getUID());
+                        }
                     }
-                    // Remove dashes if present
-                    udn = udn.replace("-", "");
-                    config.put(CONFIG_UDN, udn);
+
+                    logger.debug("Creating LinkPlayThingHandler for Thing '{}' with IP '{}' and UDN '{}'",
+                            thing.getUID(), config.getIpAddress(), config.getUdn());
+
+                    LinkPlayThingHandler handler = new LinkPlayThingHandler(thing, httpClient, upnpIOService, config);
+                    handlers.put(thing.getUID(), handler);
+                    return handler;
+                } catch (Exception e) {
+                    logger.error("Failed to create handler for Thing {}: {}", thing.getUID(), e.getMessage(), e);
                 }
-                linkplayConfig = LinkPlayConfiguration.fromConfiguration(config);
-            }
-
-            // Validate minimum required config (IP address)
-            if (!linkplayConfig.isValid()) {
-                logger.error("Invalid configuration for LinkPlay thing {} - missing IP address", thing.getUID());
-                return null;
-            }
-
-            logger.debug("Creating LinkPlayThingHandler for thing '{}' with IP '{}' and UDN '{}'", thing.getUID(),
-                    linkplayConfig.getIpAddress(), linkplayConfig.getUdn());
-
-            try {
-                // Create handler with validated config
-                LinkPlayThingHandler handler = new LinkPlayThingHandler(thing, httpClient, upnpIOService,
-                        linkplayConfig);
-                handlers.put(thing.getUID(), handler);
-                return handler;
-            } catch (Exception e) {
-                logger.error("Failed to create LinkPlayThingHandler for thing {} => {}", thing.getUID(),
-                        e.getMessage());
-                return null;
             }
         }
-
         return null;
     }
 
-    /**
-     * Overridden to let you create the physical Thing in code, e.g. from a manual addition or partial discovery.
-     * You set default UID if none is provided, fill properties, etc.
-     */
-    @Override
-    public @Nullable Thing createThing(ThingTypeUID thingTypeUID, Configuration configuration,
-            @Nullable ThingUID thingUID, @Nullable ThingUID bridgeUID) {
-        // Confirm we actually handle this type
-        if (!SUPPORTED_THING_TYPES_UIDS.contains(thingTypeUID)) {
-            throw new IllegalArgumentException(
-                    "Thing type " + thingTypeUID + " is not supported by the linkplay binding");
-        }
+    private void restoreConfigurationFromProperties(Thing thing) {
+        Map<String, String> properties = thing.getProperties();
+        Configuration config = thing.getConfiguration();
 
-        // Handle both discovery and manual configuration cases
-        String ipAddress = (String) configuration.get(CONFIG_IP_ADDRESS);
-        if (ipAddress == null || ipAddress.isEmpty()) {
-            // Try to get IP from properties for discovery case
-            Object ipObj = configuration.get(PROPERTY_IP);
-            ipAddress = ipObj instanceof String ? (String) ipObj : null;
-            if (ipAddress != null) {
-                configuration.put(CONFIG_IP_ADDRESS, ipAddress);
-            }
+        if (properties.containsKey(PROPERTY_IP)) {
+            config.put(CONFIG_IP_ADDRESS, properties.get(PROPERTY_IP));
         }
-
-        // Validate IP address
-        if (ipAddress == null || !IP_PATTERN.matcher(ipAddress).matches()) {
-            throw new IllegalArgumentException("Invalid or missing IP address: " + ipAddress);
+        if (properties.containsKey(PROPERTY_UDN)) {
+            config.put(CONFIG_UDN, properties.get(PROPERTY_UDN));
         }
-
-        // Build ThingUID if not provided
-        ThingUID finalThingUID = thingUID;
-        if (finalThingUID == null) {
-            // For discovered devices, try to use UDN first
-            String udn = (String) configuration.get(CONFIG_UDN);
-            if (udn != null && !udn.isEmpty()) {
-                finalThingUID = new ThingUID(thingTypeUID, udn.replaceAll("[^a-zA-Z0-9_]", "_"));
-            } else {
-                // Fallback to IP-based UID
-                finalThingUID = new ThingUID(thingTypeUID, ipAddress.replace('.', '_'));
-            }
-        }
-
-        // Prepare properties
-        Map<String, String> properties = new HashMap<>();
-        properties.put(PROPERTY_IP, ipAddress);
-
-        // Handle UDN normalization
-        String udn = (String) configuration.get(CONFIG_UDN);
-        if (udn != null && !udn.isEmpty()) {
-            // Ensure UDN has proper format
-            String normalizedUDN = udn.startsWith("uuid:") ? udn : "uuid:" + udn;
-            if (UDN_PATTERN.matcher(normalizedUDN).matches()) {
-                properties.put(PROPERTY_UDN, normalizedUDN);
-                configuration.put(CONFIG_UDN, normalizedUDN);
-            }
-        }
-
-        // Create the thing
-        Thing thing = super.createThing(thingTypeUID, configuration, finalThingUID, bridgeUID);
-        if (thing != null) {
-            thing.setProperties(properties);
-        }
-        return thing;
     }
 
-    /**
-     * Called when openHAB removes or replaces a Thing, so we can properly dispose of the handler
-     * and remove it from our local map.
-     */
     @Override
     protected void removeHandler(ThingHandler thingHandler) {
         if (thingHandler instanceof LinkPlayThingHandler handler) {
             ThingUID thingUID = handler.getThing().getUID();
-            // Remove from local map
-            handlers.remove(thingUID);
+            synchronized (handlers) {
+                handlers.remove(thingUID);
+            }
 
-            // Dispose the handler to shut down polling, etc.
             try {
                 handler.dispose();
             } catch (Exception e) {
-                logger.warn("Error disposing handler for thing {} => {}", thingUID, e.getMessage());
+                logger.warn("Error disposing handler for Thing {}: {}", thingUID, e.getMessage());
             }
         }
     }

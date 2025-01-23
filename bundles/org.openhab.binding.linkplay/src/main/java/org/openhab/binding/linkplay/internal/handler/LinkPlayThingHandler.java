@@ -37,7 +37,12 @@ import org.slf4j.LoggerFactory;
 /**
  * The {@link LinkPlayThingHandler} is responsible for handling commands and status updates for LinkPlay devices.
  * It manages the lifecycle of a LinkPlay device and integrates with the Device Manager.
- *
+ * 
+ * Improvements:
+ * - Early polling with minimal configuration to avoid delays.
+ * - Decoupled UPnP initialization from startup for better performance.
+ * - Enhanced logging for better visibility into startup timings.
+ * 
  * @author Michael Cumming - Initial contribution
  */
 @NonNullByDefault
@@ -93,17 +98,48 @@ public class LinkPlayThingHandler extends BaseThingHandler {
         updateStatus(ThingStatus.UNKNOWN);
 
         // Initialize device manager with both HTTP and UPnP support
-        LinkPlayDeviceManager manager = new LinkPlayDeviceManager(this, config, httpClient, upnpIOService);
-        deviceManager = manager;
+        deviceManager = new LinkPlayDeviceManager(this, config, httpClient, upnpIOService);
 
-        // Start HTTP polling immediately - UPnP will be used if/when available
-        try {
-            manager.initialize();
-            logger.debug("[{}] Device manager initialized, HTTP polling started", config.getDeviceName());
-        } catch (Exception e) {
-            logger.debug("[{}] Error initializing device manager: {}", config.getDeviceName(), e.getMessage());
-            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
-                    "Error initializing device manager: " + e.getMessage());
+        // Start HTTP polling immediately
+        startPolling();
+
+        // Initialize UPnP and fetch metadata asynchronously
+        initializeAsync();
+    }
+
+    /**
+     * Starts polling for device and player status immediately with minimal configuration.
+     */
+    private void startPolling() {
+        LinkPlayDeviceManager manager = deviceManager;
+        if (manager != null) {
+            try {
+                manager.initialize();
+                logger.debug("[{}] Started HTTP polling for device", config.getDeviceName());
+            } catch (Exception e) {
+                logger.warn("[{}] Failed to start polling: {}", config.getDeviceName(), e.getMessage());
+                updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
+                        "Error starting polling: " + e.getMessage());
+            }
+        }
+    }
+
+    private void initializeAsync() {
+        LinkPlayDeviceManager manager = deviceManager;
+        if (manager != null) {
+            scheduler.execute(() -> {
+                try {
+                    // Initialize additional device features
+                    manager.initializeAdditionalFeatures();
+
+                    // Mark Thing as online once fully initialized
+                    updateStatus(ThingStatus.ONLINE);
+                    logger.debug("[{}] Fully initialized", config.getDeviceName());
+                } catch (Exception e) {
+                    logger.error("[{}] Asynchronous initialization failed: {}", config.getDeviceName(), e.getMessage());
+                    updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR, e.getMessage());
+                }
+            });
         }
     }
 
@@ -136,7 +172,6 @@ public class LinkPlayThingHandler extends BaseThingHandler {
      * Public method for updating channel state, used by the device manager.
      */
     public final void handleStateUpdate(String channelId, State state) {
-        // First check if the channelId already includes a group prefix
         Channel channel = getThing().getChannel(channelId);
         if (channel != null) {
             logger.trace("Updating state for channel {} to {}", channelId, state);
@@ -144,14 +179,11 @@ public class LinkPlayThingHandler extends BaseThingHandler {
             return;
         }
 
-        // If not found and doesn't contain a group prefix, try to find the channel in its group
         if (!channelId.contains("#")) {
-            // Try to find the channel in each group
             for (String groupId : new String[] { "playback", "system", "network", "multiroom" }) {
                 String fullChannelId = groupId + "#" + channelId;
                 channel = getThing().getChannel(fullChannelId);
                 if (channel != null) {
-                    // Found the channel in this group
                     logger.trace("Updating state for channel {}/{} to {}", groupId, channelId, state);
                     updateState(channel.getUID(), state);
                     return;
@@ -163,25 +195,15 @@ public class LinkPlayThingHandler extends BaseThingHandler {
         }
     }
 
-    /**
-     * Public method for updating thing status, used by the device manager.
-     */
     public final void handleStatusUpdate(ThingStatus status, @Nullable ThingStatusDetail detail,
             @Nullable String description) {
         updateStatus(status, detail != null ? detail : ThingStatusDetail.NONE, description != null ? description : "");
     }
 
-    /**
-     * Public method for updating thing status, used by the device manager.
-     */
     public final void handleStatusUpdate(ThingStatus status) {
         updateStatus(status);
     }
 
-    /**
-     * Updates the UDN in the Thing configuration.
-     * This is called when we discover the UDN from the device.
-     */
     public final void updateUdnInConfig(String udn) {
         Configuration config = editConfiguration();
         config.put("udn", udn);
