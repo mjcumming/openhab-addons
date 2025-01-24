@@ -179,18 +179,40 @@ public class LinkPlayHttpManager {
         try {
             CompletableFuture<String> future = httpClient.getStatusEx(ip);
             String response = future.get(TIMEOUT_MS, TimeUnit.MILLISECONDS);
+
+            // Handle empty responses
+            if (response == null || response.trim().isEmpty()) {
+                logger.warn("[{}] Empty device status response from IP={}", config.getDeviceName(), ip);
+                deviceManager.handleCommunicationResult(false);
+                return;
+            }
+
             logger.trace("[{}] pollDeviceStatus() -> JSON: {}", config.getDeviceName(), response);
 
             try {
                 JsonObject json = JsonParser.parseString(response).getAsJsonObject();
+
+                // Validate essential fields
+                if (!json.has("group") || !json.has("DeviceName")) {
+                    logger.warn("[{}] Device status response missing required fields from IP={}: {}",
+                            config.getDeviceName(), ip, response);
+                    deviceManager.handleCommunicationResult(false);
+                    return;
+                }
+
+                // Process the device status
                 deviceManager.handleGetStatusExResponse(json);
                 deviceManager.handleCommunicationResult(true);
+
             } catch (JsonSyntaxException e) {
-                logger.warn("[{}] Failed to parse device status JSON: {}", config.getDeviceName(), e.getMessage());
+                logger.warn("[{}] Invalid JSON response from IP={}: {} - Response: {}", config.getDeviceName(), ip,
+                        e.getMessage(), response);
                 deviceManager.handleCommunicationResult(false);
             }
         } catch (Exception e) {
-            logger.warn("[{}] Device status poll failed: {}", config.getDeviceName(), e.getMessage());
+            // Log the full exception for debugging
+            logger.warn("[{}] Device status poll failed for IP={}: {} - {}", config.getDeviceName(), ip,
+                    e.getClass().getSimpleName(), e.getMessage());
             deviceManager.handleCommunicationResult(false);
         }
     }
@@ -242,35 +264,51 @@ public class LinkPlayHttpManager {
             @Nullable
             String response = future.get(TIMEOUT_MS, TimeUnit.MILLISECONDS);
 
-            // For group commands, immediately poll status
-            if (command.startsWith("joinGroup:") || command.startsWith("leaveGroup") || command.startsWith("ungroup")
-                    || command.startsWith("kickoutSlave:")) {
-                pollDeviceStatus();
-            }
-
-            if (response == null) {
+            // Handle empty or invalid responses
+            if (response == null || response.trim().isEmpty()) {
+                logger.debug("[{}] Empty response for command='{}', treating as success", config.getDeviceName(),
+                        command);
+                // For multiroom commands, empty response is normal and indicates success
+                if (command.startsWith("multiroom:") || command.startsWith("joinGroup:")
+                        || command.startsWith("leaveGroup") || command.startsWith("ungroup")
+                        || command.startsWith("kickoutSlave:")) {
+                    deviceManager.handleCommunicationResult(true);
+                    pollDeviceStatus(); // Update status after multiroom command
+                    return new JsonObject(); // Return empty object to indicate success
+                }
                 return null;
-            }
-
-            // Special case: some commands like ungroup return "OK"
-            if ("OK".equals(response)) {
-                JsonObject okResponse = new JsonObject();
-                okResponse.addProperty("status", "OK");
-                deviceManager.handleCommunicationResult(true);
-                return okResponse;
             }
 
             try {
-                return JsonParser.parseString(response).getAsJsonObject();
-            } catch (JsonSyntaxException e) {
-                logger.warn("[{}] Failed to parse response for command='{}': {}", config.getDeviceName(), command,
-                        e.getMessage());
-                deviceManager.handleCommunicationResult(false);
-                return null;
-            }
+                JsonObject json = JsonParser.parseString(response).getAsJsonObject();
+                deviceManager.handleCommunicationResult(true);
 
+                // For multiroom commands, always poll status after
+                if (command.startsWith("multiroom:") || command.startsWith("joinGroup:")
+                        || command.startsWith("leaveGroup") || command.startsWith("ungroup")
+                        || command.startsWith("kickoutSlave:")) {
+                    pollDeviceStatus();
+                }
+
+                return json;
+            } catch (JsonSyntaxException e) {
+                // For multiroom commands, some responses may not be JSON
+                if (command.startsWith("multiroom:")) {
+                    logger.debug("[{}] Non-JSON response for multiroom command='{}': {}", config.getDeviceName(),
+                            command, response);
+                    deviceManager.handleCommunicationResult(true);
+                    pollDeviceStatus(); // Update status after multiroom command
+                    return new JsonObject(); // Return empty object to indicate success
+                } else {
+                    logger.warn("[{}] Invalid JSON response for command='{}': {}", config.getDeviceName(), command,
+                            e.getMessage());
+                    deviceManager.handleCommunicationResult(false);
+                    return null;
+                }
+            }
         } catch (Exception e) {
-            logger.warn("[{}] Exception sending command='{}': {}", config.getDeviceName(), command, e.getMessage());
+            logger.warn("[{}] Failed to send command='{}': {}", config.getDeviceName(), command, e.getMessage());
+            deviceManager.handleCommunicationResult(false);
             return null;
         }
     }

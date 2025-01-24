@@ -16,7 +16,6 @@ import static org.openhab.binding.linkplay.internal.LinkPlayBindingConstants.*;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.regex.Pattern;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
@@ -26,6 +25,7 @@ import org.openhab.binding.linkplay.internal.transport.http.LinkPlayHttpClient;
 import org.openhab.core.config.core.Configuration;
 import org.openhab.core.io.transport.upnp.UpnpIOService;
 import org.openhab.core.thing.Thing;
+import org.openhab.core.thing.ThingRegistry;
 import org.openhab.core.thing.ThingTypeUID;
 import org.openhab.core.thing.ThingUID;
 import org.openhab.core.thing.binding.BaseThingHandlerFactory;
@@ -61,20 +61,31 @@ public class LinkPlayHandlerFactory extends BaseThingHandlerFactory {
 
     private static final Logger logger = LoggerFactory.getLogger(LinkPlayHandlerFactory.class);
 
-    // Regex to ensure IP is in basic IPv4 format: x.x.x.x
-    private static final Pattern IP_PATTERN = Pattern.compile("^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}$");
-    // Regex to ensure UDN is something like "uuid:ABC123_..."
-    private static final Pattern UDN_PATTERN = Pattern.compile("^uuid:[0-9a-zA-Z_-]+$");
-
     private final Map<ThingUID, LinkPlayThingHandler> handlers = new HashMap<>();
 
     private final UpnpIOService upnpIOService;
     private final LinkPlayHttpClient httpClient;
 
+    @Reference
+    private @NonNullByDefault({}) ThingRegistry thingRegistry;
+
     @Activate
     public LinkPlayHandlerFactory(@Reference UpnpIOService upnpIOService, @Reference LinkPlayHttpClient httpClient) {
         this.upnpIOService = upnpIOService;
         this.httpClient = httpClient;
+    }
+
+    public @Nullable LinkPlayThingHandler getHandlerByIP(String ipAddress) {
+        for (Thing thing : thingRegistry.getAll()) {
+            if (THING_TYPE_MEDIASTREAMER.equals(thing.getThingTypeUID())) {
+                String thingIP = (String) thing.getConfiguration().get(CONFIG_IP_ADDRESS);
+                if (ipAddress.equals(thingIP)) {
+                    return (LinkPlayThingHandler) thing.getHandler();
+                }
+            }
+        }
+        logger.debug("No LinkPlay handler found for IP: {}", ipAddress);
+        return null;
     }
 
     @Override
@@ -104,10 +115,14 @@ public class LinkPlayHandlerFactory extends BaseThingHandlerFactory {
                         }
                     }
 
+                    // Store IP in properties
+                    thing.setProperty(PROPERTY_IP, config.getIpAddress());
+
                     logger.debug("Creating LinkPlayThingHandler for Thing '{}' with IP '{}' and UDN '{}'",
                             thing.getUID(), config.getIpAddress(), config.getUdn());
 
-                    LinkPlayThingHandler handler = new LinkPlayThingHandler(thing, httpClient, upnpIOService, config);
+                    LinkPlayThingHandler handler = new LinkPlayThingHandler(thing, httpClient, upnpIOService, config,
+                            thingRegistry);
                     handlers.put(thing.getUID(), handler);
                     return handler;
                 } catch (Exception e) {

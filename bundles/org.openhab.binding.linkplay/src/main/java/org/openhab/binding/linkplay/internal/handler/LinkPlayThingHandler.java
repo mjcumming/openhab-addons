@@ -26,6 +26,7 @@ import org.openhab.core.io.transport.upnp.UpnpIOService;
 import org.openhab.core.thing.Channel;
 import org.openhab.core.thing.ChannelUID;
 import org.openhab.core.thing.Thing;
+import org.openhab.core.thing.ThingRegistry;
 import org.openhab.core.thing.ThingStatus;
 import org.openhab.core.thing.ThingStatusDetail;
 import org.openhab.core.thing.binding.BaseThingHandler;
@@ -52,16 +53,20 @@ public class LinkPlayThingHandler extends BaseThingHandler {
 
     private final UpnpIOService upnpIOService;
     private final LinkPlayHttpClient httpClient;
+    private final ThingRegistry thingRegistry;
     private LinkPlayConfiguration config;
 
     private @Nullable LinkPlayDeviceManager deviceManager;
 
     public LinkPlayThingHandler(Thing thing, LinkPlayHttpClient httpClient, UpnpIOService upnpIOService,
-            LinkPlayConfiguration config) {
+            LinkPlayConfiguration config, ThingRegistry thingRegistry) {
         super(thing);
-        this.upnpIOService = upnpIOService;
         this.httpClient = httpClient;
+        this.upnpIOService = upnpIOService;
         this.config = config;
+        this.thingRegistry = thingRegistry;
+
+        this.deviceManager = new LinkPlayDeviceManager(this, config, httpClient, upnpIOService, thingRegistry);
     }
 
     @Override
@@ -98,7 +103,7 @@ public class LinkPlayThingHandler extends BaseThingHandler {
         updateStatus(ThingStatus.UNKNOWN);
 
         // Initialize device manager with both HTTP and UPnP support
-        deviceManager = new LinkPlayDeviceManager(this, config, httpClient, upnpIOService);
+        deviceManager = new LinkPlayDeviceManager(this, config, httpClient, upnpIOService, thingRegistry);
 
         // Start HTTP polling immediately
         startPolling();
@@ -209,5 +214,13 @@ public class LinkPlayThingHandler extends BaseThingHandler {
         config.put("udn", udn);
         updateConfiguration(config);
         logger.debug("Updated UDN in configuration to: {}", udn);
+    }
+
+    /**
+     * Get the device manager instance
+     * Added to support multiroom functionality
+     */
+    public @Nullable LinkPlayDeviceManager getDeviceManager() {
+        return deviceManager;
     }
 }

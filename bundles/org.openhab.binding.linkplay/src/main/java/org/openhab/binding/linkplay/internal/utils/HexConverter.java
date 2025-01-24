@@ -12,10 +12,7 @@
  */
 package org.openhab.binding.linkplay.internal.utils;
 
-import java.nio.charset.StandardCharsets;
-
 import org.eclipse.jdt.annotation.NonNullByDefault;
-import org.eclipse.jdt.annotation.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -28,35 +25,47 @@ import org.slf4j.LoggerFactory;
 public class HexConverter {
 
     private static final Logger logger = LoggerFactory.getLogger(HexConverter.class);
+    private static final String UNKNOWN = "Unknown";
 
     /**
      * Converts a hex string to its UTF-8 string representation.
      * Handles null input, empty strings, and invalid hex values.
      *
-     * @param hex The hex string to convert (may be null).
-     * @return The UTF-8 string representation, or empty string if conversion fails.
+     * @param hex The hex string to convert (e.g. "556E6B6E6F776E" for "Unknown")
+     * @return The decoded ASCII text, or the original string if not valid hex
      */
-    public static String hexToString(@Nullable String hex) {
+    public static String hexToString(String hex) {
         if (hex == null || hex.isEmpty()) {
             return "";
         }
 
-        // Remove any whitespace and validate hex string
+        // If already "Unknown", no need to try decoding
+        if ("Unknown".equals(hex)) {
+            return hex;
+        }
+
+        // Remove any whitespace
         hex = hex.replaceAll("\\s", "");
+
+        // Check if it's a valid hex string (must be even length and contain only hex chars)
         if (hex.length() % 2 != 0 || !hex.matches("[0-9A-Fa-f]+")) {
-            logger.trace("Invalid hex string: {}", hex);
-            return "";
+            return hex; // Return original if not valid hex
         }
 
         try {
-            byte[] bytes = new byte[hex.length() / 2];
+            StringBuilder output = new StringBuilder();
             for (int i = 0; i < hex.length(); i += 2) {
-                bytes[i / 2] = (byte) Integer.parseInt(hex.substring(i, i + 2), 16);
+                String str = hex.substring(i, i + 2);
+                int value = Integer.parseInt(str, 16);
+                // Only include printable ASCII characters
+                if (value >= 32 && value <= 126) {
+                    output.append((char) value);
+                }
             }
-            return new String(bytes, StandardCharsets.UTF_8);
+            String result = output.toString();
+            return result.isEmpty() ? hex : result;
         } catch (Exception e) {
-            logger.trace("Failed to convert hex to string: {}", e.getMessage());
-            return "";
+            return hex; // Return original string if decoding fails
         }
     }
 }

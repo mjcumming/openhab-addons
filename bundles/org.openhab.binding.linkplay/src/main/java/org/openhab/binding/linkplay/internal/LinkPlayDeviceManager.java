@@ -34,6 +34,7 @@ import org.openhab.core.library.types.PlayPauseType;
 import org.openhab.core.library.types.QuantityType;
 import org.openhab.core.library.types.StringType;
 import org.openhab.core.library.unit.Units;
+import org.openhab.core.thing.ThingRegistry;
 import org.openhab.core.thing.ThingStatus;
 import org.openhab.core.thing.ThingStatusDetail;
 import org.openhab.core.types.Command;
@@ -57,10 +58,6 @@ public class LinkPlayDeviceManager {
 
     private final LinkPlayThingHandler thingHandler;
     private final LinkPlayConfiguration config;
-    @SuppressWarnings("unused") // Used by HttpManager and MetadataService
-    private final LinkPlayHttpClient httpClient;
-    @SuppressWarnings("unused") // Used by UpnpManager
-    private final UpnpIOService upnpIOService;
     private final LinkPlayHttpManager httpManager;
     private final LinkPlayGroupManager groupManager;
     private final LinkPlayMetadataService metadataService;
@@ -78,11 +75,9 @@ public class LinkPlayDeviceManager {
             Map.entry(25, "CUSTOM"));
 
     public LinkPlayDeviceManager(LinkPlayThingHandler thingHandler, LinkPlayConfiguration config,
-            LinkPlayHttpClient httpClient, UpnpIOService upnpIOService) {
+            LinkPlayHttpClient httpClient, UpnpIOService upnpIOService, ThingRegistry thingRegistry) {
         this.thingHandler = thingHandler;
         this.config = config;
-        this.httpClient = httpClient;
-        this.upnpIOService = upnpIOService;
 
         // Initialize device state from config
         deviceState = new LinkPlayDeviceState();
@@ -92,7 +87,7 @@ public class LinkPlayDeviceManager {
         this.httpManager = new LinkPlayHttpManager(httpClient, this);
         this.uartManager = new LinkPlayUartManager(this);
         this.metadataService = new LinkPlayMetadataService(httpClient, this);
-        this.groupManager = new LinkPlayGroupManager(this);
+        this.groupManager = new LinkPlayGroupManager(this, thingRegistry);
 
         logger.debug("[{}] Initializing device manager...", config.getDeviceName());
     }
@@ -271,32 +266,51 @@ public class LinkPlayDeviceManager {
             updateMetadata();
         }
 
-        // Process position/duration - update channels only
-        int position = getJsonInt(json, "position", 0);
-        int duration = getJsonInt(json, "duration", 0);
-        updateState(GROUP_PLAYBACK + "#" + CHANNEL_POSITION, new QuantityType<>(position, Units.SECOND));
-        updateState(GROUP_PLAYBACK + "#" + CHANNEL_DURATION, new QuantityType<>(duration, Units.SECOND));
+        // Process position and duration
+        try {
+            long curpos = Long.parseLong(getJsonString(json, "curpos"));
+            long totlen = Long.parseLong(getJsonString(json, "totlen"));
 
-        // Process volume/mute
-        int volume = getJsonInt(json, "vol", 0);
-        boolean mute = getJsonString(json, "mute").equals("1");
+            // Convert milliseconds to seconds
+            int position = (int) (curpos / 1000);
+            int duration = (int) (totlen / 1000);
 
-        deviceState.setVolume(volume);
-        deviceState.setMute(mute);
+            logger.trace("[{}] Parsed position: {}s, duration: {}s", config.getDeviceName(), position, duration);
 
-        updateState(GROUP_PLAYBACK + "#" + CHANNEL_VOLUME, new PercentType(volume));
-        updateState(GROUP_PLAYBACK + "#" + CHANNEL_MUTE, OnOffType.from(mute));
+            updateState(GROUP_PLAYBACK + "#" + CHANNEL_POSITION, new QuantityType<>(position, Units.SECOND));
+            updateState(GROUP_PLAYBACK + "#" + CHANNEL_DURATION, new QuantityType<>(duration, Units.SECOND));
+        } catch (NumberFormatException e) {
+            logger.debug("[{}] Failed to parse position/duration: {}", config.getDeviceName(), e.getMessage());
+        }
 
-        // Process repeat/shuffle from loop mode
-        String loop = getJsonString(json, "loop");
-        boolean repeat = "0".equals(loop);
-        boolean shuffle = "2".equals(loop);
+        // Process volume and mute
+        try {
+            int volume = Integer.parseInt(getJsonString(json, "vol"));
+            boolean mute = "1".equals(getJsonString(json, "mute"));
 
-        deviceState.setRepeat(repeat);
-        deviceState.setShuffle(shuffle);
+            deviceState.setVolume(volume);
+            deviceState.setMute(mute);
 
-        updateState(GROUP_PLAYBACK + "#" + CHANNEL_REPEAT, OnOffType.from(repeat));
-        updateState(GROUP_PLAYBACK + "#" + CHANNEL_SHUFFLE, OnOffType.from(shuffle));
+            updateState(GROUP_PLAYBACK + "#" + CHANNEL_VOLUME, new PercentType(volume));
+            updateState(GROUP_PLAYBACK + "#" + CHANNEL_MUTE, OnOffType.from(mute));
+        } catch (NumberFormatException e) {
+            logger.debug("[{}] Failed to parse volume/mute: {}", config.getDeviceName(), e.getMessage());
+        }
+
+        // Process repeat and shuffle based on loop mode
+        try {
+            int loopMode = Integer.parseInt(getJsonString(json, "loop"));
+            boolean repeat = (loopMode & 1) == 1; // Bit 0: repeat
+            boolean shuffle = (loopMode & 2) == 2; // Bit 1: shuffle
+
+            deviceState.setRepeat(repeat);
+            deviceState.setShuffle(shuffle);
+
+            updateState(GROUP_PLAYBACK + "#" + CHANNEL_REPEAT, OnOffType.from(repeat));
+            updateState(GROUP_PLAYBACK + "#" + CHANNEL_SHUFFLE, OnOffType.from(shuffle));
+        } catch (NumberFormatException e) {
+            logger.debug("[{}] Failed to parse loop mode: {}", config.getDeviceName(), e.getMessage());
+        }
     }
 
     /**
@@ -306,29 +320,35 @@ public class LinkPlayDeviceManager {
         // Process multiroom status first via GroupManager
         groupManager.handleDeviceStatus(json);
 
-        // Handle device name - ensure we always have a valid state
+        // Handle device name - only process if changed or missing
         if (json.has("DeviceName")) {
             String newName = getJsonString(json, "DeviceName");
-            if (!newName.isEmpty()) {
-                deviceState.setDeviceName(newName);
-                updateState(GROUP_SYSTEM + "#" + CHANNEL_DEVICE_NAME, new StringType(newName));
-                logger.debug("[{}] Updated device name to: {}", config.getDeviceName(), newName);
-            } else {
-                // If empty from API, use configured name
-                String configName = config.getDeviceName();
-                if (!configName.isEmpty()) {
-                    deviceState.setDeviceName(configName);
-                    updateState(GROUP_SYSTEM + "#" + CHANNEL_DEVICE_NAME, new StringType(configName));
-                    logger.debug("[{}] Using configured device name: {}", config.getDeviceName(), configName);
+            String currentName = deviceState.getDeviceName();
+
+            // Only update if name changed or current name is empty
+            if (!newName.equals(currentName) || currentName.isEmpty()) {
+                if (!newName.isEmpty()) {
+                    // Use name from API if available
+                    deviceState.setDeviceName(newName);
+                    updateState(GROUP_SYSTEM + "#" + CHANNEL_DEVICE_NAME, new StringType(newName));
+                    logger.debug("[{}] Updated device name to: {}", config.getDeviceName(), newName);
                 } else {
-                    // Last resort - use thing label or ID
-                    String fallbackName = thingHandler.getThing().getLabel();
-                    if (fallbackName == null || fallbackName.isEmpty()) {
-                        fallbackName = thingHandler.getThing().getUID().getId();
+                    // If empty from API, use configured name
+                    String configName = config.getDeviceName();
+                    if (!configName.isEmpty()) {
+                        deviceState.setDeviceName(configName);
+                        updateState(GROUP_SYSTEM + "#" + CHANNEL_DEVICE_NAME, new StringType(configName));
+                        logger.debug("[{}] Using configured device name: {}", config.getDeviceName(), configName);
+                    } else {
+                        // Last resort - use thing label or ID
+                        String fallbackName = thingHandler.getThing().getLabel();
+                        if (fallbackName == null || fallbackName.isEmpty()) {
+                            fallbackName = thingHandler.getThing().getUID().getId();
+                        }
+                        deviceState.setDeviceName(fallbackName);
+                        updateState(GROUP_SYSTEM + "#" + CHANNEL_DEVICE_NAME, new StringType(fallbackName));
+                        logger.debug("[{}] Using fallback device name: {}", config.getDeviceName(), fallbackName);
                     }
-                    deviceState.setDeviceName(fallbackName);
-                    updateState(GROUP_SYSTEM + "#" + CHANNEL_DEVICE_NAME, new StringType(fallbackName));
-                    logger.debug("[{}] Using fallback device name: {}", config.getDeviceName(), fallbackName);
                 }
             }
         }
@@ -360,16 +380,6 @@ public class LinkPlayDeviceManager {
                 deviceState.setFirmware(newFirmware);
                 updateState(GROUP_SYSTEM + "#" + CHANNEL_FIRMWARE, new StringType(newFirmware));
                 logger.debug("[{}] Updated firmware version to: {}", config.getDeviceName(), newFirmware);
-            }
-        }
-
-        // Only update device name if changed
-        if (json.has("DeviceName")) {
-            String newName = getJsonString(json, "DeviceName");
-            if (!newName.equals(deviceState.getDeviceName())) {
-                deviceState.setDeviceName(newName);
-                updateState(GROUP_SYSTEM + "#" + CHANNEL_DEVICE_NAME, new StringType(newName));
-                logger.debug("[{}] Updated device name to: {}", config.getDeviceName(), newName);
             }
         }
 
@@ -420,6 +430,10 @@ public class LinkPlayDeviceManager {
      */
     public LinkPlayDeviceState getDeviceState() {
         return deviceState;
+    }
+
+    public LinkPlayGroupManager getGroupManager() {
+        return groupManager;
     }
 
     private void updateMetadata() {

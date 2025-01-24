@@ -21,13 +21,15 @@ import java.util.List;
 import java.util.Set;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.binding.linkplay.internal.LinkPlayDeviceManager;
-import org.openhab.binding.linkplay.internal.model.LinkPlayDeviceState;
+import org.openhab.binding.linkplay.internal.handler.LinkPlayThingHandler;
 import org.openhab.binding.linkplay.internal.model.LinkPlayMultiroomState;
-import org.openhab.binding.linkplay.internal.transport.http.LinkPlayHttpManager;
 import org.openhab.core.library.types.OnOffType;
 import org.openhab.core.library.types.PercentType;
 import org.openhab.core.library.types.StringType;
+import org.openhab.core.thing.Thing;
+import org.openhab.core.thing.ThingRegistry;
 import org.openhab.core.types.Command;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,21 +50,24 @@ public class LinkPlayGroupManager {
     private final Logger logger = LoggerFactory.getLogger(LinkPlayGroupManager.class);
 
     private final LinkPlayDeviceManager deviceManager;
-    private final LinkPlayHttpManager httpManager;
+    private final ThingRegistry thingRegistry;
     private final LinkPlayMultiroomState state;
 
     // API Command constants
     private static final String API_GET_SLAVE_LIST = "multiroom:getSlaveList";
     private static final String API_JOIN_GROUP = "ConnectMasterAp:JoinGroupMaster:eth%s:wifi0.0.0.0";
     private static final String API_UNGROUP = "multiroom:Ungroup";
-    private static final String API_SLAVE_VOLUME = "multiroom:SlaveVolume:%s:%d";
-    private static final String API_SLAVE_MUTE = "multiroom:SlaveMute:%s:%d";
+    @SuppressWarnings("unused")
+    private static final String API_SLAVE_VOLUME = "/httpapi.asp?command=setPlayerCmd:slave_volume:";
+    @SuppressWarnings("unused")
+    private static final String API_SLAVE_MUTE = "/httpapi.asp?command=setPlayerCmd:slave_mute:";
     private static final String API_SLAVE_KICKOUT = "multiroom:SlaveKickout:%s";
-    private static final String API_SET_MUTE = "setPlayerCmd:mute:%d";
+    @SuppressWarnings("unused")
+    private static final String API_SET_MUTE = "/httpapi.asp?command=setPlayerCmd:mute:";
 
-    public LinkPlayGroupManager(LinkPlayDeviceManager deviceManager) {
+    public LinkPlayGroupManager(LinkPlayDeviceManager deviceManager, ThingRegistry thingRegistry) {
         this.deviceManager = deviceManager;
-        this.httpManager = deviceManager.getHttpManager();
+        this.thingRegistry = thingRegistry;
         this.state = new LinkPlayMultiroomState();
     }
 
@@ -97,8 +102,8 @@ public class LinkPlayGroupManager {
                         String myIP = deviceManager.getConfig().getIpAddress();
                         if (!masterIP.isEmpty() && !myIP.isEmpty()) {
                             // Send kickout command to the master device
-                            JsonObject response = httpManager.sendCommand(String.format(API_SLAVE_KICKOUT, myIP),
-                                    masterIP);
+                            JsonObject response = deviceManager.getHttpManager()
+                                    .sendCommand(String.format(API_SLAVE_KICKOUT, myIP), masterIP);
                             if (response != null) {
                                 logger.debug("[{}] Successfully requested to leave group via master kickout",
                                         deviceManager.getConfig().getDeviceName());
@@ -141,87 +146,123 @@ public class LinkPlayGroupManager {
     public void handleDeviceStatus(JsonObject status) {
         boolean isGrouped = status.has("group") && status.get("group").getAsInt() == 1;
 
-        if (!isGrouped) {
-            // Check if this device might be a master by querying slave list
-            JsonObject slaveListStatus = httpManager.sendCommand(API_GET_SLAVE_LIST);
-            if (slaveListStatus != null && slaveListStatus.has("slave_list")
-                    && !slaveListStatus.get("slave_list").getAsJsonArray().isEmpty()) {
-                handleMasterStatus(slaveListStatus);
-            } else {
-                state.setStandaloneState();
-            }
-            updateChannels();
-            return;
-        }
+        if (isGrouped) {
+            String newMasterIP = status.has("master_ip") ? status.get("master_ip").getAsString()
+                    : status.get("host_ip").getAsString();
 
-        if (status.has("master_ip") || status.has("host_ip")) {
-            handleSlaveStatus(status);
+            // Only update if master IP has changed
+            if (!newMasterIP.equals(state.getMasterIP())) {
+                handleSlaveStatus(status);
+            }
         } else {
-            // This device might be a master - query for slave list
-            JsonObject slaveListStatus = httpManager.sendCommand(API_GET_SLAVE_LIST);
-            if (slaveListStatus != null && slaveListStatus.has("slave_list")) {
-                handleMasterStatus(slaveListStatus);
-            } else {
-                // No slave list found, treat as standalone
-                state.setStandaloneState();
-            }
-        }
+            // If we were previously a slave, notify the old master
+            if (state.isSlave()) {
+                String oldMasterIP = state.getMasterIP();
+                Thing masterThing = findThingByIP(oldMasterIP);
+                if (masterThing != null && masterThing.getHandler() instanceof LinkPlayThingHandler masterHandler) {
+                    LinkPlayDeviceManager masterDeviceManager = masterHandler.getDeviceManager();
+                    if (masterDeviceManager != null) {
+                        // Get our IP so master can remove us from its slave list
+                        String ourIP = deviceManager.getConfig().getIpAddress();
+                        logger.debug("[{}] Notifying master {} that we left the group",
+                                deviceManager.getConfig().getDeviceName(), oldMasterIP);
 
-        // Update group name if available
-        if (status.has("GroupName")) {
-            String groupName = status.get("GroupName").getAsString();
-            if (!groupName.isEmpty()) {
-                state.setGroupName(groupName);
+                        // Update master's slave list using existing list
+                        String currentSlaveIPs = masterDeviceManager.getGroupManager().state.getSlaveIPs();
+                        List<String> updatedSlaveIPs = new ArrayList<>();
+
+                        // Build new slave list excluding our IP
+                        for (String slaveIP : currentSlaveIPs.split(",")) {
+                            if (!slaveIP.isEmpty() && !ourIP.equals(slaveIP)) {
+                                updatedSlaveIPs.add(slaveIP);
+                            }
+                        }
+
+                        // If no slaves left, set master to standalone
+                        if (updatedSlaveIPs.isEmpty()) {
+                            masterDeviceManager.getGroupManager().state.setStandaloneState();
+                        } else {
+                            masterDeviceManager.getGroupManager().state.setSlaveIPs(String.join(",", updatedSlaveIPs));
+                        }
+                        masterDeviceManager.getGroupManager().updateChannels();
+                    }
+                }
+            }
+
+            // Now check if we're a master by looking for slaves that point to us
+            String ourIP = deviceManager.getConfig().getIpAddress();
+            boolean isMaster = false;
+
+            for (Thing thing : thingRegistry.getAll()) {
+                if (THING_TYPE_MEDIASTREAMER.equals(thing.getThingTypeUID())
+                        && thing.getHandler() instanceof LinkPlayThingHandler handler) {
+                    LinkPlayDeviceManager otherDevice = handler.getDeviceManager();
+                    if (otherDevice != null && otherDevice.getGroupManager().state.isSlave()
+                            && ourIP.equals(otherDevice.getGroupManager().state.getMasterIP())) {
+                        isMaster = true;
+                        break;
+                    }
+                }
+            }
+
+            if (isMaster) {
+                // Only update if we weren't already a master
+                if (!state.isMaster()) {
+                    handleMasterStatus();
+                }
+            } else {
+                // No slaves point to us as master, we're standalone
+                state.setStandaloneState();
             }
         }
 
         updateChannels();
     }
 
-    private void handleMasterStatus(JsonObject status) {
+    private void handleMasterStatus() {
+        boolean wasMaster = state.isMaster();
         state.setMasterState();
-        if (status.has("slave_list")) {
-            JsonArray slaveList = status.getAsJsonArray("slave_list");
-            if (!slaveList.isEmpty()) {
-                List<String> slaveIPs = new ArrayList<>();
-                for (JsonElement slave : slaveList) {
-                    JsonObject slaveObj = slave.getAsJsonObject();
-                    if (slaveObj.has("ip")) {
-                        slaveIPs.add(slaveObj.get("ip").getAsString());
-                    }
-                }
-                // Convert list to comma-separated string
-                state.setSlaveIPs(String.join(",", slaveIPs));
 
-                // Also add each slave with current values from device state
-                LinkPlayDeviceState deviceState = deviceManager.getDeviceState();
-                for (String ip : slaveIPs) {
-                    state.addSlave(ip, "", deviceState.getVolume(), deviceState.isMute());
+        // Only fetch slave list if we weren't already a master
+        if (!wasMaster) {
+            JsonObject slaveListStatus = deviceManager.getHttpManager().sendCommand(API_GET_SLAVE_LIST);
+            if (slaveListStatus != null && slaveListStatus.has("slave_list")) {
+                JsonArray slaveList = slaveListStatus.getAsJsonArray("slave_list");
+                if (!slaveList.isEmpty()) {
+                    List<String> slaveIPs = new ArrayList<>();
+                    for (JsonElement slave : slaveList) {
+                        JsonObject slaveObj = slave.getAsJsonObject();
+                        if (slaveObj.has("ip")) {
+                            slaveIPs.add(slaveObj.get("ip").getAsString());
+                        }
+                    }
+                    state.setSlaveIPs(String.join(",", slaveIPs));
                 }
             }
         }
-
-        // Initialize group volume and mute when becoming master
-        calculateAndSetGroupVolume();
-
-        // Set initial group mute state based on device state
-        calculateAndSetGroupMute();
-
-        updateChannels();
     }
 
     private void handleSlaveStatus(JsonObject status) {
-        String masterIP = status.has("master_ip") ? status.get("master_ip").getAsString()
-                : status.get("host_ip").getAsString();
-
+        String masterIP = status.get("master_ip").getAsString();
         if (masterIP.isEmpty()) {
             logger.warn("[{}] Invalid master IP received in slave status update",
                     deviceManager.getConfig().getDeviceName());
-            state.setStandaloneState();
             return;
         }
 
         state.setSlaveState(masterIP);
+        logger.debug("[{}] Set as slave to master: {}", deviceManager.getConfig().getDeviceName(), masterIP);
+
+        // Find master device in registry and set it as master
+        Thing masterThing = findThingByIP(masterIP);
+        if (masterThing != null && masterThing.getHandler() instanceof LinkPlayThingHandler masterHandler) {
+            LinkPlayDeviceManager masterDeviceManager = masterHandler.getDeviceManager();
+            if (masterDeviceManager != null) {
+                logger.debug("[{}] Found master device, setting master state",
+                        deviceManager.getConfig().getDeviceName());
+                masterDeviceManager.getGroupManager().handleMasterStatus();
+            }
+        }
     }
 
     // Command methods - pure business logic
@@ -238,26 +279,35 @@ public class LinkPlayGroupManager {
      * Handle ungroup command for master device
      */
     public void ungroup() {
+        if (!state.isMaster()) {
+            logger.debug("[{}] Cannot ungroup - device is not master", deviceManager.getConfig().getDeviceName());
+            return;
+        }
+
         // Store current slave IPs before ungrouping
         Set<String> previousSlaves = new HashSet<>(Arrays.asList(state.getSlaveIPs().split(",")));
 
-        JsonObject response = httpManager.sendCommand(API_UNGROUP);
+        JsonObject response = deviceManager.getHttpManager().sendCommand(API_UNGROUP);
         if (response != null) {
             logger.debug("[{}] Successfully sent ungroup command", deviceManager.getConfig().getDeviceName());
 
-            // Force status update on this device (master)
-            httpManager.sendCommand("getStatusEx");
+            // Update our state immediately
+            state.setStandaloneState();
+            updateChannels();
 
-            // Force status update on all previous slaves
+            // Notify all previous slaves to update their status
             for (String slaveIP : previousSlaves) {
                 if (!slaveIP.isEmpty()) {
-                    // Use the device's HTTP manager to send command to slave
-                    deviceManager.getHttpManager().sendCommand("getStatusEx");
+                    Thing slaveThing = findThingByIP(slaveIP);
+                    if (slaveThing != null && slaveThing.getHandler() instanceof LinkPlayThingHandler slaveHandler) {
+                        LinkPlayDeviceManager slaveDeviceManager = slaveHandler.getDeviceManager();
+                        if (slaveDeviceManager != null) {
+                            slaveDeviceManager.getGroupManager().state.setStandaloneState();
+                            slaveDeviceManager.getGroupManager().updateChannels();
+                        }
+                    }
                 }
             }
-
-            // Update local state
-            updateMultiroomStatus();
         } else {
             logger.warn("[{}] Failed to send ungroup command", deviceManager.getConfig().getDeviceName());
         }
@@ -272,34 +322,32 @@ public class LinkPlayGroupManager {
     }
 
     /**
-     * Calculate and set group volume based on all devices
+     * Calculate and set group volume based on all devices using Thing registry
      */
     private void calculateAndSetGroupVolume() {
-        if (!state.isMaster() || state.getSlaveIPs().isEmpty()) {
+        if (!state.isMaster()) {
             return;
         }
 
-        // Start with master volume from device state
+        // Start with master volume
         int totalVolume = deviceManager.getDeviceState().getVolume();
         int deviceCount = 1;
 
-        // Get slave volumes
+        // Add volumes from all slave devices
         for (String slaveIP : state.getSlaveIPs().split(",")) {
             if (!slaveIP.isEmpty()) {
-                JsonObject response = httpManager.sendCommand("getPlayerStatus", slaveIP);
-                if (response != null && response.has("vol")) {
-                    try {
-                        totalVolume += response.get("vol").getAsInt();
+                Thing slaveThing = findThingByIP(slaveIP);
+                if (slaveThing != null && slaveThing.getHandler() instanceof LinkPlayThingHandler slaveHandler) {
+                    LinkPlayDeviceManager slaveDeviceManager = slaveHandler.getDeviceManager();
+                    if (slaveDeviceManager != null) {
+                        totalVolume += slaveDeviceManager.getDeviceState().getVolume();
                         deviceCount++;
-                    } catch (NumberFormatException e) {
-                        logger.debug("[{}] Invalid volume response from slave {}",
-                                deviceManager.getConfig().getDeviceName(), slaveIP);
                     }
                 }
             }
         }
 
-        // Calculate and update average volume
+        // Calculate average volume
         if (deviceCount > 0) {
             int groupVolume = totalVolume / deviceCount;
             deviceManager.updateState(GROUP_MULTIROOM + "#" + CHANNEL_GROUP_VOLUME, new PercentType(groupVolume));
@@ -323,45 +371,45 @@ public class LinkPlayGroupManager {
             return;
         }
 
-        // Set master volume using standard command
-        httpManager.sendCommand("setPlayerCmd:vol:" + volume);
+        // Set master volume
+        deviceManager.getHttpManager().sendCommand("setPlayerCmd:vol:" + volume);
 
-        // Set each slave volume using multiroom command
+        // Set volume on all slaves through their handlers
         for (String slaveIP : state.getSlaveIPs().split(",")) {
             if (!slaveIP.isEmpty()) {
-                executeCommand(String.format(API_SLAVE_VOLUME, slaveIP, volume), "Set volume for slave " + slaveIP);
-                state.updateSlaveVolume(slaveIP, volume);
+                Thing slaveThing = findThingByIP(slaveIP);
+                if (slaveThing != null && slaveThing.getHandler() instanceof LinkPlayThingHandler slaveHandler) {
+                    LinkPlayDeviceManager slaveDeviceManager = slaveHandler.getDeviceManager();
+                    if (slaveDeviceManager != null) {
+                        slaveDeviceManager.getHttpManager().sendCommand("setPlayerCmd:vol:" + volume);
+                    }
+                }
             }
         }
     }
 
     private void calculateAndSetGroupMute() {
-        if (!state.isMaster() || state.getSlaveIPs().isEmpty()) {
+        if (!state.isMaster()) {
             return;
         }
 
-        // Use master mute from device state
+        // Start with master mute state
         boolean allMuted = deviceManager.getDeviceState().isMute();
 
-        // Check all slaves - if any slave is unmuted, group is unmuted
+        // Check all slaves through their handlers
         for (String slaveIP : state.getSlaveIPs().split(",")) {
             if (!slaveIP.isEmpty()) {
-                JsonObject response = httpManager.sendCommand("getPlayerStatus", slaveIP);
-                if (response != null && response.has("mute")) {
-                    try {
-                        if (response.get("mute").getAsInt() == 0) {
-                            allMuted = false;
-                            break;
-                        }
-                    } catch (NumberFormatException e) {
-                        logger.debug("[{}] Invalid mute response from slave {}",
-                                deviceManager.getConfig().getDeviceName(), slaveIP);
+                Thing slaveThing = findThingByIP(slaveIP);
+                if (slaveThing != null && slaveThing.getHandler() instanceof LinkPlayThingHandler slaveHandler) {
+                    LinkPlayDeviceManager slaveDeviceManager = slaveHandler.getDeviceManager();
+                    if (slaveDeviceManager != null && !slaveDeviceManager.getDeviceState().isMute()) {
+                        allMuted = false;
+                        break;
                     }
                 }
             }
         }
 
-        // Update group mute state
         deviceManager.updateState(GROUP_MULTIROOM + "#" + CHANNEL_GROUP_MUTE, OnOffType.from(allMuted));
     }
 
@@ -377,24 +425,45 @@ public class LinkPlayGroupManager {
             return;
         }
 
-        // First mute/unmute master
-        executeCommand(String.format(API_SET_MUTE, mute ? 1 : 0), "Set master mute to " + mute);
+        // Set master mute
+        deviceManager.getHttpManager().sendCommand(String.format("setPlayerCmd:mute:%d", mute ? 1 : 0));
 
-        // Then mute/unmute all slaves
+        // Set mute on all slaves through their handlers
         for (String slaveIP : state.getSlaveIPs().split(",")) {
             if (!slaveIP.isEmpty()) {
-                executeCommand(String.format(API_SLAVE_MUTE, slaveIP, mute ? 1 : 0),
-                        "Set slave " + slaveIP + " mute to " + mute);
+                Thing slaveThing = findThingByIP(slaveIP);
+                if (slaveThing != null && slaveThing.getHandler() instanceof LinkPlayThingHandler slaveHandler) {
+                    LinkPlayDeviceManager slaveDeviceManager = slaveHandler.getDeviceManager();
+                    if (slaveDeviceManager != null) {
+                        slaveDeviceManager.getHttpManager()
+                                .sendCommand(String.format("setPlayerCmd:mute:%d", mute ? 1 : 0));
+                    }
+                }
             }
         }
     }
 
     private void executeCommand(String command, String successMessage) {
         try {
-            JsonObject response = httpManager.sendCommand(command);
+            JsonObject response = deviceManager.getHttpManager().sendCommand(command);
             if (response != null) {
-                logger.debug("[{}] {}", deviceManager.getConfig().getDeviceName(), successMessage);
-                updateMultiroomStatus();
+                // Check for text responses that may indicate success/failure
+                if (response.has("status")) {
+                    String status = response.get("status").getAsString();
+                    if ("OK".equalsIgnoreCase(status) || "success".equalsIgnoreCase(status)) {
+                        logger.debug("[{}] {}", deviceManager.getConfig().getDeviceName(), successMessage);
+                        // Don't call updateMultiroomStatus() here - let specific commands handle their updates
+                    } else {
+                        logger.warn("[{}] Command failed with status: {}", deviceManager.getConfig().getDeviceName(),
+                                status);
+                    }
+                } else {
+                    // Treat non-empty response without status as success
+                    logger.debug("[{}] {}", deviceManager.getConfig().getDeviceName(), successMessage);
+                }
+            } else {
+                logger.warn("[{}] No response received for command: {}", deviceManager.getConfig().getDeviceName(),
+                        command);
             }
         } catch (Exception e) {
             logger.warn("[{}] Failed to execute group command: {}", deviceManager.getConfig().getDeviceName(),
@@ -413,7 +482,8 @@ public class LinkPlayGroupManager {
     }
 
     private void updateMultiroomStatus() {
-        JsonObject status = httpManager.sendCommand(API_GET_SLAVE_LIST);
+        // Only use this method when we need to force a full status update
+        JsonObject status = deviceManager.getHttpManager().sendCommand(API_GET_SLAVE_LIST);
         if (status != null) {
             handleDeviceStatus(status);
         }
@@ -421,5 +491,17 @@ public class LinkPlayGroupManager {
 
     public void dispose() {
         logger.debug("[{}] Disposing LinkPlayGroupManager", deviceManager.getConfig().getDeviceName());
+    }
+
+    private @Nullable Thing findThingByIP(String ipAddress) {
+        for (Thing thing : thingRegistry.getAll()) {
+            if (THING_TYPE_MEDIASTREAMER.equals(thing.getThingTypeUID())) {
+                String thingIP = (String) thing.getConfiguration().get(CONFIG_IP_ADDRESS);
+                if (ipAddress.equals(thingIP)) {
+                    return thing;
+                }
+            }
+        }
+        return null;
     }
 }
