@@ -102,21 +102,43 @@ public class LinkPlayBindingConstants {
     public static final String UPNP_MANUFACTURER = "LinkPlay";
     public static final String UPNP_DEVICE_TYPE_PREFIX = "urn:schemas-upnp-org:device:";
 
-    // Source/Mode mappings - from official LinkPlay API documentation
-    public static final Map<Integer, String> PLAYBACK_MODES = Map.ofEntries(Map.entry(0, "IDLE"), // Idling
-            Map.entry(1, "AIRPLAY"), // AirPlay streaming
-            Map.entry(2, "DLNA"), // DLNA streaming
-            Map.entry(10, "NETWORK"), // Network content (vTuner, Home Media Share, etc)
-            Map.entry(11, "USB_DISK"), // Playing from local USB disk
-            Map.entry(20, "HTTP_API"), // Playback started by HTTP API
-            Map.entry(31, "SPOTIFY"), // Spotify Connect streaming
-            Map.entry(40, "LINE_IN"), // Line-In input mode
-            Map.entry(41, "BLUETOOTH"), // Bluetooth input mode
-            Map.entry(43, "OPTICAL"), // Optical input mode
-            Map.entry(47, "LINE_IN_2"), // Line-In #2 input mode
-            Map.entry(51, "USB_DAC"), // USB DAC input mode
-            Map.entry(99, "MULTIROOM_GUEST") // Device is a Guest in Multiroom Zone
+    // Source states - must be defined before PLAYBACK_MODES map
+    public static final String SOURCE_IDLE = "IDLE";
+    public static final String SOURCE_AIRPLAY = "AIRPLAY";
+    public static final String SOURCE_DLNA = "DLNA";
+    public static final String SOURCE_NETWORK = "NETWORK";
+    public static final String SOURCE_USB_DISK = "USB_DISK";
+    public static final String SOURCE_HTTP_API = "HTTP_API";
+    public static final String SOURCE_SPOTIFY = "SPOTIFY";
+    public static final String SOURCE_LINE_IN = "LINE_IN";
+    public static final String SOURCE_LINE_IN_2 = "LINE_IN_2";
+    public static final String SOURCE_BLUETOOTH = "BLUETOOTH";
+    public static final String SOURCE_OPTICAL = "OPTICAL";
+    public static final String SOURCE_USB_DAC = "USB_DAC";
+    public static final String SOURCE_MULTIROOM = "MULTIROOM";
+    public static final String SOURCE_UNKNOWN = "UNKNOWN";
+
+    // Source/Mode mappings - after source constants
+    public static final Map<Integer, String> PLAYBACK_MODES = Map.ofEntries(Map.entry(0, SOURCE_IDLE), // Idling
+            Map.entry(1, SOURCE_AIRPLAY), // AirPlay streaming
+            Map.entry(2, SOURCE_DLNA), // DLNA streaming
+            Map.entry(10, SOURCE_NETWORK), // Network content
+            Map.entry(11, SOURCE_USB_DISK), // USB disk
+            Map.entry(20, SOURCE_HTTP_API), // HTTP API
+            Map.entry(31, SOURCE_SPOTIFY), // Spotify Connect
+            Map.entry(40, SOURCE_LINE_IN), // Line-In
+            Map.entry(41, SOURCE_BLUETOOTH), // Bluetooth
+            Map.entry(43, SOURCE_OPTICAL), // Optical
+            Map.entry(47, SOURCE_LINE_IN_2), // Line-In #2
+            Map.entry(51, SOURCE_USB_DAC), // USB DAC
+            Map.entry(99, SOURCE_MULTIROOM) // Multiroom Guest
     );
+
+    // Control states
+    public static final String CONTROL_PLAY = "PLAY";
+    public static final String CONTROL_PAUSE = "PAUSE";
+    public static final String CONTROL_STOP = "STOP";
+    public static final String CONTROL_LOAD = "LOAD";
 
     private LinkPlayBindingConstants() {
         // Constants class - prevent instantiation

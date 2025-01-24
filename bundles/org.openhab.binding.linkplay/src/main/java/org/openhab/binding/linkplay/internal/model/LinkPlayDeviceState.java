@@ -12,6 +12,8 @@
  */
 package org.openhab.binding.linkplay.internal.model;
 
+import static org.openhab.binding.linkplay.internal.LinkPlayBindingConstants.*;
+
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.binding.linkplay.internal.config.LinkPlayConfiguration;
@@ -37,16 +39,14 @@ public class LinkPlayDeviceState {
     private @Nullable String trackArtist = "";
     private @Nullable String trackAlbum = "";
     private @Nullable String albumArtUrl;
-    private double durationSeconds;
-    private double positionSeconds;
     private int volume;
     private boolean mute;
     private boolean repeat = false;
     private boolean shuffle = false;
-    private @Nullable String source = "Unknown";
-    private @Nullable String playStatus;
+    private @Nullable String source = SOURCE_UNKNOWN;
+    private @Nullable String control = CONTROL_PAUSE;
 
-    // Add missing field declaration
+    // Device info
     private @Nullable String deviceMac;
     private @Nullable String firmware;
 
@@ -68,28 +68,12 @@ public class LinkPlayDeviceState {
     }
 
     @Nullable
-    public String getPlayStatus() {
-        return playStatus;
+    public String getControl() {
+        return control;
     }
 
-    public void setPlayStatus(String playStatus) {
-        this.playStatus = playStatus;
-    }
-
-    public double getPositionSeconds() {
-        return positionSeconds;
-    }
-
-    public void setPositionSeconds(double positionSeconds) {
-        this.positionSeconds = positionSeconds;
-    }
-
-    public double getDurationSeconds() {
-        return durationSeconds;
-    }
-
-    public void setDurationSeconds(double durationSeconds) {
-        this.durationSeconds = durationSeconds;
+    public void setControl(String control) {
+        this.control = control;
     }
 
     // Track metadata getters/setters
@@ -219,7 +203,7 @@ public class LinkPlayDeviceState {
     }
 
     public void setSource(@Nullable String source) {
-        this.source = source != null ? source : "Unknown";
+        this.source = source != null ? source : SOURCE_UNKNOWN;
     }
 
     public void setShuffle(boolean shuffle) {
@@ -228,42 +212,5 @@ public class LinkPlayDeviceState {
 
     public void setRepeat(boolean repeat) {
         this.repeat = repeat;
-    }
-
-    private String role = "standalone";
-    private String masterIP = "";
-    private String slaveIPs = "";
-
-    /**
-     * Get the device's role in multiroom setup (master/slave/standalone)
-     */
-    public String getRole() {
-        return role;
-    }
-
-    public void setRole(String role) {
-        this.role = role;
-    }
-
-    /**
-     * Get the master device's IP address (if this is a slave)
-     */
-    public String getMasterIP() {
-        return masterIP;
-    }
-
-    public void setMasterIP(String masterIP) {
-        this.masterIP = masterIP;
-    }
-
-    /**
-     * Get comma-separated list of slave IP addresses (if this is a master)
-     */
-    public String getSlaveIPs() {
-        return slaveIPs;
-    }
-
-    public void setSlaveIPs(String slaveIPs) {
-        this.slaveIPs = slaveIPs;
     }
 }

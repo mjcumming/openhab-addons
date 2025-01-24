@@ -22,7 +22,6 @@ import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.binding.linkplay.internal.LinkPlayBindingConstants;
 import org.openhab.binding.linkplay.internal.LinkPlayDeviceManager;
 import org.openhab.binding.linkplay.internal.config.LinkPlayConfiguration;
-import org.openhab.binding.linkplay.internal.utils.HexConverter;
 import org.openhab.core.common.ThreadPoolManager;
 import org.openhab.core.types.Command;
 import org.slf4j.Logger;
@@ -157,9 +156,8 @@ public class LinkPlayHttpManager {
             logger.trace("[{}] pollPlayerStatus() -> JSON: {}", config.getDeviceName(), response);
 
             try {
-                JsonObject rawJson = JsonParser.parseString(response).getAsJsonObject();
-                JsonObject cleanJson = parsePlayerStatus(rawJson);
-                deviceManager.handleGetPlayerStatusResponse(cleanJson);
+                JsonObject json = JsonParser.parseString(response).getAsJsonObject();
+                deviceManager.handleGetPlayerStatusResponse(json);
                 deviceManager.handleCommunicationResult(true);
             } catch (JsonSyntaxException e) {
                 logger.warn("[{}] Failed to parse player status JSON: {}", config.getDeviceName(), e.getMessage());
@@ -169,109 +167,6 @@ public class LinkPlayHttpManager {
             logger.warn("[{}] Player status poll failed: {}", config.getDeviceName(), e.getMessage());
             deviceManager.handleCommunicationResult(false);
         }
-    }
-
-    private JsonObject parsePlayerStatus(JsonObject rawJson) {
-        JsonObject cleanJson = new JsonObject();
-
-        // Fix playback status mapping
-        if (rawJson.has("status")) {
-            String status = getAsString(rawJson, "status").toLowerCase();
-            switch (status) {
-                case "play":
-                    cleanJson.addProperty("playStatus", "PLAY");
-                    break;
-                case "pause":
-                    cleanJson.addProperty("playStatus", "PAUSE");
-                    break;
-                case "stop":
-                    cleanJson.addProperty("playStatus", "STOP");
-                    break;
-                default:
-                    cleanJson.addProperty("playStatus", "STOP");
-            }
-        }
-
-        // Parse and decode hex-encoded fields
-        if (rawJson.has("Title")) {
-            cleanJson.addProperty("title", HexConverter.hexToString(getAsString(rawJson, "Title")));
-        }
-        if (rawJson.has("Artist")) {
-            cleanJson.addProperty("artist", HexConverter.hexToString(getAsString(rawJson, "Artist")));
-        }
-        if (rawJson.has("Album")) {
-            cleanJson.addProperty("album", HexConverter.hexToString(getAsString(rawJson, "Album")));
-        }
-
-        // Parse volume and mute
-        if (rawJson.has("vol")) {
-            cleanJson.addProperty("volume", getAsInt(rawJson, "vol", 0));
-        }
-        if (rawJson.has("mute")) {
-            cleanJson.addProperty("mute", getAsBoolean(rawJson, "mute"));
-        }
-
-        // Parse and convert time values to seconds
-        if (rawJson.has("totlen")) {
-            cleanJson.addProperty("durationSeconds", getAsInt(rawJson, "totlen", 0) / 1000.0);
-        }
-        if (rawJson.has("curpos")) {
-            cleanJson.addProperty("positionSeconds", getAsInt(rawJson, "curpos", 0) / 1000.0);
-        }
-
-        // Parse loop mode into separate shuffle/repeat flags
-        if (rawJson.has("loop")) {
-            int loopMode = getAsInt(rawJson, "loop", 0);
-            switch (loopMode) {
-                case 0: // No repeat, no shuffle
-                    cleanJson.addProperty("shuffle", false);
-                    cleanJson.addProperty("repeat", false);
-                    break;
-                case 1: // Repeat one, no shuffle
-                    cleanJson.addProperty("shuffle", false);
-                    cleanJson.addProperty("repeat", true);
-                    break;
-                case 2: // Repeat all, no shuffle
-                    cleanJson.addProperty("shuffle", false);
-                    cleanJson.addProperty("repeat", true);
-                    break;
-                case 3: // Shuffle on, no repeat
-                    cleanJson.addProperty("shuffle", true);
-                    cleanJson.addProperty("repeat", false);
-                    break;
-                case 4: // No repeat, no shuffle
-                    cleanJson.addProperty("shuffle", false);
-                    cleanJson.addProperty("repeat", false);
-                    break;
-                case 5: // Shuffle and repeat
-                    cleanJson.addProperty("shuffle", true);
-                    cleanJson.addProperty("repeat", true);
-                    break;
-                default:
-                    cleanJson.addProperty("shuffle", false);
-                    cleanJson.addProperty("repeat", false);
-            }
-        }
-
-        // Map source from mode and vendor
-        String source = "UNKNOWN";
-        if (rawJson.has("vendor")) {
-            String vendor = getAsString(rawJson, "vendor");
-            if (!vendor.isEmpty()) {
-                source = vendor;
-            }
-        }
-        if ("UNKNOWN".equals(source) && rawJson.has("mode")) {
-            int mode = getAsInt(rawJson, "mode", 0);
-            source = LinkPlayBindingConstants.PLAYBACK_MODES.getOrDefault(mode, "UNKNOWN MODE");
-        }
-        cleanJson.addProperty("source", source);
-
-        if (rawJson.has("RSSI")) {
-            cleanJson.addProperty("wifiSignal", getAsInt(rawJson, "RSSI", 0));
-        }
-
-        return cleanJson;
     }
 
     /**
@@ -502,49 +397,5 @@ public class LinkPlayHttpManager {
      */
     public void dispose() {
         stopPolling();
-    }
-
-    // Add utility methods for JSON parsing
-    private String getAsString(JsonObject obj, String key) {
-        try {
-            if (!obj.has(key) || obj.get(key).isJsonNull()) {
-                return "";
-            }
-            return obj.get(key).getAsString();
-        } catch (Exception e) {
-            logger.trace("[{}] Failed to get string value for '{}': {}", config.getDeviceName(), key, e.getMessage());
-            return "";
-        }
-    }
-
-    private int getAsInt(JsonObject obj, String key, int defaultValue) {
-        try {
-            if (!obj.has(key) || obj.get(key).isJsonNull()) {
-                return defaultValue;
-            }
-            return obj.get(key).getAsInt();
-        } catch (Exception e) {
-            logger.trace("[{}] Failed to get int value for '{}': {}", config.getDeviceName(), key, e.getMessage());
-            return defaultValue;
-        }
-    }
-
-    private boolean getAsBoolean(JsonObject obj, String key) {
-        try {
-            if (!obj.has(key) || obj.get(key).isJsonNull()) {
-                return false;
-            }
-            // Attempt direct boolean
-            try {
-                return obj.get(key).getAsBoolean();
-            } catch (Exception ignored) {
-                // fallback
-            }
-            String val = obj.get(key).getAsString();
-            return "true".equalsIgnoreCase(val) || "1".equals(val) || "on".equalsIgnoreCase(val);
-        } catch (Exception e) {
-            logger.trace("[{}] Failed to get boolean value for '{}': {}", config.getDeviceName(), key, e.getMessage());
-            return false;
-        }
     }
 }

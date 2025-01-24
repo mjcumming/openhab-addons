@@ -22,7 +22,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
-import org.eclipse.jdt.annotation.NonNull;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.binding.linkplay.internal.LinkPlayDeviceManager;
@@ -77,7 +76,7 @@ public class LinkPlayMetadataService {
      * @param title The track title, must not be null
      * @return Optional containing album art URL if found
      */
-    public Optional<String> retrieveMusicMetadata(@NonNull String artist, @NonNull String title) {
+    public Optional<String> retrieveMusicMetadata(String artist, String title) {
         // Skip metadata lookup for Unknown tracks
         if ("Unknown".equals(artist) || "Unknown".equals(title) || artist.isEmpty() || title.isEmpty()) {
             logger.debug("[{}] Skipping metadata lookup for Unknown/empty track",

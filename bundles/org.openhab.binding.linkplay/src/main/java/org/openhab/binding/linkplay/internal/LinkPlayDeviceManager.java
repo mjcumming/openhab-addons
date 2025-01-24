@@ -26,6 +26,7 @@ import org.openhab.binding.linkplay.internal.multiroom.LinkPlayGroupManager;
 import org.openhab.binding.linkplay.internal.transport.http.LinkPlayHttpClient;
 import org.openhab.binding.linkplay.internal.transport.http.LinkPlayHttpManager;
 import org.openhab.binding.linkplay.internal.transport.uart.LinkPlayUartManager;
+import org.openhab.binding.linkplay.internal.utils.HexConverter;
 import org.openhab.core.io.transport.upnp.UpnpIOService;
 import org.openhab.core.library.types.OnOffType;
 import org.openhab.core.library.types.PercentType;
@@ -67,9 +68,6 @@ public class LinkPlayDeviceManager {
 
     private final LinkPlayDeviceState deviceState;
 
-    private String lastArtist = "";
-    private String lastTitle = "";
-
     // Define playback mode mapping
     private static final Map<Integer, String> PLAYBACK_MODES = Map.ofEntries(Map.entry(-1, "IDLE"),
             Map.entry(0, "IDLE"), Map.entry(1, "BLUETOOTH"), Map.entry(2, "LINE-IN"), Map.entry(3, "OPTICAL"),
@@ -96,11 +94,7 @@ public class LinkPlayDeviceManager {
         this.metadataService = new LinkPlayMetadataService(httpClient, this);
         this.groupManager = new LinkPlayGroupManager(this);
 
-        logger.debug("[{}] DeviceManager created with config: {}", config.getDeviceName(), config);
-
-        // Clear any cached metadata
-        lastArtist = "";
-        lastTitle = "";
+        logger.debug("[{}] Initializing device manager...", config.getDeviceName());
     }
 
     /**
@@ -169,10 +163,6 @@ public class LinkPlayDeviceManager {
         // Dispose all managers
         httpManager.dispose();
         uartManager.dispose();
-
-        // Clear any cached metadata
-        lastArtist = "";
-        lastTitle = "";
     }
 
     // -------------------------------------------------------------------
@@ -191,7 +181,7 @@ public class LinkPlayDeviceManager {
         thingHandler.handleStatusUpdate(status, detail, msg);
     }
 
-    private String getAsString(JsonObject obj, String key) {
+    private String getJsonString(JsonObject obj, String key) {
         try {
             if (!obj.has(key) || obj.get(key).isJsonNull()) {
                 return "";
@@ -203,7 +193,7 @@ public class LinkPlayDeviceManager {
         }
     }
 
-    private int getAsInt(JsonObject obj, String key, int defaultValue) {
+    private int getJsonInt(JsonObject obj, String key, int defaultValue) {
         try {
             if (!obj.has(key) || obj.get(key).isJsonNull()) {
                 return defaultValue;
@@ -231,156 +221,82 @@ public class LinkPlayDeviceManager {
     }
 
     /**
-     * Handles parsed player status response from HTTP Manager
+     * Process player status response from the API
      */
     public void handleGetPlayerStatusResponse(JsonObject json) {
-        // Update device state model
-        LinkPlayDeviceState state = deviceState;
-        boolean metadataChanged = false;
-
-        // Playback mode/source
-        String mode = getAsString(json, "mode");
-        if (!mode.isEmpty()) {
-            int modeInt = Integer.parseInt(mode);
-            String source = PLAYBACK_MODES.getOrDefault(modeInt, "UNKNOWN");
-            state.setSource(source);
+        // Process mode/source using our new PLAYBACK_MODES map
+        try {
+            int modeInt = Integer.parseInt(getJsonString(json, "mode"));
+            String source = PLAYBACK_MODES.getOrDefault(modeInt, SOURCE_UNKNOWN);
+            deviceState.setSource(source);
             updateState(GROUP_PLAYBACK + "#" + CHANNEL_SOURCE, new StringType(source));
-            logger.debug("[{}] Updated source to: {} (mode={})", config.getDeviceName(), source, mode);
-        } else {
-            // Default to IDLE if no mode
-            state.setSource("IDLE");
-            updateState(GROUP_PLAYBACK + "#" + CHANNEL_SOURCE, new StringType("IDLE"));
-            logger.debug("[{}] No mode field, defaulting source to IDLE", config.getDeviceName());
+        } catch (NumberFormatException e) {
+            logger.debug("[{}] Invalid mode value in JSON", config.getDeviceName());
+            deviceState.setSource(SOURCE_UNKNOWN);
+            updateState(GROUP_PLAYBACK + "#" + CHANNEL_SOURCE, new StringType(SOURCE_UNKNOWN));
         }
 
-        // Update playback status
-        String status = getAsString(json, "status");
-        if (!status.isEmpty()) {
-            status = status.toLowerCase();
-            State newState;
+        // Process status/control using our new control constants
+        String status = getJsonString(json, "status").toLowerCase();
+        String control = switch (status) {
+            case "play" -> CONTROL_PLAY;
+            case "stop" -> CONTROL_STOP;
+            case "load" -> CONTROL_LOAD;
+            case "pause", "none" -> CONTROL_PAUSE;
+            default -> CONTROL_PAUSE;
+        };
+        deviceState.setControl(control);
+        updateState(GROUP_PLAYBACK + "#" + CHANNEL_CONTROL,
+                control.equals(CONTROL_PLAY) ? PlayPauseType.PLAY : PlayPauseType.PAUSE);
 
-            // Convert status to proper PlayPauseType
-            switch (status) {
-                case "play":
-                case "playing":
-                    newState = PlayPauseType.PLAY;
-                    break;
-                case "pause":
-                case "paused":
-                case "none": // Handle "none" status explicitly
-                case "stop":
-                case "stopped":
-                default:
-                    newState = PlayPauseType.PAUSE;
-                    break;
-            }
+        // Process metadata with hex decoding
+        String newTitle = HexConverter.hexToString(getJsonString(json, "Title"));
+        String newArtist = HexConverter.hexToString(getJsonString(json, "Artist"));
+        String newAlbum = HexConverter.hexToString(getJsonString(json, "Album"));
 
-            state.setPlayStatus(status);
-            updateState(GROUP_PLAYBACK + "#" + CHANNEL_CONTROL, newState);
-            logger.debug("[{}] Updated playback control to: {} (raw: {})", config.getDeviceName(), newState, status);
-        } else {
-            // Only log when truly empty/missing
-            state.setPlayStatus("stop");
-            updateState(GROUP_PLAYBACK + "#" + CHANNEL_CONTROL, PlayPauseType.PAUSE);
-            logger.debug("[{}] Empty status field in JSON, defaulting control to PAUSE", config.getDeviceName());
-        }
+        boolean titleChanged = !newTitle.equals(deviceState.getTrackTitle());
+        boolean artistChanged = !newArtist.equals(deviceState.getTrackArtist());
 
-        // Update metadata with proper change detection
-        if (json.has("Title")) {
-            String newTitle = getAsString(json, "Title");
-            String currentTitle = state.getTrackTitle();
-            if (currentTitle == null || !newTitle.equals(currentTitle)) {
-                state.setTrackTitle(newTitle);
-                updateState(GROUP_PLAYBACK + "#" + CHANNEL_TITLE, new StringType(newTitle));
-                metadataChanged = true;
-                lastTitle = newTitle;
-            }
-        }
+        // Update state and channels
+        deviceState.setTrackTitle(newTitle);
+        deviceState.setTrackArtist(newArtist);
+        deviceState.setTrackAlbum(newAlbum);
 
-        if (json.has("Artist")) {
-            String newArtist = getAsString(json, "Artist");
-            String currentArtist = state.getTrackArtist();
-            if (currentArtist == null || !newArtist.equals(currentArtist)) {
-                state.setTrackArtist(newArtist);
-                updateState(GROUP_PLAYBACK + "#" + CHANNEL_ARTIST, new StringType(newArtist));
-                metadataChanged = true;
-                lastArtist = newArtist;
-            }
-        }
+        updateState(GROUP_PLAYBACK + "#" + CHANNEL_TITLE, new StringType(newTitle));
+        updateState(GROUP_PLAYBACK + "#" + CHANNEL_ARTIST, new StringType(newArtist));
+        updateState(GROUP_PLAYBACK + "#" + CHANNEL_ALBUM, new StringType(newAlbum));
 
-        // Only update metadata if artist or title actually changed
-        if (metadataChanged) {
-            logger.debug("[{}] Track changed: artist='{}' title='{}', updating metadata", config.getDeviceName(),
-                    state.getTrackArtist(), state.getTrackTitle());
+        // Only update metadata if both title and artist changed and are non-empty
+        if (titleChanged && artistChanged && !newTitle.isEmpty() && !newArtist.isEmpty()) {
             updateMetadata();
         }
 
-        if (json.has("album")) {
-            state.setTrackAlbum(json.get("album").getAsString());
-            updateState(GROUP_PLAYBACK + "#" + CHANNEL_ALBUM, new StringType(state.getTrackAlbum()));
-        }
+        // Process position/duration - update channels only
+        int position = getJsonInt(json, "position", 0);
+        int duration = getJsonInt(json, "duration", 0);
+        updateState(GROUP_PLAYBACK + "#" + CHANNEL_POSITION, new QuantityType<>(position, Units.SECOND));
+        updateState(GROUP_PLAYBACK + "#" + CHANNEL_DURATION, new QuantityType<>(duration, Units.SECOND));
 
-        // Update volume/mute with proper type handling
-        if (json.has("vol")) {
-            int volume = getAsInt(json, "vol", 0);
-            state.setVolume(volume);
-            updateState(GROUP_PLAYBACK + "#" + CHANNEL_VOLUME, new PercentType(volume));
+        // Process volume/mute
+        int volume = getJsonInt(json, "vol", 0);
+        boolean mute = getJsonString(json, "mute").equals("1");
 
-            // update group volume, if needed
-            groupManager.handleDeviceVolumeChange(config.getIpAddress(), volume);
-        }
-        if (json.has("mute")) {
-            // Handle mute as integer (0/1) or string ("0"/"1")
-            String muteStr = getAsString(json, "mute");
-            boolean mute = "1".equals(muteStr) || "true".equalsIgnoreCase(muteStr);
-            state.setMute(mute);
-            updateState(GROUP_PLAYBACK + "#" + CHANNEL_MUTE, OnOffType.from(mute));
-        }
+        deviceState.setVolume(volume);
+        deviceState.setMute(mute);
 
-        // Update time values
-        if (json.has("durationSeconds")) {
-            state.setDurationSeconds(json.get("durationSeconds").getAsDouble());
-            updateState(GROUP_PLAYBACK + "#" + CHANNEL_DURATION,
-                    new QuantityType<>(state.getDurationSeconds(), Units.SECOND));
-        }
-        if (json.has("positionSeconds")) {
-            state.setPositionSeconds(json.get("positionSeconds").getAsDouble());
-            updateState(GROUP_PLAYBACK + "#" + CHANNEL_POSITION,
-                    new QuantityType<>(state.getPositionSeconds(), Units.SECOND));
-        }
+        updateState(GROUP_PLAYBACK + "#" + CHANNEL_VOLUME, new PercentType(volume));
+        updateState(GROUP_PLAYBACK + "#" + CHANNEL_MUTE, OnOffType.from(mute));
 
-        // Update shuffle/repeat based on loop mode
-        // Loop modes:
-        // 0 = Repeat All
-        // 1 = Repeat One
-        // 2 = Shuffle All + Repeat
-        // 3 = Shuffle All No Repeat
-        // 4 = No Shuffle No Repeat (default)
-        // 5 = Shuffle All + Repeat One
-        if (json.has("loop")) {
-            int loopMode = getAsInt(json, "loop", 4);
+        // Process repeat/shuffle from loop mode
+        String loop = getJsonString(json, "loop");
+        boolean repeat = "0".equals(loop);
+        boolean shuffle = "2".equals(loop);
 
-            // Shuffle ON for modes 2,3,5
-            boolean shuffle = (loopMode == 2 || loopMode == 3 || loopMode == 5);
-            state.setShuffle(shuffle);
-            updateState(GROUP_PLAYBACK + "#" + CHANNEL_SHUFFLE, OnOffType.from(shuffle));
+        deviceState.setRepeat(repeat);
+        deviceState.setShuffle(shuffle);
 
-            // Repeat ON for modes 0,1,2,5 (any mode with repeat all or repeat one)
-            boolean repeat = (loopMode == 0 || loopMode == 1 || loopMode == 2 || loopMode == 5);
-            state.setRepeat(repeat);
-            updateState(GROUP_PLAYBACK + "#" + CHANNEL_REPEAT, OnOffType.from(repeat));
-
-            logger.debug(
-                    "[{}] Loop mode {} -> shuffle={}, repeat={} (repeat modes: 0=all, 1=one, 2=shuffle+repeat, 3=shuffle, 4=none, 5=shuffle+repeat_one)",
-                    config.getDeviceName(), loopMode, shuffle, repeat);
-        } else {
-            // Always ensure we have a valid state, default to OFF if no loop mode
-            state.setShuffle(false);
-            state.setRepeat(false);
-            updateState(GROUP_PLAYBACK + "#" + CHANNEL_SHUFFLE, OnOffType.OFF);
-            updateState(GROUP_PLAYBACK + "#" + CHANNEL_REPEAT, OnOffType.OFF);
-            logger.debug("[{}] No loop field in JSON, defaulting shuffle and repeat to OFF", config.getDeviceName());
-        }
+        updateState(GROUP_PLAYBACK + "#" + CHANNEL_REPEAT, OnOffType.from(repeat));
+        updateState(GROUP_PLAYBACK + "#" + CHANNEL_SHUFFLE, OnOffType.from(shuffle));
     }
 
     /**
@@ -392,7 +308,7 @@ public class LinkPlayDeviceManager {
 
         // Handle device name - ensure we always have a valid state
         if (json.has("DeviceName")) {
-            String newName = getAsString(json, "DeviceName");
+            String newName = getJsonString(json, "DeviceName");
             if (!newName.isEmpty()) {
                 deviceState.setDeviceName(newName);
                 updateState(GROUP_SYSTEM + "#" + CHANNEL_DEVICE_NAME, new StringType(newName));
@@ -400,7 +316,7 @@ public class LinkPlayDeviceManager {
             } else {
                 // If empty from API, use configured name
                 String configName = config.getDeviceName();
-                if (configName != null && !configName.isEmpty()) {
+                if (!configName.isEmpty()) {
                     deviceState.setDeviceName(configName);
                     updateState(GROUP_SYSTEM + "#" + CHANNEL_DEVICE_NAME, new StringType(configName));
                     logger.debug("[{}] Using configured device name: {}", config.getDeviceName(), configName);
@@ -419,7 +335,7 @@ public class LinkPlayDeviceManager {
 
         // First check for UDN if we don't have one
         if (config.getUdn().isEmpty() && json.has("upnp_uuid")) {
-            String discoveredUdn = getAsString(json, "upnp_uuid");
+            String discoveredUdn = getJsonString(json, "upnp_uuid");
             if (!discoveredUdn.isEmpty()) {
                 logger.debug("[{}] Discovered UDN via HTTP: {}", config.getDeviceName(), discoveredUdn);
                 // Store in config and optionally register UPnP
@@ -429,7 +345,7 @@ public class LinkPlayDeviceManager {
 
         // Only update MAC if it has changed
         if (json.has("MAC")) {
-            String newMac = getAsString(json, "MAC");
+            String newMac = getJsonString(json, "MAC");
             if (!newMac.equals(deviceState.getDeviceMac())) {
                 deviceState.setDeviceMac(newMac);
                 updateState(GROUP_NETWORK + "#" + CHANNEL_MAC_ADDRESS, new StringType(newMac));
@@ -439,7 +355,7 @@ public class LinkPlayDeviceManager {
 
         // Only update firmware version if changed
         if (json.has("firmware")) {
-            String newFirmware = getAsString(json, "firmware");
+            String newFirmware = getJsonString(json, "firmware");
             if (!newFirmware.equals(deviceState.getFirmware())) {
                 deviceState.setFirmware(newFirmware);
                 updateState(GROUP_SYSTEM + "#" + CHANNEL_FIRMWARE, new StringType(newFirmware));
@@ -449,7 +365,7 @@ public class LinkPlayDeviceManager {
 
         // Only update device name if changed
         if (json.has("DeviceName")) {
-            String newName = getAsString(json, "DeviceName");
+            String newName = getJsonString(json, "DeviceName");
             if (!newName.equals(deviceState.getDeviceName())) {
                 deviceState.setDeviceName(newName);
                 updateState(GROUP_SYSTEM + "#" + CHANNEL_DEVICE_NAME, new StringType(newName));
@@ -459,7 +375,7 @@ public class LinkPlayDeviceManager {
 
         // Handle WiFi signal strength (RSSI)
         if (json.has("RSSI")) {
-            int rssi = getAsInt(json, "RSSI", 0);
+            int rssi = getJsonInt(json, "RSSI", 0);
             // Convert RSSI to percentage (typical range: -100 dBm to -50 dBm)
             int signalStrength;
             if (rssi <= -100) {
