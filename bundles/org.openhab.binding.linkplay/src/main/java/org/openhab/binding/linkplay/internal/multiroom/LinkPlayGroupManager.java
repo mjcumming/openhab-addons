@@ -253,14 +253,29 @@ public class LinkPlayGroupManager {
         state.setSlaveState(masterIP);
         logger.debug("[{}] Set as slave to master: {}", deviceManager.getConfig().getDeviceName(), masterIP);
 
-        // Find master device in registry and set it as master
+        // Find master device in registry and update its slave list
         Thing masterThing = findThingByIP(masterIP);
         if (masterThing != null && masterThing.getHandler() instanceof LinkPlayThingHandler masterHandler) {
             LinkPlayDeviceManager masterDeviceManager = masterHandler.getDeviceManager();
             if (masterDeviceManager != null) {
-                logger.debug("[{}] Found master device, setting master state",
+                // Get our IP to add to master's slave list
+                String ourIP = deviceManager.getConfig().getIpAddress();
+                String currentSlaveIPs = masterDeviceManager.getGroupManager().state.getSlaveIPs();
+
+                // Add our IP to master's slave list if not already present
+                Set<String> slaveIPs = new HashSet<>();
+                if (!currentSlaveIPs.isEmpty()) {
+                    slaveIPs.addAll(Arrays.asList(currentSlaveIPs.split(",")));
+                }
+                slaveIPs.add(ourIP);
+
+                // Update master's state
+                masterDeviceManager.getGroupManager().state.setMasterState();
+                masterDeviceManager.getGroupManager().state.setSlaveIPs(String.join(",", slaveIPs));
+                masterDeviceManager.getGroupManager().updateChannels();
+
+                logger.debug("[{}] Updated master's slave list to include us",
                         deviceManager.getConfig().getDeviceName());
-                masterDeviceManager.getGroupManager().handleMasterStatus();
             }
         }
     }
