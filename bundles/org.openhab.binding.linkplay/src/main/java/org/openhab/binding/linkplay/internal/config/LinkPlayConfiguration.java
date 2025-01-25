@@ -18,7 +18,7 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.openhab.core.config.core.Configuration;
 
 /**
- * Configuration class for the LinkPlay binding.
+ * Configuration class for the binding.
  * Follows OpenHAB configuration patterns for thing configuration.
  *
  * @author Michael Cumming - Initial contribution
@@ -43,26 +43,69 @@ public class LinkPlayConfiguration {
      * @return A new configuration instance
      */
     public static LinkPlayConfiguration fromConfiguration(Configuration config) {
-        LinkPlayConfiguration linkplayConfig = new LinkPlayConfiguration();
+        LinkPlayConfiguration deviceConfig = new LinkPlayConfiguration();
 
         // Get IP address as string
-        linkplayConfig.ipAddress = (String) config.get("ipAddress");
-
-        // Handle numeric values safely by converting from BigDecimal
-        Object playerPollObj = config.get("playerStatusPollingInterval");
-        if (playerPollObj instanceof BigDecimal) {
-            linkplayConfig.playerStatusPollingInterval = ((BigDecimal) playerPollObj).intValue();
+        Object ipObj = config.get("ipAddress");
+        if (ipObj instanceof String) {
+            deviceConfig.ipAddress = (String) ipObj;
         }
 
-        Object devicePollObj = config.get("deviceStatusPollingInterval");
-        if (devicePollObj instanceof BigDecimal) {
-            linkplayConfig.deviceStatusPollingInterval = ((BigDecimal) devicePollObj).intValue();
+        // Get device name as string
+        Object nameObj = config.get("deviceName");
+        if (nameObj instanceof String) {
+            deviceConfig.deviceName = (String) nameObj;
         }
 
         // Get UDN as string
-        linkplayConfig.udn = (String) config.get("udn");
+        Object udnObj = config.get("udn");
+        if (udnObj instanceof String) {
+            deviceConfig.udn = (String) udnObj;
+        }
 
-        return linkplayConfig;
+        // Get polling intervals as integers
+        Object playerIntervalObj = config.get("playerStatusPollingInterval");
+        if (playerIntervalObj instanceof BigDecimal) {
+            deviceConfig.playerStatusPollingInterval = ((BigDecimal) playerIntervalObj).intValue();
+        }
+
+        Object deviceIntervalObj = config.get("deviceStatusPollingInterval");
+        if (deviceIntervalObj instanceof BigDecimal) {
+            deviceConfig.deviceStatusPollingInterval = ((BigDecimal) deviceIntervalObj).intValue();
+        }
+
+        return deviceConfig;
+    }
+
+    public void put(String key, String value) {
+        switch (key) {
+            case "ipAddress":
+                this.ipAddress = value;
+                break;
+            case "deviceName":
+                this.deviceName = value;
+                break;
+            case "udn":
+                this.udn = value;
+                break;
+            default:
+                // Ignore unknown keys
+                break;
+        }
+    }
+
+    public void put(String key, int value) {
+        switch (key) {
+            case "playerStatusPollingInterval":
+                this.playerStatusPollingInterval = value;
+                break;
+            case "deviceStatusPollingInterval":
+                this.deviceStatusPollingInterval = value;
+                break;
+            default:
+                // Ignore unknown keys
+                break;
+        }
     }
 
     /**

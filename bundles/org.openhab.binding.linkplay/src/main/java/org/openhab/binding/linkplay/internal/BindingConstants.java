@@ -21,12 +21,12 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.openhab.core.thing.ThingTypeUID;
 
 /**
- * The {@link LinkPlayBindingConstants} class defines common constants used across the binding.
+ * The {@link BindingConstants} class defines common constants used across the binding.
  *
  * @author Michael Cumming - Initial contribution
  */
 @NonNullByDefault
-public class LinkPlayBindingConstants {
+public class BindingConstants {
 
     public static final String BINDING_ID = "linkplay";
 
@@ -140,7 +140,7 @@ public class LinkPlayBindingConstants {
     public static final String CONTROL_STOP = "STOP";
     public static final String CONTROL_LOAD = "LOAD";
 
-    private LinkPlayBindingConstants() {
+    private BindingConstants() {
         // Constants class - prevent instantiation
     }
 }

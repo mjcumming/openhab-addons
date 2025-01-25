@@ -23,11 +23,11 @@ import org.slf4j.LoggerFactory;
  * @author Michael Cumming - Initial contribution
  */
 @NonNullByDefault
-public class LinkPlayUartClient {
-    private static final Logger logger = LoggerFactory.getLogger(LinkPlayUartClient.class);
+public class UartClient {
+    private static final Logger logger = LoggerFactory.getLogger(UartClient.class);
     private final String host;
 
-    public LinkPlayUartClient(String host, LinkPlayUartManager uartManager) {
+    public UartClient(String host, UartManager uartManager) {
         this.host = host;
         logger.debug("UART client created for host {}", host);
     }

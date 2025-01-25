@@ -24,7 +24,7 @@ import java.util.concurrent.TimeUnit;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
-import org.openhab.binding.linkplay.internal.LinkPlayDeviceManager;
+import org.openhab.binding.linkplay.internal.DeviceManager;
 import org.openhab.binding.linkplay.internal.transport.http.LinkPlayHttpClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,10 +39,10 @@ import com.google.gson.JsonParser;
  * @author Michael Cumming - Initial contribution
  */
 @NonNullByDefault
-public class LinkPlayMetadataService {
-    private final Logger logger = LoggerFactory.getLogger(LinkPlayMetadataService.class);
+public class MetadataService {
+    private final Logger logger = LoggerFactory.getLogger(MetadataService.class);
     private final LinkPlayHttpClient httpClient;
-    private final LinkPlayDeviceManager deviceManager;
+    private final DeviceManager deviceManager;
     private static final int TIMEOUT_MS = 5000;
     private static final Duration RATE_LIMIT = Duration.ofSeconds(2);
     private static final Duration CACHE_DURATION = Duration.ofHours(24);
@@ -64,7 +64,7 @@ public class LinkPlayMetadataService {
         }
     }
 
-    public LinkPlayMetadataService(LinkPlayHttpClient httpClient, LinkPlayDeviceManager deviceManager) {
+    public MetadataService(LinkPlayHttpClient httpClient, DeviceManager deviceManager) {
         this.httpClient = httpClient;
         this.deviceManager = deviceManager;
     }
@@ -119,6 +119,7 @@ public class LinkPlayMetadataService {
             logger.debug("[{}] Querying MusicBrainz: {}", deviceManager.getConfig().getDeviceName(), url);
             CompletableFuture<@Nullable String> futureMb = httpClient.rawGetRequest(url);
 
+            @Nullable
             String mbResponse = futureMb.get(TIMEOUT_MS, TimeUnit.MILLISECONDS);
             if (mbResponse == null) {
                 logger.debug("[{}] No MusicBrainz response", deviceManager.getConfig().getDeviceName());
@@ -173,8 +174,25 @@ public class LinkPlayMetadataService {
     }
 
     private @Nullable String retrieveCoverArtUrl(String releaseId) {
-        // Return the direct front cover URL without verification
-        return "https://coverartarchive.org/release/" + releaseId + "/front";
+        try {
+            String url = String.format("https://coverartarchive.org/release/%s", releaseId);
+            CompletableFuture<@Nullable String> future = httpClient.rawGetRequest(url);
+            String response = future.get(TIMEOUT_MS, TimeUnit.MILLISECONDS);
+
+            if (response != null && !response.isEmpty()) {
+                JsonObject json = JsonParser.parseString(response).getAsJsonObject();
+                JsonArray images = json.getAsJsonArray("images");
+                if (images != null && images.size() > 0) {
+                    JsonObject image = images.get(0).getAsJsonObject();
+                    if (image.has("image")) {
+                        return image.get("image").getAsString();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            logger.debug("Failed to retrieve cover art for release {}: {}", releaseId, e.getMessage());
+        }
+        return null;
     }
 
     /**

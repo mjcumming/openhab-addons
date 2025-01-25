@@ -14,27 +14,29 @@ package org.openhab.binding.linkplay.internal.transport.uart;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
-import org.openhab.binding.linkplay.internal.LinkPlayDeviceManager;
+import org.openhab.binding.linkplay.internal.DeviceManager;
+import org.openhab.binding.linkplay.internal.config.LinkPlayConfiguration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * The {@link LinkPlayUartManager} handles UART communication with LinkPlay devices.
+ * The {@link UartManager} handles UART communication with LinkPlay devices.
  * This is a placeholder for future UART support.
  *
  * @author Michael Cumming - Initial contribution
  */
 @NonNullByDefault
-public class LinkPlayUartManager {
+public class UartManager {
 
-    private static final Logger logger = LoggerFactory.getLogger(LinkPlayUartManager.class);
-    private final LinkPlayDeviceManager deviceManager;
-    private @Nullable LinkPlayUartClient uartClient;
+    private static final Logger logger = LoggerFactory.getLogger(UartManager.class);
+    private final DeviceManager deviceManager;
+    private @Nullable UartClient uartClient;
 
-    public LinkPlayUartManager(LinkPlayDeviceManager deviceManager) {
+    public UartManager(DeviceManager deviceManager) {
         this.deviceManager = deviceManager;
-        String host = deviceManager.getConfig().getIpAddress();
-        this.uartClient = new LinkPlayUartClient(host, this);
+        LinkPlayConfiguration config = deviceManager.getConfig();
+        String host = config.getIpAddress();
+        this.uartClient = new UartClient(host, this);
     }
 
     /**
@@ -42,7 +44,7 @@ public class LinkPlayUartManager {
      */
     public void initialize() {
         logger.debug("[{}] Initializing UART manager", deviceManager.getDeviceState().getDeviceName());
-        final @Nullable LinkPlayUartClient client = uartClient;
+        final @Nullable UartClient client = uartClient;
         if (client != null) {
             client.open();
         }
@@ -53,7 +55,7 @@ public class LinkPlayUartManager {
      */
     public void dispose() {
         logger.debug("[{}] Disposing UART manager", deviceManager.getDeviceState().getDeviceName());
-        final @Nullable LinkPlayUartClient client = uartClient;
+        final @Nullable UartClient client = uartClient;
         if (client != null) {
             client.close();
         }

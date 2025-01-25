@@ -13,8 +13,6 @@
 package org.openhab.binding.linkplay.internal.utils;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * The {@link HexConverter} provides utility methods for hex-to-ASCII conversion.
@@ -24,9 +22,6 @@ import org.slf4j.LoggerFactory;
 @NonNullByDefault
 public class HexConverter {
 
-    private static final Logger logger = LoggerFactory.getLogger(HexConverter.class);
-    private static final String UNKNOWN = "Unknown";
-
     /**
      * Converts a hex string to its UTF-8 string representation.
      * Handles null input, empty strings, and invalid hex values.
@@ -35,7 +30,7 @@ public class HexConverter {
      * @return The decoded ASCII text, or the original string if not valid hex
      */
     public static String hexToString(String hex) {
-        if (hex == null || hex.isEmpty()) {
+        if (hex.isEmpty()) {
             return "";
         }
 

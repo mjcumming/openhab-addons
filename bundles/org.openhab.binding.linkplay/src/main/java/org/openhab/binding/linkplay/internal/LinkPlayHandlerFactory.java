@@ -12,7 +12,7 @@
  */
 package org.openhab.binding.linkplay.internal;
 
-import static org.openhab.binding.linkplay.internal.LinkPlayBindingConstants.*;
+import static org.openhab.binding.linkplay.internal.BindingConstants.*;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -38,20 +38,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * The {@link LinkPlayHandlerFactory} is responsible for creating and
- * initializing new LinkPlay Things & ThingHandlers as requested by openHAB.
- * <p>
- * Improvements:
- * - Fixed lifecycle conflicts by synchronizing handler creation.
- * - Added robust configuration restoration and error handling.
- * - Improved logging to track initialization issues.
- * <p>
- * Typical flow:
- * 1) Discovery or the user defines a new Thing with IP/UDN config.
- * 2) openHAB calls createThing(...) if needed, or calls createHandler(...).
- * 3) We validate the config, build a {@link LinkPlayThingHandler}, and return it.
- * <p>
- * We maintain a map of active handlers for possible reference or disposal.
+ * The {@link LinkPlayHandlerFactory} is responsible for creating things and thing
+ * handlers for the LinkPlay binding.
  *
  * @author Michael Cumming - Initial contribution
  */
@@ -59,9 +47,9 @@ import org.slf4j.LoggerFactory;
 @Component(configurationPid = "binding.linkplay", service = ThingHandlerFactory.class)
 public class LinkPlayHandlerFactory extends BaseThingHandlerFactory {
 
-    private static final Logger logger = LoggerFactory.getLogger(LinkPlayHandlerFactory.class);
+    private final Logger logger = LoggerFactory.getLogger(LinkPlayHandlerFactory.class);
 
-    private final Map<ThingUID, LinkPlayThingHandler> handlers = new HashMap<>();
+    private final Map<ThingUID, ThingHandler> handlers = new HashMap<>();
 
     private final UpnpIOService upnpIOService;
     private final LinkPlayHttpClient httpClient;
@@ -75,12 +63,12 @@ public class LinkPlayHandlerFactory extends BaseThingHandlerFactory {
         this.httpClient = httpClient;
     }
 
-    public @Nullable LinkPlayThingHandler getHandlerByIP(String ipAddress) {
+    public @Nullable ThingHandler getHandlerByIP(String ipAddress) {
         for (Thing thing : thingRegistry.getAll()) {
             if (THING_TYPE_MEDIASTREAMER.equals(thing.getThingTypeUID())) {
-                String thingIP = (String) thing.getConfiguration().get(CONFIG_IP_ADDRESS);
-                if (ipAddress.equals(thingIP)) {
-                    return (LinkPlayThingHandler) thing.getHandler();
+                Object configIp = thing.getConfiguration().get(CONFIG_IP_ADDRESS);
+                if (configIp instanceof String thingIP && ipAddress.equals(thingIP)) {
+                    return thing.getHandler();
                 }
             }
         }
@@ -121,7 +109,7 @@ public class LinkPlayHandlerFactory extends BaseThingHandlerFactory {
                     logger.debug("Creating LinkPlayThingHandler for Thing '{}' with IP '{}' and UDN '{}'",
                             thing.getUID(), config.getIpAddress(), config.getUdn());
 
-                    LinkPlayThingHandler handler = new LinkPlayThingHandler(thing, httpClient, upnpIOService, config,
+                    ThingHandler handler = new LinkPlayThingHandler(thing, httpClient, upnpIOService, config,
                             thingRegistry);
                     handlers.put(thing.getUID(), handler);
                     return handler;
@@ -134,20 +122,32 @@ public class LinkPlayHandlerFactory extends BaseThingHandlerFactory {
     }
 
     private void restoreConfigurationFromProperties(Thing thing) {
-        Map<String, String> properties = thing.getProperties();
-        Configuration config = thing.getConfiguration();
-
-        if (properties.containsKey(PROPERTY_IP)) {
-            config.put(CONFIG_IP_ADDRESS, properties.get(PROPERTY_IP));
+        // Create new map to avoid modifying the original properties
+        Map<String, String> properties = new HashMap<>(thing.getProperties());
+        if (properties.isEmpty()) {
+            return;
         }
-        if (properties.containsKey(PROPERTY_UDN)) {
-            config.put(CONFIG_UDN, properties.get(PROPERTY_UDN));
+
+        Map<String, Object> config = new HashMap<>();
+
+        String ipAddress = properties.get(PROPERTY_IP);
+        if (ipAddress != null && !ipAddress.isEmpty()) {
+            config.put(CONFIG_IP_ADDRESS, ipAddress);
+        }
+
+        String udn = properties.get(PROPERTY_UDN);
+        if (udn != null && !udn.isEmpty()) {
+            config.put(CONFIG_UDN, udn);
+        }
+
+        if (!config.isEmpty()) {
+            thing.getConfiguration().setProperties(config);
         }
     }
 
     @Override
     protected void removeHandler(ThingHandler thingHandler) {
-        if (thingHandler instanceof LinkPlayThingHandler handler) {
+        if (thingHandler instanceof ThingHandler handler) {
             ThingUID thingUID = handler.getThing().getUID();
             synchronized (handlers) {
                 handlers.remove(thingUID);
@@ -159,5 +159,15 @@ public class LinkPlayHandlerFactory extends BaseThingHandlerFactory {
                 logger.warn("Error disposing handler for Thing {}: {}", thingUID, e.getMessage());
             }
         }
+    }
+
+    @Override
+    public @Nullable Thing createThing(ThingTypeUID thingTypeUID, Configuration configuration,
+            @Nullable ThingUID thingUID, @Nullable ThingUID bridgeUID) {
+        if (SUPPORTED_THING_TYPES_UIDS.contains(thingTypeUID)) {
+            // For now we just create the Thing, later we might want to add more properties
+            return super.createThing(thingTypeUID, configuration, thingUID, bridgeUID);
+        }
+        return null;
     }
 }

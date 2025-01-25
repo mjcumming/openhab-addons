@@ -12,13 +12,13 @@
  */
 package org.openhab.binding.linkplay.internal.handler;
 
-import static org.openhab.binding.linkplay.internal.LinkPlayBindingConstants.*;
+import static org.openhab.binding.linkplay.internal.BindingConstants.*;
 
 import java.util.Map;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
-import org.openhab.binding.linkplay.internal.LinkPlayDeviceManager;
+import org.openhab.binding.linkplay.internal.DeviceManager;
 import org.openhab.binding.linkplay.internal.config.LinkPlayConfiguration;
 import org.openhab.binding.linkplay.internal.transport.http.LinkPlayHttpClient;
 import org.openhab.core.config.core.Configuration;
@@ -36,13 +36,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * The {@link LinkPlayThingHandler} is responsible for handling commands and status updates for LinkPlay devices.
- * It manages the lifecycle of a LinkPlay device and integrates with the Device Manager.
- * 
- * Improvements:
- * - Early polling with minimal configuration to avoid delays.
- * - Decoupled UPnP initialization from startup for better performance.
- * - Enhanced logging for better visibility into startup timings.
+ * The {@link LinkPlayThingHandler} is responsible for handling commands and status updates for devices.
+ * It manages the lifecycle of a device and integrates with the Device Manager.
  * 
  * @author Michael Cumming - Initial contribution
  */
@@ -56,7 +51,7 @@ public class LinkPlayThingHandler extends BaseThingHandler {
     private final ThingRegistry thingRegistry;
     private LinkPlayConfiguration config;
 
-    private @Nullable LinkPlayDeviceManager deviceManager;
+    private @Nullable DeviceManager deviceManager;
 
     public LinkPlayThingHandler(Thing thing, LinkPlayHttpClient httpClient, UpnpIOService upnpIOService,
             LinkPlayConfiguration config, ThingRegistry thingRegistry) {
@@ -65,8 +60,6 @@ public class LinkPlayThingHandler extends BaseThingHandler {
         this.upnpIOService = upnpIOService;
         this.config = config;
         this.thingRegistry = thingRegistry;
-
-        this.deviceManager = new LinkPlayDeviceManager(this, config, httpClient, upnpIOService, thingRegistry);
     }
 
     @Override
@@ -74,7 +67,7 @@ public class LinkPlayThingHandler extends BaseThingHandler {
         logger.debug("[{}] Initializing handler...", config.getDeviceName());
 
         // Get configuration
-        config = getConfigAs(LinkPlayConfiguration.class);
+        config = LinkPlayConfiguration.fromConfiguration(getConfig());
 
         // Try to restore configuration from properties if needed
         if (!config.isValid()) {
@@ -89,7 +82,7 @@ public class LinkPlayThingHandler extends BaseThingHandler {
             }
 
             updateConfiguration(configuration);
-            config = getConfigAs(LinkPlayConfiguration.class);
+            config = LinkPlayConfiguration.fromConfiguration(getConfig());
         }
 
         // Validate configuration
@@ -103,7 +96,7 @@ public class LinkPlayThingHandler extends BaseThingHandler {
         updateStatus(ThingStatus.UNKNOWN);
 
         // Initialize device manager with both HTTP and UPnP support
-        deviceManager = new LinkPlayDeviceManager(this, config, httpClient, upnpIOService, thingRegistry);
+        deviceManager = new DeviceManager(this, config, httpClient, upnpIOService, thingRegistry);
 
         // Start HTTP polling immediately
         startPolling();
@@ -116,7 +109,7 @@ public class LinkPlayThingHandler extends BaseThingHandler {
      * Starts polling for device and player status immediately with minimal configuration.
      */
     private void startPolling() {
-        LinkPlayDeviceManager manager = deviceManager;
+        DeviceManager manager = deviceManager;
         if (manager != null) {
             try {
                 manager.initialize();
@@ -130,7 +123,7 @@ public class LinkPlayThingHandler extends BaseThingHandler {
     }
 
     private void initializeAsync() {
-        LinkPlayDeviceManager manager = deviceManager;
+        DeviceManager manager = deviceManager;
         if (manager != null) {
             scheduler.execute(() -> {
                 try {
@@ -150,9 +143,9 @@ public class LinkPlayThingHandler extends BaseThingHandler {
 
     @Override
     public void dispose() {
-        logger.debug("Disposing LinkPlayThingHandler for Thing: {}", getThing().getUID());
+        logger.debug("Disposing ThingHandler for Thing: {}", getThing().getUID());
 
-        LinkPlayDeviceManager manager = deviceManager;
+        DeviceManager manager = deviceManager;
         if (manager != null) {
             manager.dispose();
             deviceManager = null;
@@ -165,7 +158,7 @@ public class LinkPlayThingHandler extends BaseThingHandler {
     public void handleCommand(ChannelUID channelUID, Command command) {
         logger.trace("Received command: {} for channel: {}", command, channelUID.getIdWithoutGroup());
 
-        final LinkPlayDeviceManager manager = deviceManager;
+        final DeviceManager manager = deviceManager;
         if (manager != null) {
             manager.handleCommand(channelUID.getIdWithoutGroup(), command);
         } else {
@@ -220,7 +213,7 @@ public class LinkPlayThingHandler extends BaseThingHandler {
      * Get the device manager instance
      * Added to support multiroom functionality
      */
-    public @Nullable LinkPlayDeviceManager getDeviceManager() {
+    public @Nullable DeviceManager getDeviceManager() {
         return deviceManager;
     }
 }

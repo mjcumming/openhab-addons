@@ -99,7 +99,7 @@ public class LinkPlaySslUtil {
     }
 
     /**
-     * Creates a trust manager from the embedded certificate in {@link LinkPlayPemConstants#PEM_CONTENT}.
+     * Creates a trust manager from the embedded certificate in {@link PemConstants#PEM_CONTENT}.
      * If the device uses the same cert for all firmware, this is sufficient.
      */
     public static X509TrustManager createTrustManager() {
@@ -109,7 +109,7 @@ public class LinkPlaySslUtil {
             keyStore.load(null, null);
 
             // Extract the single certificate from our PEM blob
-            String certPem = extractCertificate(LinkPlayPemConstants.PEM_CONTENT);
+            String certPem = extractCertificate(PemConstants.PEM_CONTENT);
             CertificateFactory cf = CertificateFactory.getInstance("X.509");
             X509Certificate cert = (X509Certificate) cf
                     .generateCertificate(new ByteArrayInputStream(Base64.getDecoder().decode(certPem)));
@@ -140,14 +140,14 @@ public class LinkPlaySslUtil {
             keyStore.load(null, null);
 
             // Extract private key
-            String privateKeyPem = extractPrivateKey(LinkPlayPemConstants.PEM_CONTENT);
+            String privateKeyPem = extractPrivateKey(PemConstants.PEM_CONTENT);
             byte[] privateKeyBytes = Base64.getDecoder().decode(privateKeyPem);
             PKCS8EncodedKeySpec keySpec = new PKCS8EncodedKeySpec(privateKeyBytes);
             KeyFactory keyFactory = KeyFactory.getInstance("RSA");
             PrivateKey privateKey = keyFactory.generatePrivate(keySpec);
 
             // Extract certificate
-            String certPem = extractCertificate(LinkPlayPemConstants.PEM_CONTENT);
+            String certPem = extractCertificate(PemConstants.PEM_CONTENT);
             CertificateFactory cf = CertificateFactory.getInstance("X.509");
             X509Certificate cert = (X509Certificate) cf
                     .generateCertificate(new ByteArrayInputStream(Base64.getDecoder().decode(certPem)));

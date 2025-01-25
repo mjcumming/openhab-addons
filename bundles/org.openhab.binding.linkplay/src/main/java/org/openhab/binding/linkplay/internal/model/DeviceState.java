@@ -12,7 +12,7 @@
  */
 package org.openhab.binding.linkplay.internal.model;
 
-import static org.openhab.binding.linkplay.internal.LinkPlayBindingConstants.*;
+import static org.openhab.binding.linkplay.internal.BindingConstants.*;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
@@ -24,7 +24,7 @@ import org.openhab.binding.linkplay.internal.config.LinkPlayConfiguration;
  * @author Michael Cumming - Initial contribution
  */
 @NonNullByDefault
-public class LinkPlayDeviceState {
+public class DeviceState {
 
     // System info
     private @Nullable String deviceUDN;
@@ -32,23 +32,54 @@ public class LinkPlayDeviceState {
 
     // Network info
     private @Nullable String ipAddress;
-    private int wifiSignalDbm = 0;
+    private int wifiSignalDbm;
 
     // Playback state
-    private @Nullable String trackTitle = "";
-    private @Nullable String trackArtist = "";
-    private @Nullable String trackAlbum = "";
+    private @Nullable String trackTitle;
+    private @Nullable String trackArtist;
+    private @Nullable String trackAlbum;
     private @Nullable String albumArtUrl;
     private int volume;
     private boolean mute;
-    private boolean repeat = false;
-    private boolean shuffle = false;
-    private @Nullable String source = SOURCE_UNKNOWN;
-    private @Nullable String control = CONTROL_PAUSE;
+    private boolean repeat;
+    private boolean shuffle;
+    private @Nullable String source;
+    private @Nullable String control;
 
     // Device info
     private @Nullable String deviceMac;
     private @Nullable String firmware;
+
+    public DeviceState() {
+        // Initialize default values in constructor
+        this.trackTitle = "";
+        this.trackArtist = "";
+        this.trackAlbum = "";
+        this.albumArtUrl = null;
+        this.volume = 0;
+        this.mute = false;
+        this.repeat = false;
+        this.shuffle = false;
+        this.source = SOURCE_UNKNOWN;
+        this.control = CONTROL_PAUSE;
+        this.deviceMac = null;
+        this.firmware = null;
+        this.wifiSignalDbm = 0;
+        this.deviceUDN = null;
+        this.deviceName = null;
+    }
+
+    /**
+     * Initialize device state from configuration
+     */
+    public void initializeFromConfig(LinkPlayConfiguration config) {
+        // IP address is required and must come from config
+        this.ipAddress = config.getIpAddress();
+
+        // Optional config values
+        this.deviceUDN = config.getUdn();
+        this.deviceName = config.getDeviceName();
+    }
 
     // Basic audio control getters/setters
     public int getVolume() {
@@ -162,31 +193,6 @@ public class LinkPlayDeviceState {
 
     public void setDeviceUDN(String deviceUDN) {
         this.deviceUDN = deviceUDN;
-    }
-
-    /**
-     * Updates device state from the provided configuration
-     * 
-     * @param config The LinkPlay configuration to initialize from
-     */
-    public void initializeFromConfig(LinkPlayConfiguration config) {
-        // Update IP address if provided
-        String configIp = config.getIpAddress();
-        if (!configIp.isEmpty()) {
-            this.ipAddress = configIp;
-        }
-
-        // Update UDN if provided
-        String configUdn = config.getUdn();
-        if (!configUdn.isEmpty()) {
-            this.deviceUDN = configUdn;
-        }
-
-        // Update device name if provided
-        String configDeviceName = config.getDeviceName();
-        if (!configDeviceName.isEmpty()) {
-            this.deviceName = configDeviceName;
-        }
     }
 
     // Update setters

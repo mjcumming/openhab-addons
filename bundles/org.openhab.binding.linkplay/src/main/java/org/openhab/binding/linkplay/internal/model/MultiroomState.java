@@ -15,12 +15,12 @@ package org.openhab.binding.linkplay.internal.model;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 
 /**
- * The {@link LinkPlayMultiroomState} represents the multiroom state of a LinkPlay device
+ * The {@link MultiroomState} represents the multiroom state of a LinkPlay device
  *
  * @author Michael Cumming - Initial contribution
  */
 @NonNullByDefault
-public class LinkPlayMultiroomState {
+public class MultiroomState {
 
     private String role = "standalone";
     private String masterIP = "";
