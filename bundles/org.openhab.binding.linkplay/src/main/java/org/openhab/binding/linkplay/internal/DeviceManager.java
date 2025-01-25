@@ -15,6 +15,7 @@ package org.openhab.binding.linkplay.internal;
 
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ScheduledExecutorService;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.openhab.binding.linkplay.internal.config.LinkPlayConfiguration;
@@ -78,12 +79,12 @@ public class DeviceManager {
     private int communicationFailures = 0;
 
     public DeviceManager(LinkPlayThingHandler thingHandler, LinkPlayConfiguration config, LinkPlayHttpClient httpClient,
-            UpnpIOService upnpIOService, ThingRegistry thingRegistry) {
+            UpnpIOService upnpIOService, ThingRegistry thingRegistry, ScheduledExecutorService scheduler) {
         this.thingHandler = thingHandler;
         this.config = config;
         this.deviceState = new DeviceState();
         this.deviceState.initializeFromConfig(config); // Initialize state with config values
-        this.httpManager = new HttpManager(httpClient, this);
+        this.httpManager = new HttpManager(httpClient, this, scheduler);
         this.metadataService = new MetadataService(httpClient, this);
         this.uartManager = new UartManager(this);
         this.groupManager = new GroupManager(this, thingRegistry);

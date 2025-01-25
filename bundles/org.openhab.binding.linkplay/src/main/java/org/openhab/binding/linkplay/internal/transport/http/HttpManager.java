@@ -14,6 +14,7 @@
 package org.openhab.binding.linkplay.internal.transport.http;
 
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -42,15 +43,17 @@ public class HttpManager {
     private final int playerStatusPollingInterval;
     private final int deviceStatusPollingInterval;
     private final LinkPlayConfiguration config;
+    private final ScheduledExecutorService scheduler;
 
     private @Nullable ScheduledFuture<?> playerStatusPollingJob;
     private @Nullable ScheduledFuture<?> deviceStatusPollingJob;
     private static final int POLLING_INITIAL_DELAY_MS = 1000;
 
-    public HttpManager(LinkPlayHttpClient client, DeviceManager deviceManager) {
+    public HttpManager(LinkPlayHttpClient client, DeviceManager deviceManager, ScheduledExecutorService scheduler) {
         this.httpClient = client;
         this.deviceManager = deviceManager;
         this.config = deviceManager.getConfig();
+        this.scheduler = scheduler;
 
         // Get intervals from config
         this.playerStatusPollingInterval = config.getPlayerStatusPollingInterval();
@@ -287,13 +290,7 @@ public class HttpManager {
         }
 
         try {
-            var threadPool = ThreadPoolManager.getScheduledPool(BindingConstants.BINDING_ID + "-http");
-            if (threadPool == null) {
-                logger.error("[{}] Failed to get thread pool for player status polling", config.getDeviceName());
-                return;
-            }
-
-            playerStatusPollingJob = threadPool.scheduleWithFixedDelay(this::pollPlayerStatus, POLLING_INITIAL_DELAY_MS,
+            playerStatusPollingJob = scheduler.scheduleWithFixedDelay(this::pollPlayerStatus, POLLING_INITIAL_DELAY_MS,
                     playerStatusPollingInterval * 1000L, TimeUnit.MILLISECONDS);
             logger.debug("[{}] Started player status polling every {}s", config.getDeviceName(),
                     playerStatusPollingInterval);
@@ -318,13 +315,7 @@ public class HttpManager {
         }
 
         try {
-            var threadPool = ThreadPoolManager.getScheduledPool(BindingConstants.BINDING_ID + "-http");
-            if (threadPool == null) {
-                logger.error("[{}] Failed to get thread pool for device status polling", config.getDeviceName());
-                return;
-            }
-
-            deviceStatusPollingJob = threadPool.scheduleWithFixedDelay(this::pollDeviceStatus, POLLING_INITIAL_DELAY_MS,
+            deviceStatusPollingJob = scheduler.scheduleWithFixedDelay(this::pollDeviceStatus, POLLING_INITIAL_DELAY_MS,
                     deviceStatusPollingInterval * 1000L, TimeUnit.MILLISECONDS);
             logger.debug("[{}] Started device status polling every {}s", config.getDeviceName(),
                     deviceStatusPollingInterval);

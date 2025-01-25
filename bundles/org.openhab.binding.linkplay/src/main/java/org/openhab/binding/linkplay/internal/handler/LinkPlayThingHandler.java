@@ -96,7 +96,7 @@ public class LinkPlayThingHandler extends BaseThingHandler {
         updateStatus(ThingStatus.UNKNOWN);
 
         // Initialize device manager with both HTTP and UPnP support
-        deviceManager = new DeviceManager(this, config, httpClient, upnpIOService, thingRegistry);
+        deviceManager = new DeviceManager(this, config, httpClient, upnpIOService, thingRegistry, scheduler);
 
         // Start HTTP polling immediately
         startPolling();
