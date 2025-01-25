@@ -85,11 +85,12 @@ public class CommandResult {
     }
 
     public String getErrorMessage() {
-        if (error != null) {
-            String message = error.getMessage();
-            return message != null ? message : error.getClass().getSimpleName();
+        Exception e = error;
+        if (e == null) {
+            return "Unknown error";
         }
-        return "Unknown error";
+        String message = e.getMessage();
+        return message != null && !message.isEmpty() ? message : e.getClass().getSimpleName();
     }
 
     /**
@@ -99,11 +100,8 @@ public class CommandResult {
         if (!isSuccess()) {
             throw new LinkPlayApiException(getErrorMessage());
         }
-        JsonObject result = jsonContent;
-        if (result == null) {
-            throw new LinkPlayApiException("No JSON content available");
-        }
-        return result;
+        return Optional.ofNullable(jsonContent)
+                .orElseThrow(() -> new LinkPlayApiException("No JSON content available"));
     }
 
     /**
@@ -113,11 +111,7 @@ public class CommandResult {
         if (!isSuccess()) {
             throw new LinkPlayApiException(getErrorMessage());
         }
-        String result = content;
-        if (result == null) {
-            throw new LinkPlayApiException("No content available");
-        }
-        return result;
+        return Optional.ofNullable(content).orElseThrow(() -> new LinkPlayApiException("No content available"));
     }
 
     /**

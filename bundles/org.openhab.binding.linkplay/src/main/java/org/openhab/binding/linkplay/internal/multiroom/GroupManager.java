@@ -236,7 +236,7 @@ public class GroupManager {
                     // Add master volume command
                     volumeCommands.add(deviceManager.getHttpManager().setVolume(volume));
 
-                    // Add slave volume commands
+                    // Add slave volume commands - use standard volume command instead of slave-specific
                     for (String slaveIP : state.getSlaveIPs().split(",")) {
                         if (!slaveIP.isEmpty()) {
                             Thing slaveThing = findThingByIP(slaveIP);
@@ -244,8 +244,7 @@ public class GroupManager {
                                     && slaveThing.getHandler() instanceof LinkPlayThingHandler slaveHandler) {
                                 DeviceManager slaveDeviceManager = slaveHandler.getDeviceManager();
                                 if (slaveDeviceManager != null) {
-                                    volumeCommands
-                                            .add(slaveDeviceManager.getHttpManager().setSlaveVolume(slaveIP, volume));
+                                    volumeCommands.add(slaveDeviceManager.getHttpManager().setVolume(volume));
                                 }
                             }
                         }
@@ -262,13 +261,12 @@ public class GroupManager {
                                 CommandResult result = future.get();
                                 if (!result.isSuccess()) {
                                     allSuccess = false;
-                                    String message = result.getErrorMessage();
-                                    failures.add(message != null ? message : "Unknown error");
+                                    failures.add(result.getErrorMessage());
                                 }
                             } catch (Exception e) {
                                 allSuccess = false;
                                 String message = e.getMessage();
-                                failures.add(message != null ? message : "Unknown error");
+                                failures.add(message != null ? message : e.getClass().getSimpleName());
                             }
                         }
 
@@ -299,7 +297,7 @@ public class GroupManager {
                     // Add master mute command
                     muteCommands.add(deviceManager.getHttpManager().setMute(mute));
 
-                    // Add slave mute commands
+                    // Add slave mute commands - use standard mute command instead of slave-specific
                     for (String slaveIP : state.getSlaveIPs().split(",")) {
                         if (!slaveIP.isEmpty()) {
                             Thing slaveThing = findThingByIP(slaveIP);
@@ -307,7 +305,7 @@ public class GroupManager {
                                     && slaveThing.getHandler() instanceof LinkPlayThingHandler slaveHandler) {
                                 DeviceManager slaveDeviceManager = slaveHandler.getDeviceManager();
                                 if (slaveDeviceManager != null) {
-                                    muteCommands.add(slaveDeviceManager.getHttpManager().setSlaveMute(slaveIP, mute));
+                                    muteCommands.add(slaveDeviceManager.getHttpManager().setMute(mute));
                                 }
                             }
                         }
@@ -324,13 +322,12 @@ public class GroupManager {
                                 CommandResult result = future.get();
                                 if (!result.isSuccess()) {
                                     allSuccess = false;
-                                    String message = result.getErrorMessage();
-                                    failures.add(message != null ? message : "Unknown error");
+                                    failures.add(result.getErrorMessage());
                                 }
                             } catch (Exception e) {
                                 allSuccess = false;
                                 String message = e.getMessage();
-                                failures.add(message != null ? message : "Unknown error");
+                                failures.add(message != null ? message : e.getClass().getSimpleName());
                             }
                         }
 
@@ -415,7 +412,7 @@ public class GroupManager {
 
             // Now check if we're a master by looking for slaves that point to us
             String ourIP = deviceManager.getConfig().getIpAddress();
-            if (ourIP != null && !ourIP.isEmpty()) {
+            if (!ourIP.isEmpty()) {
                 boolean isMaster = false;
 
                 for (Thing thing : thingRegistry.getAll()) {
@@ -527,7 +524,7 @@ public class GroupManager {
             if (masterDeviceManager != null) {
                 // Get our IP to add to master's slave list
                 String myIP = deviceManager.getConfig().getIpAddress();
-                if (myIP != null && !myIP.isEmpty()) {
+                if (!myIP.isEmpty()) {
                     String currentSlaveIPs = masterDeviceManager.getGroupManager().state.getSlaveIPs();
 
                     // Add our IP to master's slave list if not already present

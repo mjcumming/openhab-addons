@@ -128,20 +128,16 @@ public class LinkPlayHandlerFactory extends BaseThingHandlerFactory {
             return;
         }
 
-        Map<String, Object> config = new HashMap<>();
+        Configuration configuration = thing.getConfiguration();
 
         String ipAddress = properties.get(PROPERTY_IP);
         if (ipAddress != null && !ipAddress.isEmpty()) {
-            config.put(CONFIG_IP_ADDRESS, ipAddress);
+            configuration.put(CONFIG_IP_ADDRESS, ipAddress);
         }
 
         String udn = properties.get(PROPERTY_UDN);
         if (udn != null && !udn.isEmpty()) {
-            config.put(CONFIG_UDN, udn);
-        }
-
-        if (!config.isEmpty()) {
-            thing.getConfiguration().setProperties(config);
+            configuration.put(CONFIG_UDN, udn);
         }
     }
 

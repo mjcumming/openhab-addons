@@ -162,6 +162,17 @@ public class DeviceState {
         this.wifiSignalDbm = wifiSignalDbm;
     }
 
+    public int getWifiSignalStrength() {
+        // Convert RSSI to percentage (typical range: -100 dBm to -50 dBm)
+        if (wifiSignalDbm <= -100) {
+            return 0;
+        } else if (wifiSignalDbm >= -50) {
+            return 100;
+        } else {
+            return 2 * (wifiSignalDbm + 100); // Linear conversion from -100..-50 to 0..100
+        }
+    }
+
     // Add getters/setters for new fields
     public boolean isShuffle() {
         return shuffle;

@@ -446,7 +446,7 @@ public class DeviceManager {
 
         // Handle device name from API - just track it, don't use for identification
         String apiDeviceName = getJsonString(json, "DeviceName");
-        if (!apiDeviceName.isEmpty()) {
+        if (!apiDeviceName.isEmpty() && !apiDeviceName.equals(deviceState.getDeviceName())) {
             deviceState.setDeviceName(apiDeviceName);
             updateState(BindingConstants.GROUP_SYSTEM + "#" + BindingConstants.CHANNEL_DEVICE_NAME,
                     new StringType(apiDeviceName));
@@ -492,11 +492,14 @@ public class DeviceManager {
         } else {
             signalStrength = 2 * (rssi + 100); // Linear conversion from -100..-50 to 0..100
         }
-        // Update channel only since we don't store in device state
-        updateState(BindingConstants.GROUP_NETWORK + "#" + BindingConstants.CHANNEL_WIFI_SIGNAL,
-                new PercentType(signalStrength));
-        logger.debug("[{}] Updated WiFi signal strength: {}% (RSSI: {} dBm)", config.getDeviceName(), signalStrength,
-                rssi);
+        // Only update if signal strength has changed
+        if (signalStrength != deviceState.getWifiSignalStrength()) {
+            deviceState.setWifiSignalDbm(rssi);
+            updateState(BindingConstants.GROUP_NETWORK + "#" + BindingConstants.CHANNEL_WIFI_SIGNAL,
+                    new PercentType(signalStrength));
+            logger.debug("[{}] Updated WiFi signal strength: {}% (RSSI: {} dBm)", config.getDeviceName(),
+                    signalStrength, rssi);
+        }
     }
 
     /**
