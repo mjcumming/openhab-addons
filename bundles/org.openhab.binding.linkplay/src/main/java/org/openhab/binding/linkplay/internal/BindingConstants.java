@@ -87,12 +87,14 @@ public class BindingConstants {
     public static final String CHANNEL_MASTER_IP = "masterIP";
     public static final String CHANNEL_SLAVE_IPS = "slaveIPs";
     public static final String CHANNEL_GROUP_NAME = "groupName";
-    public static final String CHANNEL_JOIN = "join";
-    public static final String CHANNEL_LEAVE = "leave";
-    public static final String CHANNEL_UNGROUP = "ungroup";
-    public static final String CHANNEL_KICKOUT = "kickout";
     public static final String CHANNEL_GROUP_VOLUME = "groupVolume";
     public static final String CHANNEL_GROUP_MUTE = "groupMute";
+    public static final String CHANNEL_JOIN = "join";
+    public static final String CHANNEL_KICKOUT = "kickout";
+
+    // Multiroom Trigger Channels
+    public static final String CHANNEL_LEAVE = "leave#trigger";
+    public static final String CHANNEL_UNGROUP = "ungroup#trigger";
 
     // UPnP Discovery Constants
     public static final String UPNP_DEVICE_TYPE = "urn:schemas-upnp-org:device:MediaRenderer:1";

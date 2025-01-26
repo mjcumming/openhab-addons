@@ -75,18 +75,64 @@ Thing linkplay:device:living [ ipAddress="192.168.1.100" ]
 
 ### Multiroom Group (`multiroom`)
 
+The binding provides both state channels and trigger channels for multiroom control:
+
+#### State Channels
+
 | Channel ID   | Item Type | Description                                    |
 |-------------|-----------|------------------------------------------------|
 | role        | String    | Device role (master/slave/standalone)          |
 | masterIP    | String    | IP of master device (if slave)                 |
 | slaveIPs    | String    | List of slave IPs (if master)                 |
 | groupName   | String    | Name of the multiroom group                    |
-| join        | String    | Join a group (provide master IP)               |
-| leave       | Switch    | Leave current group                            |
-| ungroup     | Switch    | Disband entire group (if master)              |
-| kickout     | String    | Remove a slave from group (provide slave IP)   |
 | groupVolume | Dimmer    | Group-wide volume control                      |
 | groupMute   | Switch    | Group-wide mute control                        |
+| join        | String    | Join a group (provide master IP)               |
+| kickout     | String    | Remove a slave from group (provide slave IP)   |
+
+#### Trigger Channels
+
+| Channel ID   | Description                                    |
+|-------------|------------------------------------------------|
+| leave       | Leave current multiroom group (if slave)        |
+| ungroup     | Disband entire group (if master)               |
+
+### Example Rules
+
+1. Join a group:
+
+```java
+rule "Join Living Room Group"
+when
+    Item BedroomJoinGroup received command "192.168.1.100"
+then
+    // The command itself will trigger the join
+end
+```
+
+2. Using trigger channels:
+
+```java
+rule "Ungroup Living Room"
+when
+    Channel "linkplay:mediastreamer:living_room:multiroom#ungroup" triggered
+then
+    // The group will be disbanded
+end
+```
+
+3. Kick a device from group:
+
+```java
+rule "Kick Device from Group"
+when
+    Item KickoutDevice received command "192.168.1.101"
+then
+    // The command will remove the specified device from the group
+end
+```
+
+The trigger channels can also be used directly in the UI rule builder by selecting the appropriate trigger channel.
 
 ### Playback Modes and Input Sources
 

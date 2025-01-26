@@ -65,7 +65,10 @@ public class GroupManager {
      * Handle multiroom-related commands from DeviceManager
      */
     public void handleCommand(String channelId, Command command) {
-        switch (channelId) {
+        // Extract base channel name for trigger channels
+        String baseChannel = channelId.contains("#") ? channelId.split("#")[0] : channelId;
+
+        switch (baseChannel) {
             case CHANNEL_JOIN:
                 if (command instanceof StringType) {
                     String masterIP = command.toString();
@@ -88,94 +91,89 @@ public class GroupManager {
                 break;
 
             case CHANNEL_UNGROUP:
-                if (command instanceof OnOffType && command == OnOffType.ON) {
-                    if (state.isMaster()) {
-                        // Store current slave IPs before ungrouping
-                        Set<String> previousSlaves = new HashSet<>(Arrays.asList(state.getSlaveIPs().split(",")));
+                // Now a trigger channel
+                if (state.isMaster()) {
+                    // Store current slave IPs before ungrouping
+                    Set<String> previousSlaves = new HashSet<>(Arrays.asList(state.getSlaveIPs().split(",")));
 
-                        deviceManager.getHttpManager().ungroup().thenAccept(result -> {
-                            if (result.isSuccess()) {
-                                // Update our state immediately
-                                state.setStandaloneState();
-                                updateChannels();
+                    deviceManager.getHttpManager().ungroup().thenAccept(result -> {
+                        if (result.isSuccess()) {
+                            // Update our state immediately
+                            state.setStandaloneState();
+                            updateChannels();
 
-                                // Notify all previous slaves to update their status
-                                for (String slaveIP : previousSlaves) {
-                                    if (!slaveIP.isEmpty()) {
-                                        Thing slaveThing = findThingByIP(slaveIP);
-                                        if (slaveThing != null && slaveThing
-                                                .getHandler() instanceof LinkPlayThingHandler slaveHandler) {
-                                            DeviceManager slaveDeviceManager = slaveHandler.getDeviceManager();
-                                            if (slaveDeviceManager != null) {
-                                                slaveDeviceManager.getGroupManager().state.setStandaloneState();
-                                                slaveDeviceManager.getGroupManager().updateChannels();
-                                            }
+                            // Notify all previous slaves to update their status
+                            for (String slaveIP : previousSlaves) {
+                                if (!slaveIP.isEmpty()) {
+                                    Thing slaveThing = findThingByIP(slaveIP);
+                                    if (slaveThing != null
+                                            && slaveThing.getHandler() instanceof LinkPlayThingHandler slaveHandler) {
+                                        DeviceManager slaveDeviceManager = slaveHandler.getDeviceManager();
+                                        if (slaveDeviceManager != null) {
+                                            slaveDeviceManager.getGroupManager().state.setStandaloneState();
+                                            slaveDeviceManager.getGroupManager().updateChannels();
                                         }
                                     }
                                 }
-                                logger.debug("[{}] Successfully sent ungroup command",
-                                        deviceManager.getConfig().getDeviceName());
-                            } else {
-                                logger.warn("[{}] Failed to ungroup: {}", deviceManager.getConfig().getDeviceName(),
-                                        result.getErrorMessage());
                             }
-                        });
-                    } else if (state.isStandalone()) {
-                        logger.info("[{}] Cannot ungroup - device is standalone",
-                                deviceManager.getConfig().getDeviceName());
-                    } else {
-                        logger.info("[{}] Cannot ungroup - device is a slave",
-                                deviceManager.getConfig().getDeviceName());
-                    }
+                            logger.debug("[{}] Successfully sent ungroup command",
+                                    deviceManager.getConfig().getDeviceName());
+                        } else {
+                            logger.warn("[{}] Failed to ungroup: {}", deviceManager.getConfig().getDeviceName(),
+                                    result.getErrorMessage());
+                        }
+                    });
+                } else if (state.isStandalone()) {
+                    logger.info("[{}] Cannot ungroup - device is standalone",
+                            deviceManager.getConfig().getDeviceName());
+                } else {
+                    logger.info("[{}] Cannot ungroup - device is a slave", deviceManager.getConfig().getDeviceName());
                 }
                 break;
 
             case CHANNEL_LEAVE:
-                if (command instanceof OnOffType && command == OnOffType.ON) {
-                    if (state.isSlave()) {
-                        String masterIP = state.getMasterIP();
-                        String myIP = deviceManager.getConfig().getIpAddress();
-                        if (myIP.isEmpty()) {
-                            logger.warn("[{}] Cannot leave group - device IP is empty",
-                                    deviceManager.getConfig().getDeviceName());
-                            return;
-                        }
-                        if (!masterIP.isEmpty()) {
-                            // Find master device in registry
-                            Thing masterThing = findThingByIP(masterIP);
-                            if (masterThing != null
-                                    && masterThing.getHandler() instanceof LinkPlayThingHandler masterHandler) {
-                                DeviceManager masterDeviceManager = masterHandler.getDeviceManager();
-                                if (masterDeviceManager != null) {
-                                    // Send kickout command through master's HTTP manager
-                                    masterDeviceManager.getHttpManager().kickoutSlave(myIP).thenAccept(result -> {
-                                        if (result.isSuccess()) {
-                                            logger.debug(
-                                                    "[{}] Successfully requested to leave group via master kickout",
-                                                    deviceManager.getConfig().getDeviceName());
-                                            updateMultiroomStatus();
-                                        } else {
-                                            logger.warn("[{}] Failed to leave group: {}",
-                                                    deviceManager.getConfig().getDeviceName(),
-                                                    result.getErrorMessage());
-                                        }
-                                    });
-                                }
-                            } else {
-                                logger.warn("[{}] Cannot leave group - master device not found in registry",
-                                        deviceManager.getConfig().getDeviceName());
+                // Now a trigger channel
+                if (state.isSlave()) {
+                    String masterIP = state.getMasterIP();
+                    String myIP = deviceManager.getConfig().getIpAddress();
+                    if (myIP.isEmpty()) {
+                        logger.warn("[{}] Cannot leave group - device IP is empty",
+                                deviceManager.getConfig().getDeviceName());
+                        return;
+                    }
+                    if (!masterIP.isEmpty()) {
+                        // Find master device in registry
+                        Thing masterThing = findThingByIP(masterIP);
+                        if (masterThing != null
+                                && masterThing.getHandler() instanceof LinkPlayThingHandler masterHandler) {
+                            DeviceManager masterDeviceManager = masterHandler.getDeviceManager();
+                            if (masterDeviceManager != null) {
+                                // Send kickout command through master's HTTP manager
+                                masterDeviceManager.getHttpManager().kickoutSlave(myIP).thenAccept(result -> {
+                                    if (result.isSuccess()) {
+                                        logger.debug("[{}] Successfully requested to leave group via master kickout",
+                                                deviceManager.getConfig().getDeviceName());
+                                        updateMultiroomStatus();
+                                    } else {
+                                        logger.warn("[{}] Failed to leave group: {}",
+                                                deviceManager.getConfig().getDeviceName(), result.getErrorMessage());
+                                    }
+                                });
                             }
                         } else {
-                            logger.warn("[{}] Cannot leave group - missing master IP",
+                            logger.warn("[{}] Cannot leave group - master device not found in registry",
                                     deviceManager.getConfig().getDeviceName());
                         }
-                    } else if (state.isStandalone()) {
-                        logger.info("[{}] Cannot leave group - device is standalone",
-                                deviceManager.getConfig().getDeviceName());
                     } else {
-                        logger.info("[{}] Cannot leave group - device is a master",
+                        logger.warn("[{}] Cannot leave group - missing master IP",
                                 deviceManager.getConfig().getDeviceName());
                     }
+                } else if (state.isStandalone()) {
+                    logger.info("[{}] Cannot leave group - device is standalone",
+                            deviceManager.getConfig().getDeviceName());
+                } else {
+                    logger.info("[{}] Cannot leave group - device is a master",
+                            deviceManager.getConfig().getDeviceName());
                 }
                 break;
 

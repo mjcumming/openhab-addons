@@ -105,8 +105,8 @@
 			<channel id="leave" typeId="leave"/>
 			<channel id="ungroup" typeId="ungroup"/>
 			<channel id="kickout" typeId="kickout"/>
-			<channel id="groupVolume" typeId="system.volume"/>
-			<channel id="groupMute" typeId="system.mute"/>
+			<channel id="groupVolume" typeId="groupVolume"/>
+			<channel id="groupMute" typeId="groupMute"/>
 		</channels>
 	</channel-group-type>
 
@@ -239,7 +239,7 @@
 	<channel-type id="join">
 		<item-type>String</item-type>
 		<label>Join Group</label>
-		<description>Join a multiroom group by master IP.</description>
+		<description>Join a multiroom group by master IP</description>
 		<state pattern="^$|^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$">
 			<options>
 				<option value="">Not In Group</option>
@@ -248,39 +248,27 @@
 		<autoUpdatePolicy>veto</autoUpdatePolicy>
 	</channel-type>
 
-	<!-- leave => Switch -->
+	<!-- leave => Trigger -->
 	<channel-type id="leave">
-		<item-type>Switch</item-type>
+		<kind>trigger</kind>
 		<label>Leave Group</label>
-		<description>Leave current multiroom group (if slave).</description>
-		<category>Switch</category>
-		<state readOnly="false">
-			<options>
-				<option value="OFF">Ready</option>
-			</options>
-		</state>
-		<autoUpdatePolicy>veto</autoUpdatePolicy>
+		<description>Leave current multiroom group (if slave)</description>
 	</channel-type>
 
-	<!-- ungroup => Switch -->
+	<!-- ungroup => Trigger -->
 	<channel-type id="ungroup">
-		<item-type>Switch</item-type>
+		<kind>trigger</kind>
 		<label>Ungroup</label>
-		<description>Disband current multiroom group (if master).</description>
-		<category>Switch</category>
-		<state readOnly="false">
-			<options>
-				<option value="OFF">Ready</option>
-			</options>
-		</state>
-		<autoUpdatePolicy>veto</autoUpdatePolicy>
+		<description>Disband current multiroom group (if master)</description>
 	</channel-type>
 
 	<!-- kickout => String -->
 	<channel-type id="kickout">
 		<item-type>String</item-type>
 		<label>Kick Out</label>
-		<description>Remove a slave from group by IP (if master).</description>
+		<description>Remove a slave from group by IP (if master)</description>
+		<state pattern="^$|^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$"/>
+		<autoUpdatePolicy>veto</autoUpdatePolicy>
 	</channel-type>
 
 	<!-- duration => readOnly Number:Time -->
@@ -318,6 +306,23 @@
 				<option value="UNKNOWN">Unknown</option>
 			</options>
 		</state>
+	</channel-type>
+
+	<!-- groupVolume => Dimmer -->
+	<channel-type id="groupVolume">
+		<item-type>Dimmer</item-type>
+		<label>Set Group Volume</label>
+		<description>Set volume level for all devices in the group</description>
+		<category>SoundVolume</category>
+		<state min="0" max="100" step="1" pattern="%d %%"/>
+	</channel-type>
+
+	<!-- groupMute => Switch -->
+	<channel-type id="groupMute">
+		<item-type>Switch</item-type>
+		<label>Set Group Mute</label>
+		<description>Set mute state for all devices in the group</description>
+		<category>SoundVolume</category>
 	</channel-type>
 
 </thing:thing-descriptions>
