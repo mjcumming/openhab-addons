@@ -93,8 +93,8 @@ public class BindingConstants {
     public static final String CHANNEL_KICKOUT = "kickout";
 
     // Multiroom Trigger Channels
-    public static final String CHANNEL_LEAVE = "leave#trigger";
-    public static final String CHANNEL_UNGROUP = "ungroup#trigger";
+    public static final String CHANNEL_LEAVE = "leave";
+    public static final String CHANNEL_UNGROUP = "ungroup";
 
     // UPnP Discovery Constants
     public static final String UPNP_DEVICE_TYPE = "urn:schemas-upnp-org:device:MediaRenderer:1";

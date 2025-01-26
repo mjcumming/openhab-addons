@@ -55,6 +55,14 @@ public class GroupManager {
     private final ThingRegistry thingRegistry;
     private final MultiroomState state;
 
+    private static final String GROUP_MULTIROOM = "multiroom";
+    private static final String CHANNEL_UNGROUP = "ungroup";
+    private static final String CHANNEL_LEAVE = "leave";
+    private static final String CHANNEL_GROUP_VOLUME = "groupVolume";
+    private static final String CHANNEL_GROUP_MUTE = "groupMute";
+    private static final String CHANNEL_KICKOUT = "kickout";
+    private static final String CHANNEL_JOIN = "join";
+
     public GroupManager(DeviceManager deviceManager, ThingRegistry thingRegistry) {
         this.deviceManager = deviceManager;
         this.thingRegistry = thingRegistry;
@@ -580,10 +588,6 @@ public class GroupManager {
             deviceManager.updateState(GROUP_MULTIROOM + "#" + CHANNEL_GROUP_VOLUME, new PercentType(0));
             deviceManager.updateState(GROUP_MULTIROOM + "#" + CHANNEL_GROUP_MUTE, OnOffType.OFF);
         }
-
-        // Ensure switches are OFF at startup/update
-        deviceManager.updateState(GROUP_MULTIROOM + "#" + CHANNEL_UNGROUP, OnOffType.OFF);
-        deviceManager.updateState(GROUP_MULTIROOM + "#" + CHANNEL_LEAVE, OnOffType.OFF);
     }
 
     private void updateMultiroomStatus() {
