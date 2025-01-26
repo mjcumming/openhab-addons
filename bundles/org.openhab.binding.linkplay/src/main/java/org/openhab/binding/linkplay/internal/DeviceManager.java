@@ -13,7 +13,6 @@
  */
 package org.openhab.binding.linkplay.internal;
 
-import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ScheduledExecutorService;
 
@@ -66,15 +65,6 @@ public class DeviceManager {
 
     private final DeviceState deviceState;
 
-    // Define playback mode mapping
-    private static final Map<Integer, String> PLAYBACK_MODES = Map.ofEntries(Map.entry(-1, "IDLE"),
-            Map.entry(0, "IDLE"), Map.entry(1, "BLUETOOTH"), Map.entry(2, "LINE-IN"), Map.entry(3, "OPTICAL"),
-            Map.entry(4, "COAXIAL"), Map.entry(10, "WIFI"), Map.entry(11, "SPOTIFY"), Map.entry(12, "AIRPLAY"),
-            Map.entry(13, "DLNA"), Map.entry(14, "MULTIROOM"), Map.entry(15, "USB"), Map.entry(16, "TF_CARD"),
-            Map.entry(17, "TIDAL"), Map.entry(18, "AMAZON"), Map.entry(19, "QPLAY"), Map.entry(20, "QOBUZ"),
-            Map.entry(21, "DEEZER"), Map.entry(22, "NAPSTER"), Map.entry(23, "TUNEIN"), Map.entry(24, "IHEARTRADIO"),
-            Map.entry(25, "CUSTOM"));
-
     private static final int OFFLINE_THRESHOLD = 3;
     private int communicationFailures = 0;
 
@@ -119,6 +109,26 @@ public class DeviceManager {
         }
 
         logger.debug("[{}] Additional features initialized", config.getDeviceName());
+    }
+
+    /**
+     * Get the current device state
+     * 
+     * @return The current device state
+     */
+    public DeviceState getDeviceState() {
+        return deviceState;
+    }
+
+    public GroupManager getGroupManager() {
+        return groupManager;
+    }
+
+    private boolean isMultiroomChannel(String channel) {
+        return channel.equals(BindingConstants.CHANNEL_JOIN) || channel.equals(BindingConstants.CHANNEL_LEAVE)
+                || channel.equals(BindingConstants.CHANNEL_UNGROUP) || channel.equals(BindingConstants.CHANNEL_KICKOUT)
+                || channel.equals(BindingConstants.CHANNEL_GROUP_VOLUME)
+                || channel.equals(BindingConstants.CHANNEL_GROUP_MUTE);
     }
 
     /**
@@ -197,6 +207,28 @@ public class DeviceManager {
                                 return result;
                             });
                             break;
+                        case "NEXT":
+                            future = httpManager.next().thenApply(result -> {
+                                if (result.isSuccess()) {
+                                    deviceState.setControl(BindingConstants.CONTROL_PLAY);
+                                    updateState(
+                                            BindingConstants.GROUP_PLAYBACK + "#" + BindingConstants.CHANNEL_CONTROL,
+                                            new StringType(BindingConstants.CONTROL_PLAY));
+                                }
+                                return result;
+                            });
+                            break;
+                        case "PREVIOUS":
+                            future = httpManager.previous().thenApply(result -> {
+                                if (result.isSuccess()) {
+                                    deviceState.setControl(BindingConstants.CONTROL_PLAY);
+                                    updateState(
+                                            BindingConstants.GROUP_PLAYBACK + "#" + BindingConstants.CHANNEL_CONTROL,
+                                            new StringType(BindingConstants.CONTROL_PLAY));
+                                }
+                                return result;
+                            });
+                            break;
                     }
                     break;
 
@@ -227,6 +259,28 @@ public class DeviceManager {
                     });
                     break;
 
+                case BindingConstants.CHANNEL_INPUT_SOURCE:
+                    if (command instanceof StringType) {
+                        String requestedSource = command.toString();
+                        String sourceCommand = BindingConstants.INPUT_SOURCE_COMMANDS.get(requestedSource);
+                        if (sourceCommand != null) {
+                            future = httpManager.setPlayMode(sourceCommand).thenApply(result -> {
+                                if (result.isSuccess()) {
+                                    deviceState.setInputSource(requestedSource);
+                                    updateState(
+                                            BindingConstants.GROUP_PLAYBACK + "#"
+                                                    + BindingConstants.CHANNEL_INPUT_SOURCE,
+                                            new StringType(requestedSource));
+                                }
+                                return result;
+                            });
+                        } else {
+                            logger.warn("[{}] Unsupported input source requested: {}", config.getDeviceName(),
+                                    requestedSource);
+                        }
+                    }
+                    break;
+
                 default:
                     logger.warn("[{}] Unhandled channel {} command {}", config.getDeviceName(), channelId, command);
                     break;
@@ -245,13 +299,6 @@ public class DeviceManager {
             // Create an error result for the exception case too
             future = CompletableFuture.completedFuture(CommandResult.error(e));
         }
-    }
-
-    private boolean isMultiroomChannel(String channel) {
-        return channel.equals(BindingConstants.CHANNEL_JOIN) || channel.equals(BindingConstants.CHANNEL_LEAVE)
-                || channel.equals(BindingConstants.CHANNEL_UNGROUP) || channel.equals(BindingConstants.CHANNEL_KICKOUT)
-                || channel.equals(BindingConstants.CHANNEL_GROUP_VOLUME)
-                || channel.equals(BindingConstants.CHANNEL_GROUP_MUTE);
     }
 
     /**
@@ -337,17 +384,61 @@ public class DeviceManager {
      */
     public void handleGetPlayerStatusResponse(JsonObject json) {
         try {
-            // Process mode/source using PLAYBACK_MODES map
             int modeInt = Integer.parseInt(getJsonString(json, "mode"));
-            String source = PLAYBACK_MODES.getOrDefault(modeInt, BindingConstants.SOURCE_UNKNOWN);
-            deviceState.setSource(source);
-            updateState(BindingConstants.GROUP_PLAYBACK + "#" + BindingConstants.CHANNEL_SOURCE,
-                    new StringType(source));
+
+            // Map the numeric mode to a string constant
+            String mode = switch (modeInt) {
+                case -1 -> BindingConstants.MODE_IDLE;
+                case 1 -> BindingConstants.MODE_AIRPLAY;
+                case 2 -> BindingConstants.MODE_DLNA;
+                case 10 -> BindingConstants.MODE_NETWORK;
+                case 21 -> BindingConstants.MODE_UDISK;
+                case 31 -> BindingConstants.MODE_SPOTIFY;
+                case 32 -> BindingConstants.MODE_TIDAL;
+                case 40 -> BindingConstants.MODE_LINE_IN;
+                case 41 -> BindingConstants.MODE_BLUETOOTH;
+                case 43 -> BindingConstants.MODE_OPTICAL;
+                case 45 -> BindingConstants.MODE_COAXIAL;
+                case 47 -> BindingConstants.MODE_LINE_IN_2;
+                case 51 -> BindingConstants.MODE_USB_DAC;
+                case 56 -> BindingConstants.MODE_OPTICAL_2;
+                case 57 -> BindingConstants.MODE_COAXIAL_2;
+                default -> BindingConstants.MODE_UNKNOWN;
+            };
+
+            // First update the read-only mode channel using PLAYBACK_MODES map
+            deviceState.setMode(mode);
+            updateState(BindingConstants.GROUP_PLAYBACK + "#" + BindingConstants.CHANNEL_MODE, new StringType(mode));
+
+            // Then map the mode to an input source if applicable
+            String inputSource = switch (mode) {
+                case "LINE_IN" -> BindingConstants.INPUT_LINE_IN;
+                case "LINE_IN_2" -> BindingConstants.INPUT_LINE_IN_2;
+                case "BLUETOOTH" -> BindingConstants.INPUT_BLUETOOTH;
+                case "OPTICAL" -> BindingConstants.INPUT_OPTICAL;
+                case "OPTICAL_2" -> BindingConstants.INPUT_OPTICAL_2;
+                case "COAXIAL" -> BindingConstants.INPUT_COAXIAL;
+                case "COAXIAL_2" -> BindingConstants.INPUT_COAXIAL_2;
+                case "USB_DAC" -> BindingConstants.INPUT_USB_DAC;
+                case "UDISK" -> BindingConstants.INPUT_UDISK;
+                case "NETWORK", "AIRPLAY", "DLNA", "SPOTIFY", "TIDAL" -> BindingConstants.INPUT_WIFI;
+                default -> BindingConstants.INPUT_UNKNOWN;
+            };
+
+            deviceState.setInputSource(inputSource);
+            updateState(BindingConstants.GROUP_PLAYBACK + "#" + BindingConstants.CHANNEL_INPUT_SOURCE,
+                    new StringType(inputSource));
+
+            logger.debug("[{}] Status updated: mode={}, input={} (raw={})", config.getDeviceName(), mode, inputSource,
+                    modeInt);
         } catch (NumberFormatException e) {
             logger.debug("[{}] Invalid mode value in JSON", config.getDeviceName());
-            deviceState.setSource(BindingConstants.SOURCE_UNKNOWN);
-            updateState(BindingConstants.GROUP_PLAYBACK + "#" + BindingConstants.CHANNEL_SOURCE,
-                    new StringType(BindingConstants.SOURCE_UNKNOWN));
+            deviceState.setMode(BindingConstants.MODE_UNKNOWN);
+            deviceState.setInputSource(BindingConstants.INPUT_UNKNOWN);
+            updateState(BindingConstants.GROUP_PLAYBACK + "#" + BindingConstants.CHANNEL_MODE,
+                    new StringType(BindingConstants.MODE_UNKNOWN));
+            updateState(BindingConstants.GROUP_PLAYBACK + "#" + BindingConstants.CHANNEL_INPUT_SOURCE,
+                    new StringType(BindingConstants.INPUT_UNKNOWN));
         }
 
         // Process status/control using control constants
@@ -517,19 +608,6 @@ public class DeviceManager {
 
     public LinkPlayThingHandler getThingHandler() {
         return thingHandler;
-    }
-
-    /**
-     * Get the current device state
-     * 
-     * @return The current device state
-     */
-    public DeviceState getDeviceState() {
-        return deviceState;
-    }
-
-    public GroupManager getGroupManager() {
-        return groupManager;
     }
 
     private void updateMetadata() {

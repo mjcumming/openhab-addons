@@ -44,13 +44,22 @@ public class DeviceState {
     private boolean repeat;
     private boolean shuffle;
     private @Nullable String source;
-    private @Nullable String control;
+    private String control = CONTROL_PAUSE;
 
     // Device info
     private @Nullable String deviceMac;
     private @Nullable String firmware;
 
+    private String inputSource = INPUT_UNKNOWN;
+
+    // Add mode field
+    private String mode = MODE_UNKNOWN;
+
     public DeviceState() {
+        // Initialize with defaults
+        this.mode = MODE_UNKNOWN;
+        this.inputSource = INPUT_UNKNOWN;
+        this.control = CONTROL_PAUSE;
         // Initialize default values in constructor
         this.trackTitle = "";
         this.trackArtist = "";
@@ -61,7 +70,6 @@ public class DeviceState {
         this.repeat = false;
         this.shuffle = false;
         this.source = SOURCE_UNKNOWN;
-        this.control = CONTROL_PAUSE;
         this.deviceMac = null;
         this.firmware = null;
         this.wifiSignalDbm = 0;
@@ -98,7 +106,6 @@ public class DeviceState {
         this.mute = mute;
     }
 
-    @Nullable
     public String getControl() {
         return control;
     }
@@ -207,12 +214,16 @@ public class DeviceState {
     }
 
     // Update setters
-    public void setTrackTitle(@Nullable String trackTitle) {
-        this.trackTitle = trackTitle != null ? trackTitle : "";
+    public void setTrackTitle(String title) {
+        if (!title.equals(this.trackTitle)) {
+            this.trackTitle = title;
+        }
     }
 
-    public void setTrackArtist(@Nullable String trackArtist) {
-        this.trackArtist = trackArtist != null ? trackArtist : "";
+    public void setTrackArtist(String artist) {
+        if (!artist.equals(this.trackArtist)) {
+            this.trackArtist = artist;
+        }
     }
 
     public void setTrackAlbum(@Nullable String trackAlbum) {
@@ -220,7 +231,7 @@ public class DeviceState {
     }
 
     public void setSource(@Nullable String source) {
-        this.source = source != null ? source : SOURCE_UNKNOWN;
+        this.inputSource = source != null ? source : INPUT_UNKNOWN;
     }
 
     public void setShuffle(boolean shuffle) {
@@ -229,5 +240,21 @@ public class DeviceState {
 
     public void setRepeat(boolean repeat) {
         this.repeat = repeat;
+    }
+
+    public String getInputSource() {
+        return inputSource;
+    }
+
+    public void setInputSource(String inputSource) {
+        this.inputSource = inputSource;
+    }
+
+    public String getMode() {
+        return mode;
+    }
+
+    public void setMode(String mode) {
+        this.mode = mode;
     }
 }

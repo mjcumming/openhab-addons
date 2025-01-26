@@ -30,7 +30,7 @@ public class BindingConstants {
 
     public static final String BINDING_ID = "linkplay";
 
-    // Thing Type UIDs - using mediastreamer
+    // Thing Type UIDs
     public static final ThingTypeUID THING_TYPE_MEDIASTREAMER = new ThingTypeUID(BINDING_ID, "mediastreamer");
     public static final Set<ThingTypeUID> SUPPORTED_THING_TYPES_UIDS = Collections.singleton(THING_TYPE_MEDIASTREAMER);
 
@@ -60,17 +60,18 @@ public class BindingConstants {
     public static final String GROUP_NETWORK = "network";
 
     // Playback Channels
-    public static final String CHANNEL_CONTROL = "control"; // PLAY/PAUSE commands
-    public static final String CHANNEL_TITLE = "title"; // Track title
-    public static final String CHANNEL_ARTIST = "artist"; // Track artist
-    public static final String CHANNEL_ALBUM = "album"; // Track album
-    public static final String CHANNEL_DURATION = "duration"; // Track duration (Number:Time)
-    public static final String CHANNEL_POSITION = "position"; // Current track position (Number:Time)
-    public static final String CHANNEL_VOLUME = "volume"; // Playback volume
-    public static final String CHANNEL_MUTE = "mute"; // Mute status
-    public static final String CHANNEL_REPEAT = "repeat"; // On/off repeat
-    public static final String CHANNEL_SHUFFLE = "shuffle"; // On/off shuffle
-    public static final String CHANNEL_SOURCE = "source"; // Audio source selection
+    public static final String CHANNEL_CONTROL = "control";
+    public static final String CHANNEL_TITLE = "title";
+    public static final String CHANNEL_ARTIST = "artist";
+    public static final String CHANNEL_ALBUM = "album";
+    public static final String CHANNEL_DURATION = "duration";
+    public static final String CHANNEL_POSITION = "position";
+    public static final String CHANNEL_VOLUME = "volume";
+    public static final String CHANNEL_MUTE = "mute";
+    public static final String CHANNEL_REPEAT = "repeat";
+    public static final String CHANNEL_SHUFFLE = "shuffle";
+    public static final String CHANNEL_INPUT_SOURCE = "input_source";
+    public static final String CHANNEL_MODE = "mode";
     public static final String CHANNEL_ALBUM_ART = "albumArt";
 
     // System Channels
@@ -102,43 +103,51 @@ public class BindingConstants {
     public static final String UPNP_MANUFACTURER = "LinkPlay";
     public static final String UPNP_DEVICE_TYPE_PREFIX = "urn:schemas-upnp-org:device:";
 
-    // Source states - must be defined before PLAYBACK_MODES map
-    public static final String SOURCE_IDLE = "IDLE";
-    public static final String SOURCE_AIRPLAY = "AIRPLAY";
-    public static final String SOURCE_DLNA = "DLNA";
-    public static final String SOURCE_NETWORK = "NETWORK";
-    public static final String SOURCE_USB_DISK = "USB_DISK";
-    public static final String SOURCE_HTTP_API = "HTTP_API";
-    public static final String SOURCE_SPOTIFY = "SPOTIFY";
-    public static final String SOURCE_LINE_IN = "LINE_IN";
-    public static final String SOURCE_LINE_IN_2 = "LINE_IN_2";
-    public static final String SOURCE_BLUETOOTH = "BLUETOOTH";
-    public static final String SOURCE_OPTICAL = "OPTICAL";
-    public static final String SOURCE_USB_DAC = "USB_DAC";
-    public static final String SOURCE_MULTIROOM = "MULTIROOM";
+    // Mode constants (read-only status)
+    public static final String MODE_UNKNOWN = "UNKNOWN";
+    public static final String MODE_IDLE = "IDLE";
+    public static final String MODE_AIRPLAY = "AIRPLAY";
+    public static final String MODE_DLNA = "DLNA";
+    public static final String MODE_SPOTIFY = "SPOTIFY";
+    public static final String MODE_TIDAL = "TIDAL";
+    public static final String MODE_NETWORK = "NETWORK";
+    public static final String MODE_LINE_IN = "LINE_IN";
+    public static final String MODE_LINE_IN_2 = "LINE_IN_2";
+    public static final String MODE_BLUETOOTH = "BLUETOOTH";
+    public static final String MODE_OPTICAL = "OPTICAL";
+    public static final String MODE_OPTICAL_2 = "OPTICAL_2";
+    public static final String MODE_COAXIAL = "COAXIAL";
+    public static final String MODE_COAXIAL_2 = "COAXIAL_2";
+    public static final String MODE_USB_DAC = "USB_DAC";
+    public static final String MODE_UDISK = "UDISK";
+
+    // Input source constants (controllable)
+    public static final String INPUT_UNKNOWN = "UNKNOWN";
+    public static final String INPUT_WIFI = "WIFI";
+    public static final String INPUT_LINE_IN = "LINE_IN";
+    public static final String INPUT_LINE_IN_2 = "LINE_IN_2";
+    public static final String INPUT_BLUETOOTH = "BLUETOOTH";
+    public static final String INPUT_OPTICAL = "OPTICAL";
+    public static final String INPUT_OPTICAL_2 = "OPTICAL_2";
+    public static final String INPUT_COAXIAL = "COAXIAL";
+    public static final String INPUT_COAXIAL_2 = "COAXIAL_2";
+    public static final String INPUT_USB_DAC = "USB_DAC";
+    public static final String INPUT_UDISK = "UDISK";
+
+    // Map of input sources to API commands
+    public static final Map<String, String> INPUT_SOURCE_COMMANDS = Map.ofEntries(Map.entry(INPUT_WIFI, "wifi"),
+            Map.entry(INPUT_LINE_IN, "line-in"), Map.entry(INPUT_BLUETOOTH, "bluetooth"),
+            Map.entry(INPUT_OPTICAL, "optical"), Map.entry(INPUT_COAXIAL, "co-axial"),
+            Map.entry(INPUT_LINE_IN_2, "line-in2"), Map.entry(INPUT_USB_DAC, "PCUSB"), Map.entry(INPUT_UDISK, "udisk"));
+
+    // Playback control constants
+    public static final String CONTROL_PLAY = "play";
+    public static final String CONTROL_PAUSE = "pause";
+    public static final String CONTROL_STOP = "stop";
+    public static final String CONTROL_LOAD = "load";
+
+    // Source constants (legacy - for backward compatibility)
     public static final String SOURCE_UNKNOWN = "UNKNOWN";
-
-    // Source/Mode mappings - after source constants
-    public static final Map<Integer, String> PLAYBACK_MODES = Map.ofEntries(Map.entry(0, SOURCE_IDLE), // Idling
-            Map.entry(1, SOURCE_AIRPLAY), // AirPlay streaming
-            Map.entry(2, SOURCE_DLNA), // DLNA streaming
-            Map.entry(10, SOURCE_NETWORK), // Network content
-            Map.entry(11, SOURCE_USB_DISK), // USB disk
-            Map.entry(20, SOURCE_HTTP_API), // HTTP API
-            Map.entry(31, SOURCE_SPOTIFY), // Spotify Connect
-            Map.entry(40, SOURCE_LINE_IN), // Line-In
-            Map.entry(41, SOURCE_BLUETOOTH), // Bluetooth
-            Map.entry(43, SOURCE_OPTICAL), // Optical
-            Map.entry(47, SOURCE_LINE_IN_2), // Line-In #2
-            Map.entry(51, SOURCE_USB_DAC), // USB DAC
-            Map.entry(99, SOURCE_MULTIROOM) // Multiroom Guest
-    );
-
-    // Control states
-    public static final String CONTROL_PLAY = "PLAY";
-    public static final String CONTROL_PAUSE = "PAUSE";
-    public static final String CONTROL_STOP = "STOP";
-    public static final String CONTROL_LOAD = "LOAD";
 
     private BindingConstants() {
         // Constants class - prevent instantiation

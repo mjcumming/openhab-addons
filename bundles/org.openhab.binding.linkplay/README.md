@@ -21,6 +21,8 @@ The binding supports automatic discovery via UPnP/SSDP. Discovered devices will 
 - The device's friendly name as the label
 - The device's IP address and basic properties
 
+**Important**: Devices must not be in a multiroom group during discovery, or only the master device will be discovered. After discovery, devices can be grouped as needed.
+
 ### Manual Configuration
 
 ```java
@@ -47,14 +49,15 @@ Thing linkplay:device:living [ ipAddress="192.168.1.100" ]
 | title      | String         | Current track title                          |
 | artist     | String         | Current track artist                         |
 | album      | String         | Current track album                          |
-| albumArt   | String         | URL of album artwork                         |
+| albumArt   | String         | URL of album artwork (via MusicBrainz/Cover Art Archive) |
 | duration   | Number:Time    | Track duration in seconds                    |
 | position   | Number:Time    | Current playback position in seconds         |
 | volume     | Dimmer        | Volume control (0-100%)                      |
 | mute       | Switch        | Mute control                                 |
 | repeat     | Switch        | Repeat mode                                  |
 | shuffle    | Switch        | Shuffle mode                                 |
-| source     | String        | Audio source selection                       |
+| mode       | String        | Current playback mode (read-only)            |
+| input_source | String      | Input source selection (controllable)        |
 
 ### System Group (`system`)
 
@@ -85,6 +88,53 @@ Thing linkplay:device:living [ ipAddress="192.168.1.100" ]
 | groupVolume | Dimmer    | Group-wide volume control                      |
 | groupMute   | Switch    | Group-wide mute control                        |
 
+### Playback Modes and Input Sources
+
+The binding distinguishes between playback modes (read-only status) and input sources (controllable):
+
+#### Playback Modes (`playback#mode`)
+
+The device reports its current mode through this read-only channel:
+
+| Mode          | Description               |
+|---------------|---------------------------|
+| IDLE          | No Active Source         |
+| AIRPLAY       | Apple AirPlay            |
+| DLNA          | DLNA Streaming           |
+| NETWORK       | Network Streaming        |
+| SPOTIFY       | Spotify Connect          |
+| TIDAL         | Tidal Streaming          |
+| LINE_IN       | Line In                  |
+| LINE_IN_2     | Secondary Line In        |
+| BLUETOOTH     | Bluetooth                |
+| OPTICAL       | Optical Input            |
+| OPTICAL_2     | Secondary Optical        |
+| COAXIAL       | Coaxial Input           |
+| COAXIAL_2     | Secondary Coaxial        |
+| USB_DAC       | USB DAC Input            |
+| UDISK         | USB Storage Device       |
+| UNKNOWN       | Unknown Mode             |
+
+#### Input Sources (`playback#input_source`)
+
+Users can control the device's input source through this channel:
+
+| Value         | Description                |
+|--------------|----------------------------|
+| WIFI         | Network (WiFi) Streaming   |
+| LINE_IN      | Line In                    |
+| LINE_IN_2    | Secondary Line In          |
+| BLUETOOTH    | Bluetooth                  |
+| OPTICAL      | Optical Input              |
+| OPTICAL_2    | Secondary Optical          |
+| COAXIAL      | Coaxial Input             |
+| COAXIAL_2    | Secondary Coaxial          |
+| USB_DAC      | USB DAC Input             |
+| UDISK        | USB Storage Device         |
+| UNKNOWN      | Unknown Source             |
+
+Note: Available inputs vary by device model. The mode channel provides detailed status about the current playback source (including streaming services), while the input_source channel allows switching between physical inputs and the network streaming mode.
+
 ## Full Example
 
 ### Thing Configuration
@@ -97,10 +147,10 @@ Thing linkplay:device:kitchen "Kitchen Speaker"     [ ipAddress="192.168.1.101",
 ### Items Configuration
 
 ```java
-// Playback Controls
-Player LivingRoom_Control  "Living Room Control"  { channel="linkplay:device:living:playback#control" }
-Dimmer LivingRoom_Volume  "Living Room Volume"   { channel="linkplay:device:living:playback#volume" }
-Switch LivingRoom_Mute    "Living Room Mute"     { channel="linkplay:device:living:playback#mute" }
+// Playback Status and Control
+String LivingRoom_Mode    "Current Mode [%s]"     { channel="linkplay:device:living:playback#mode" }
+String LivingRoom_Source  "Input Source [%s]"     { channel="linkplay:device:living:playback#input_source" }
+Player LivingRoom_Control "Playback Control"      { channel="linkplay:device:living:playback#control" }
 
 // Now Playing Information
 String LivingRoom_Title   "Now Playing [%s]"     { channel="linkplay:device:living:playback#title" }
@@ -118,9 +168,14 @@ Switch Kitchen_Leave      "Leave Group"          { channel="linkplay:device:kitc
 ```perl
 sitemap linkplay label="LinkPlay Audio" {
     Frame label="Living Room" {
+        Text    item=LivingRoom_Mode
+        Switch  item=LivingRoom_Source mappings=[
+            'WIFI'='Network',
+            'LINE_IN'='Line In',
+            'BLUETOOTH'='Bluetooth',
+            'OPTICAL'='Optical'
+        ]
         Default item=LivingRoom_Control
-        Slider  item=LivingRoom_Volume
-        Switch  item=LivingRoom_Mute
         Text    item=LivingRoom_Title
         Text    item=LivingRoom_Artist
         Text    item=LivingRoom_Album
@@ -136,8 +191,10 @@ sitemap linkplay label="LinkPlay Audio" {
 
 ## Notes
 
-- **UPnP Events**: In a multiroom group, only the master device broadcasts UPnP events. Slave devices are controlled through the master.
+- **Device Status**: The binding uses HTTP polling to track player and multiroom states, as UPnP events are not consistently implemented across LinkPlay devices.
+- **Extended Control**: The UPnP Control binding can be used alongside this binding for additional playlist management features.
 - **Volume Control**: Individual slave volumes can be set, but group volume changes from the master will override them.
+- **Album Artwork**: Album art URLs are retrieved using the MusicBrainz/Cover Art Archive service based on track metadata.
 - **Firmware Variations**: Some LinkPlay devices may have older firmware that doesn't support all features.
 - **Network Stability**: A stable network connection is important for reliable multiroom synchronization.
 
@@ -159,13 +216,15 @@ sitemap linkplay label="LinkPlay Audio" {
 
 ## Developer Notes
 
-The binding uses multiple communication methods:
+The binding primarily uses:
 
-- HTTP API for primary control and status
-- UPnP for device discovery and real-time events
-- Periodic polling as a fallback mechanism
+- HTTP API for device control, status monitoring, and multiroom management
+- UPnP/SSDP for initial device discovery only
+- Periodic HTTP polling for reliable state tracking
+- MusicBrainz/Cover Art Archive API for enhanced metadata
+
+While some LinkPlay devices offer UART interfaces, this is not consistently available across the device ecosystem and is not utilized by this binding.
 
 For detailed API documentation, see:
 
 - [LinkPlay HTTP API](https://developer.arylic.com/httpapi/#http-api)
-- [OpenHAB Binding Development](https://www.openhab.org/docs/developer/bindings/)

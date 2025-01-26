@@ -166,6 +166,10 @@ public class HttpManager {
         return httpClient.sendRequest(config.getIpAddress(), "setPlayerCmd:vol--");
     }
 
+    public CompletableFuture<CommandResult> setPlaybackMode(String mode) {
+        return httpClient.sendRequest(config.getIpAddress(), "setPlayerCmd:switchmode:" + mode);
+    }
+
     public CompletableFuture<CommandResult> setMute(boolean mute) {
         return httpClient.sendRequest(config.getIpAddress(), "setPlayerCmd:mute:" + (mute ? "1" : "0"));
     }
@@ -189,15 +193,14 @@ public class HttpManager {
     // ------------------------------------------------------------------------
     // Input Source Control Methods
     // ------------------------------------------------------------------------
-
-    public CompletableFuture<CommandResult> switchSource(String source) {
-        if (!source.matches("^(wifi|line-in|bluetooth|optical|co-axial|line-in2|udisk|PCUSB)$")) {
-            logger.warn(
-                    "Invalid source: {}. Must be one of: wifi, line-in, bluetooth, optical, co-axial, line-in2, udisk, PCUSB",
-                    source);
-            return CompletableFuture.completedFuture(CommandResult.error("Invalid source"));
-        }
-        return httpClient.sendRequest(config.getIpAddress(), "setPlayerCmd:switchmode:" + source);
+    /**
+     * Sets the playback mode of the device
+     *
+     * @param mode The mode to set (e.g., "wifi", "line-in", "bluetooth")
+     * @return A CompletableFuture containing the command result
+     */
+    public CompletableFuture<CommandResult> setPlayMode(String mode) {
+        return httpClient.sendRequest(config.getIpAddress(), "setPlayerCmd:switchmode:" + mode);
     }
 
     // ------------------------------------------------------------------------

@@ -67,7 +67,8 @@
 			<channel id="mute" typeId="system.mute"/>
 			<channel id="repeat" typeId="repeat"/>
 			<channel id="shuffle" typeId="shuffle"/>
-			<channel id="source" typeId="source"/>
+			<channel id="input_source" typeId="input_source"/>
+			<channel id="mode" typeId="mode"/>
 		</channels>
 	</channel-group-type>
 
@@ -129,18 +130,21 @@
 		<state readOnly="false"/>
 	</channel-type>
 
-	<!-- "source" => String with enumerations -->
-	<channel-type id="source">
+	<!-- "input_source" => String with enumerations -->
+	<channel-type id="input_source">
 		<item-type>String</item-type>
-		<label>Source</label>
-		<description>Current audio source.</description>
+		<label>Input Source</label>
+		<description>Select audio input source</description>
 		<state>
 			<options>
-				<option value="airplay">AirPlay</option>
-				<option value="spotify">Spotify</option>
-				<option value="dlna">DLNA</option>
-				<option value="line-in">Line In</option>
-				<option value="bluetooth">Bluetooth</option>
+				<option value="WIFI">Network (WiFi)</option>
+				<option value="LINE_IN">Line In</option>
+				<option value="LINE_IN_2">Line In 2</option>
+				<option value="BLUETOOTH">Bluetooth</option>
+				<option value="OPTICAL">Optical</option>
+				<option value="COAXIAL">Coaxial</option>
+				<option value="USB_DAC">USB DAC</option>
+				<option value="UDISK">USB Storage</option>
 			</options>
 		</state>
 	</channel-type>
@@ -293,6 +297,27 @@
 		<label>Position</label>
 		<description>Current playback position in seconds</description>
 		<state readOnly="true" pattern="%d s"/>
+	</channel-type>
+
+	<!-- mode => readOnly String -->
+	<channel-type id="mode">
+		<item-type>String</item-type>
+		<label>Playback Mode</label>
+		<description>Current playback mode status</description>
+		<state readOnly="true">
+			<options>
+				<option value="IDLE">Idle</option>
+				<option value="AIRPLAY">AirPlay</option>
+				<option value="DLNA">DLNA</option>
+				<option value="NETWORK">Network</option>
+				<option value="SPOTIFY">Spotify</option>
+				<option value="LINE_IN">Line In</option>
+				<option value="BLUETOOTH">Bluetooth</option>
+				<option value="OPTICAL">Optical</option>
+				<option value="MULTIROOM">Multiroom</option>
+				<option value="UNKNOWN">Unknown</option>
+			</options>
+		</state>
 	</channel-type>
 
 </thing:thing-descriptions>
