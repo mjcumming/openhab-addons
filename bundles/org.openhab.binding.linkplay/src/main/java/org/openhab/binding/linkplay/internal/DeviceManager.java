@@ -38,6 +38,7 @@ import org.openhab.core.thing.ThingRegistry;
 import org.openhab.core.thing.ThingStatus;
 import org.openhab.core.thing.ThingStatusDetail;
 import org.openhab.core.types.Command;
+import org.openhab.core.types.RefreshType;
 import org.openhab.core.types.State;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -143,6 +144,12 @@ public class DeviceManager {
         String channel = parts.length > 1 ? parts[1] : channelId;
 
         logger.trace("[{}] Handling command {} for channel {}", config.getDeviceName(), command, channelId);
+
+        // Handle REFRESH command first
+        if (command instanceof RefreshType) {
+            handleRefreshCommand(channel);
+            return;
+        }
 
         // Handle multiroom commands through the group manager
         if (BindingConstants.GROUP_MULTIROOM.equals(group) || isMultiroomChannel(channel)) {
@@ -298,6 +305,47 @@ public class DeviceManager {
                     e.getMessage());
             // Create an error result for the exception case too
             future = CompletableFuture.completedFuture(CommandResult.error(e));
+        }
+    }
+
+    /**
+     * Handle REFRESH commands for all channels
+     */
+    private void handleRefreshCommand(String channel) {
+        switch (channel) {
+            // Playback channels
+            case BindingConstants.CHANNEL_TITLE:
+            case BindingConstants.CHANNEL_ARTIST:
+            case BindingConstants.CHANNEL_ALBUM:
+            case BindingConstants.CHANNEL_ALBUM_ART:
+            case BindingConstants.CHANNEL_DURATION:
+            case BindingConstants.CHANNEL_POSITION:
+            case BindingConstants.CHANNEL_VOLUME:
+            case BindingConstants.CHANNEL_MUTE:
+            case BindingConstants.CHANNEL_CONTROL:
+            case BindingConstants.CHANNEL_MODE:
+                httpManager.getPlayerStatus();
+                break;
+
+            // System channels
+            case BindingConstants.CHANNEL_DEVICE_NAME:
+            case BindingConstants.CHANNEL_FIRMWARE:
+            case BindingConstants.CHANNEL_MAC_ADDRESS:
+            case BindingConstants.CHANNEL_WIFI_SIGNAL:
+                httpManager.getStatusEx();
+                break;
+
+            // Multiroom channels handled by GroupManager
+            case BindingConstants.CHANNEL_ROLE:
+            case BindingConstants.CHANNEL_MASTER_IP:
+            case BindingConstants.CHANNEL_SLAVE_IPS:
+            case BindingConstants.CHANNEL_GROUP_NAME:
+                groupManager.updateMultiroomStatus();
+                break;
+
+            default:
+                logger.debug("[{}] Unhandled REFRESH command for channel: {}", config.getDeviceName(), channel);
+                break;
         }
     }
 

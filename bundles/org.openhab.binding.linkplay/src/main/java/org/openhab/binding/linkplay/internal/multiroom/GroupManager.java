@@ -18,8 +18,10 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Function;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
@@ -33,6 +35,7 @@ import org.openhab.core.library.types.StringType;
 import org.openhab.core.thing.Thing;
 import org.openhab.core.thing.ThingRegistry;
 import org.openhab.core.types.Command;
+import org.openhab.core.types.RefreshType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -75,6 +78,12 @@ public class GroupManager {
     public void handleCommand(String channelId, Command command) {
         // Extract base channel name for trigger channels
         String baseChannel = channelId.contains("#") ? channelId.split("#")[0] : channelId;
+
+        // Handle REFRESH commands first
+        if (command instanceof RefreshType) {
+            handleRefreshCommand(baseChannel);
+            return;
+        }
 
         switch (baseChannel) {
             case CHANNEL_JOIN:
@@ -230,131 +239,112 @@ public class GroupManager {
 
             case CHANNEL_GROUP_VOLUME:
                 if (command instanceof PercentType) {
-                    int volume = ((PercentType) command).intValue();
-                    if (!state.isMaster()) {
-                        logger.debug("[{}] Cannot set group volume - device is not master",
-                                deviceManager.getConfig().getDeviceName());
-                        return;
-                    }
-
-                    List<CompletableFuture<CommandResult>> volumeCommands = new ArrayList<>();
-
-                    // Add master volume command
-                    volumeCommands.add(deviceManager.getHttpManager().setVolume(volume));
-
-                    // Add slave volume commands - use standard volume command instead of slave-specific
-                    for (String slaveIP : state.getSlaveIPs().split(",")) {
-                        if (!slaveIP.isEmpty()) {
-                            Thing slaveThing = findThingByIP(slaveIP);
-                            if (slaveThing != null
-                                    && slaveThing.getHandler() instanceof LinkPlayThingHandler slaveHandler) {
-                                DeviceManager slaveDeviceManager = slaveHandler.getDeviceManager();
-                                if (slaveDeviceManager != null) {
-                                    volumeCommands.add(slaveDeviceManager.getHttpManager().setVolume(volume));
-                                }
-                            }
-                        }
-                    }
-
-                    // Wait for all volume commands to complete
-                    CompletableFuture.allOf(volumeCommands.toArray(new CompletableFuture[0])).thenAccept(v -> {
-                        boolean allSuccess = true;
-                        List<String> failures = new ArrayList<>();
-
-                        // Check results
-                        for (CompletableFuture<CommandResult> future : volumeCommands) {
-                            try {
-                                CommandResult result = future.get();
-                                if (!result.isSuccess()) {
-                                    allSuccess = false;
-                                    failures.add(result.getErrorMessage());
-                                }
-                            } catch (Exception e) {
-                                allSuccess = false;
-                                String message = e.getMessage();
-                                failures.add(message != null ? message : e.getClass().getSimpleName());
-                            }
-                        }
-
-                        if (allSuccess) {
-                            deviceManager.updateState(GROUP_MULTIROOM + "#" + CHANNEL_GROUP_VOLUME,
-                                    new PercentType(volume));
-                            logger.debug("[{}] Successfully set group volume to {}",
-                                    deviceManager.getConfig().getDeviceName(), volume);
-                        } else {
-                            logger.warn("[{}] Failed to set group volume. Errors: {}",
-                                    deviceManager.getConfig().getDeviceName(), String.join(", ", failures));
-                        }
-                    });
+                    handleGroupVolumeCommand((PercentType) command);
                 }
                 break;
 
             case CHANNEL_GROUP_MUTE:
                 if (command instanceof OnOffType) {
-                    boolean mute = command == OnOffType.ON;
-                    if (!state.isMaster()) {
-                        logger.debug("[{}] Cannot set group mute - device is not master",
-                                deviceManager.getConfig().getDeviceName());
-                        return;
-                    }
-
-                    List<CompletableFuture<CommandResult>> muteCommands = new ArrayList<>();
-
-                    // Add master mute command
-                    muteCommands.add(deviceManager.getHttpManager().setMute(mute));
-
-                    // Add slave mute commands - use standard mute command instead of slave-specific
-                    for (String slaveIP : state.getSlaveIPs().split(",")) {
-                        if (!slaveIP.isEmpty()) {
-                            Thing slaveThing = findThingByIP(slaveIP);
-                            if (slaveThing != null
-                                    && slaveThing.getHandler() instanceof LinkPlayThingHandler slaveHandler) {
-                                DeviceManager slaveDeviceManager = slaveHandler.getDeviceManager();
-                                if (slaveDeviceManager != null) {
-                                    muteCommands.add(slaveDeviceManager.getHttpManager().setMute(mute));
-                                }
-                            }
-                        }
-                    }
-
-                    // Wait for all mute commands to complete
-                    CompletableFuture.allOf(muteCommands.toArray(new CompletableFuture[0])).thenAccept(v -> {
-                        boolean allSuccess = true;
-                        List<String> failures = new ArrayList<>();
-
-                        // Check results
-                        for (CompletableFuture<CommandResult> future : muteCommands) {
-                            try {
-                                CommandResult result = future.get();
-                                if (!result.isSuccess()) {
-                                    allSuccess = false;
-                                    failures.add(result.getErrorMessage());
-                                }
-                            } catch (Exception e) {
-                                allSuccess = false;
-                                String message = e.getMessage();
-                                failures.add(message != null ? message : e.getClass().getSimpleName());
-                            }
-                        }
-
-                        if (allSuccess) {
-                            deviceManager.updateState(GROUP_MULTIROOM + "#" + CHANNEL_GROUP_MUTE, OnOffType.from(mute));
-                            logger.debug("[{}] Successfully set group mute to {}",
-                                    deviceManager.getConfig().getDeviceName(), mute);
-                        } else {
-                            logger.warn("[{}] Failed to set group mute. Errors: {}",
-                                    deviceManager.getConfig().getDeviceName(), String.join(", ", failures));
-                        }
-                    });
+                    handleGroupMuteCommand((OnOffType) command);
                 }
                 break;
         }
     }
 
     /**
+     * Handle REFRESH commands for multiroom channels
+     */
+    private void handleRefreshCommand(String channel) {
+        switch (channel) {
+            case CHANNEL_GROUP_VOLUME:
+            case CHANNEL_GROUP_MUTE:
+                if (state.isMaster()) {
+                    handleGroupVolumeAndMuteRefresh();
+                }
+                break;
+
+            case CHANNEL_ROLE:
+            case CHANNEL_MASTER_IP:
+            case CHANNEL_SLAVE_IPS:
+            case CHANNEL_GROUP_NAME:
+                // These channels are updated together via device status
+                updateMultiroomStatus();
+                break;
+
+            default:
+                logger.debug("[{}] Unhandled multiroom REFRESH command for channel: {}",
+                        deviceManager.getConfig().getDeviceName(), channel);
+                break;
+        }
+    }
+
+    /**
+     * Handle group volume and mute refresh from a single player status query
+     */
+    private void handleGroupVolumeAndMuteRefresh() {
+        // For masters, get current status of all devices
+        List<CompletableFuture<CommandResult>> statusQueries = new ArrayList<>();
+
+        // Add master status query
+        statusQueries.add(deviceManager.getHttpManager().getPlayerStatus());
+
+        // Add slave status queries
+        for (String slaveIP : state.getSlaveIPs().split(",")) {
+            if (!slaveIP.isEmpty()) {
+                Thing slaveThing = findThingByIP(slaveIP);
+                if (slaveThing != null && slaveThing.getHandler() instanceof LinkPlayThingHandler slaveHandler) {
+                    DeviceManager slaveDeviceManager = slaveHandler.getDeviceManager();
+                    if (slaveDeviceManager != null) {
+                        statusQueries.add(slaveDeviceManager.getHttpManager().getPlayerStatus());
+                    }
+                }
+            }
+        }
+
+        // Process all status queries
+        CompletableFuture.allOf(statusQueries.toArray(new CompletableFuture[0])).thenAccept(v -> {
+            int maxVolume = 0;
+            boolean allMuted = true;
+
+            for (CompletableFuture<CommandResult> future : statusQueries) {
+                try {
+                    CommandResult result = future.get();
+                    if (!result.isSuccess()) {
+                        continue;
+                    }
+
+                    @Nullable
+                    JsonObject response = result.getResponse();
+                    if (response == null) {
+                        continue;
+                    }
+
+                    // Get volume and mute from player status
+                    if (response.has("vol")) {
+                        maxVolume = Math.max(maxVolume, response.get("vol").getAsInt());
+                    }
+                    if (response.has("mute")) {
+                        allMuted &= "1".equals(response.get("mute").getAsString());
+                    }
+                } catch (Exception e) {
+                    logger.warn("[{}] Error getting player status during REFRESH: {}",
+                            deviceManager.getConfig().getDeviceName(), e.getMessage());
+                }
+            }
+
+            // Update both group volume and mute states
+            deviceManager.updateState(GROUP_MULTIROOM + "#" + CHANNEL_GROUP_VOLUME, new PercentType(maxVolume));
+            deviceManager.updateState(GROUP_MULTIROOM + "#" + CHANNEL_GROUP_MUTE, OnOffType.from(allMuted));
+        });
+    }
+
+    /**
      * Process device status updates for multiroom functionality
      */
-    public void handleDeviceStatus(JsonObject status) {
+    public void handleDeviceStatus(@Nullable JsonObject status) {
+        if (status == null) {
+            return;
+        }
         boolean isGrouped = status.has("group") && status.get("group").getAsInt() == 1;
 
         if (isGrouped) {
@@ -590,16 +580,16 @@ public class GroupManager {
         }
     }
 
-    private void updateMultiroomStatus() {
-        // Only use this method when we need to force a full status update
-        deviceManager.getHttpManager().getSlaveList().thenAccept(result -> {
-            if (result.isSuccess()) {
-                JsonObject response = result.getResponse();
-                if (response != null) {
-                    handleDeviceStatus(response);
-                }
+    /**
+     * Update multiroom status via getStatusEx command
+     */
+    public void updateMultiroomStatus() {
+        deviceManager.getHttpManager().getStatusEx().thenAccept(result -> {
+            JsonObject response = result.getResponse();
+            if (result.isSuccess() && response != null) {
+                handleDeviceStatus(response);
             } else {
-                logger.warn("[{}] Failed to get slave list: {}", deviceManager.getConfig().getDeviceName(),
+                logger.warn("[{}] Failed to update multiroom status: {}", deviceManager.getConfig().getDeviceName(),
                         result.getErrorMessage());
             }
         });
@@ -622,5 +612,125 @@ public class GroupManager {
             }
         }
         return null;
+    }
+
+    /**
+     * Utility method to execute a command on all devices in a group
+     */
+    private void executeGroupCommand(List<CompletableFuture<CommandResult>> commands, String channelSuffix,
+            Function<CommandResult, Optional<Boolean>> resultProcessor) {
+        CompletableFuture.allOf(commands.toArray(new CompletableFuture[0])).thenAccept(v -> {
+            boolean allSuccess = true;
+            List<String> failures = new ArrayList<>();
+
+            // Process results
+            Optional<Boolean> finalState = Optional.empty();
+            for (CompletableFuture<CommandResult> future : commands) {
+                try {
+                    CommandResult result = future.get();
+                    if (!result.isSuccess()) {
+                        allSuccess = false;
+                        failures.add(result.getErrorMessage());
+                    } else {
+                        @Nullable
+                        JsonObject response = result.getResponse();
+                        if (response != null) {
+                            Optional<Boolean> state = resultProcessor.apply(result);
+                            if (state.isPresent()) {
+                                finalState = finalState.isPresent() ? Optional.of(finalState.get() && state.get())
+                                        : state;
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    allSuccess = false;
+                    String message = e.getMessage();
+                    failures.add(message != null ? message : e.getClass().getSimpleName());
+                }
+            }
+
+            if (allSuccess && finalState.isPresent()) {
+                deviceManager.updateState(GROUP_MULTIROOM + "#" + channelSuffix, OnOffType.from(finalState.get()));
+                logger.debug("[{}] Successfully executed group command for {}",
+                        deviceManager.getConfig().getDeviceName(), channelSuffix);
+            } else {
+                logger.warn("[{}] Failed to execute group command. Errors: {}",
+                        deviceManager.getConfig().getDeviceName(), String.join(", ", failures));
+            }
+        });
+    }
+
+    /**
+     * Utility method to collect commands for all devices in a group
+     */
+    private List<CompletableFuture<CommandResult>> collectGroupCommands(
+            Function<DeviceManager, CompletableFuture<CommandResult>> commandSupplier) {
+        List<CompletableFuture<CommandResult>> commands = new ArrayList<>();
+
+        // Add master command
+        commands.add(commandSupplier.apply(deviceManager));
+
+        // Add slave commands
+        for (String slaveIP : state.getSlaveIPs().split(",")) {
+            if (!slaveIP.isEmpty()) {
+                Thing slaveThing = findThingByIP(slaveIP);
+                if (slaveThing != null && slaveThing.getHandler() instanceof LinkPlayThingHandler slaveHandler) {
+                    DeviceManager slaveDeviceManager = slaveHandler.getDeviceManager();
+                    if (slaveDeviceManager != null) {
+                        commands.add(commandSupplier.apply(slaveDeviceManager));
+                    }
+                }
+            }
+        }
+
+        return commands;
+    }
+
+    /**
+     * Handle group volume command
+     */
+    private void handleGroupVolumeCommand(PercentType command) {
+        if (!state.isMaster()) {
+            logger.debug("[{}] Cannot set group volume - device is not master",
+                    deviceManager.getConfig().getDeviceName());
+            return;
+        }
+
+        int volume = command.intValue();
+        List<CompletableFuture<CommandResult>> volumeCommands = collectGroupCommands(
+                dm -> dm.getHttpManager().setVolume(volume));
+
+        executeGroupCommand(volumeCommands, CHANNEL_GROUP_VOLUME, result -> {
+            @Nullable
+            JsonObject response = result.getResponse();
+            if (response != null && response.has("vol")) {
+                return Optional.of(response.get("vol").getAsInt() == volume);
+            }
+            return Optional.empty();
+        });
+    }
+
+    /**
+     * Handle group mute command
+     */
+    private void handleGroupMuteCommand(OnOffType command) {
+        if (!state.isMaster()) {
+            logger.debug("[{}] Cannot set group mute - device is not master",
+                    deviceManager.getConfig().getDeviceName());
+            return;
+        }
+
+        boolean mute = command == OnOffType.ON;
+        List<CompletableFuture<CommandResult>> muteCommands = collectGroupCommands(
+                dm -> dm.getHttpManager().setMute(mute));
+
+        executeGroupCommand(muteCommands, CHANNEL_GROUP_MUTE, result -> {
+            @Nullable
+            JsonObject response = result.getResponse();
+            if (response != null && response.has("mute")) {
+                return Optional.of(response.get("mute").getAsInt() == 1);
+            }
+            return Optional.empty();
+        });
     }
 }
