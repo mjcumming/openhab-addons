@@ -46,10 +46,23 @@ import org.slf4j.LoggerFactory;
 import com.google.gson.JsonObject;
 
 /**
- * DeviceManager that relies on the HttpManager for
- * all polling and JSON parsing. It updates channels or Thing status
- * based on callbacks from HttpManager and UpnpManager.
+ * The {@link DeviceManager} is the central coordinator for a LinkPlay audio device.
+ * It manages the device's lifecycle and state, coordinating between different subsystems:
+ * <ul>
+ * <li>HTTP Manager - Primary communication for device control and status polling</li>
+ * <li>Group Manager - Handles multiroom audio grouping functionality</li>
+ * <li>UART Manager - Optional serial communication support</li>
+ * <li>Metadata Service - Enriches audio playback with additional metadata</li>
+ * </ul>
  * 
+ * Key responsibilities:
+ * <ul>
+ * <li>Maintains device state and synchronizes with OpenHAB channels</li>
+ * <li>Routes commands to appropriate subsystems</li>
+ * <li>Monitors device connectivity and health</li>
+ * <li>Coordinates metadata enrichment for audio content</li>
+ * </ul>
+ *
  * @author Michael Cumming - Initial contribution
  */
 @NonNullByDefault
@@ -69,6 +82,17 @@ public class DeviceManager {
     private static final int OFFLINE_THRESHOLD = 3;
     private int communicationFailures = 0;
 
+    /**
+     * Creates a new DeviceManager instance for a LinkPlay device.
+     * Initializes all required subsystems but does not start communication.
+     *
+     * @param thingHandler The LinkPlay thing handler this manager is associated with
+     * @param config The binding configuration for this device
+     * @param httpClient The HTTP client for device communication
+     * @param upnpIOService The UPnP I/O service for device discovery
+     * @param thingRegistry The OpenHAB thing registry for multiroom coordination
+     * @param scheduler The scheduler for periodic tasks
+     */
     public DeviceManager(LinkPlayThingHandler thingHandler, LinkPlayConfiguration config, LinkPlayHttpClient httpClient,
             UpnpIOService upnpIOService, ThingRegistry thingRegistry, ScheduledExecutorService scheduler) {
         this.thingHandler = thingHandler;
@@ -78,13 +102,16 @@ public class DeviceManager {
         this.httpManager = new HttpManager(httpClient, this, scheduler);
         this.metadataService = new MetadataService(httpClient, this);
         this.uartManager = new UartManager(this);
-        this.groupManager = new GroupManager(this, thingRegistry);
+        this.groupManager = new GroupManager(this, httpManager, thingRegistry);
 
         logger.debug("[{}] Initializing device manager...", config.getDeviceName());
     }
 
     /**
-     * Called by the ThingHandler to initialize device logic.
+     * Initializes the device manager and starts device communication.
+     * Sets initial Thing status to UNKNOWN while attempting to establish connection.
+     * Starts the HTTP polling mechanism as the primary communication method.
+     * Additional features like UPnP and metadata services are initialized after successful connection.
      */
     public void initialize() {
         logger.debug("[{}] Initializing DeviceManager...", config.getDeviceName());
@@ -133,10 +160,17 @@ public class DeviceManager {
     }
 
     /**
-     * Handles commands from the Thing handler.
-     * 
-     * @param channelId The channel ID without group
-     * @param command The command to handle
+     * Handles commands received from the Thing handler.
+     * Routes commands to appropriate subsystems based on channel group and type:
+     * <ul>
+     * <li>Playback controls (play, pause, next, previous, volume, mute)</li>
+     * <li>Multiroom controls (join, leave, group management)</li>
+     * <li>Input source selection</li>
+     * <li>Playback mode settings (repeat, shuffle)</li>
+     * </ul>
+     *
+     * @param channelId The channel ID (may include group prefix)
+     * @param command The command to execute
      */
     public void handleCommand(String channelId, Command command) {
         String[] parts = channelId.split("#", 2);
@@ -355,85 +389,18 @@ public class DeviceManager {
     }
 
     /**
-     * Cleanup.
-     */
-    public void dispose() {
-        logger.trace("[{}] Disposing device manager", config.getDeviceName());
-
-        // Dispose all managers
-        httpManager.dispose();
-        uartManager.dispose();
-    }
-
-    // -------------------------------------------------------------------
-    // Internal Helpers
-    // -------------------------------------------------------------------
-
-    public void updateState(String channelId, State state) {
-        thingHandler.handleStateUpdate(channelId, state);
-    }
-
-    private void handleStatusUpdate(ThingStatus status) {
-        thingHandler.handleStatusUpdate(status);
-    }
-
-    private void handleStatusUpdate(ThingStatus status, ThingStatusDetail detail, String msg) {
-        thingHandler.handleStatusUpdate(status, detail, msg);
-    }
-
-    private String getJsonString(JsonObject obj, String key) {
-        try {
-            if (!obj.has(key) || obj.get(key).isJsonNull()) {
-                return "";
-            }
-            return obj.get(key).getAsString();
-        } catch (Exception e) {
-            logger.trace("[{}] Failed to get string value for '{}': {}", config.getDeviceName(), key, e.getMessage());
-            return "";
-        }
-    }
-
-    private int getJsonInt(JsonObject obj, String key, int defaultValue) {
-        try {
-            if (!obj.has(key) || obj.get(key).isJsonNull()) {
-                return defaultValue;
-            }
-            return obj.get(key).getAsInt();
-        } catch (Exception e) {
-            logger.trace("[{}] Failed to get int value for '{}': {}", config.getDeviceName(), key, e.getMessage());
-            return defaultValue;
-        }
-    }
-
-    /**
-     * Handle HTTP communication result
+     * Processes player status updates received from the device.
+     * Updates internal state and channels for:
+     * <ul>
+     * <li>Playback mode and input source</li>
+     * <li>Playback status (play/pause/stop)</li>
+     * <li>Track metadata (title, artist, album)</li>
+     * <li>Playback position and duration</li>
+     * <li>Volume and mute state</li>
+     * <li>Repeat and shuffle settings</li>
+     * </ul>
      * 
-     * @param success Whether the communication was successful
-     * @param source Optional source of the communication result (e.g. "player status", "device status")
-     */
-    public void handleCommunicationResult(boolean success, String source) {
-        if (!success) {
-            logger.debug("[{}] Communication failed: {}", config.getDeviceName(), source);
-            communicationFailures++;
-
-            // Only go offline after threshold failures and if currently online
-            if (communicationFailures >= OFFLINE_THRESHOLD
-                    && thingHandler.getThing().getStatus() == ThingStatus.ONLINE) {
-                handleStatusUpdate(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
-                        "Device unreachable: " + source);
-            }
-        } else {
-            // Reset counter on success and ensure online
-            communicationFailures = 0;
-            if (thingHandler.getThing().getStatus() != ThingStatus.ONLINE) {
-                logger.info("[{}] Communication restored: {}", config.getDeviceName(), source);
-                handleStatusUpdate(ThingStatus.ONLINE);
-            }
-        }
-    }
-
-    /**
-     * Process player status response from the API
+     * @param json The JSON response from the device's status API
      */
     public void handleGetPlayerStatusResponse(JsonObject json) {
         try {
@@ -582,7 +549,16 @@ public class DeviceManager {
     }
 
     /**
-     * Handles parsed device status response from HTTP Manager
+     * Processes extended device status information.
+     * Updates device information and network-related channels:
+     * <ul>
+     * <li>Device identification (name, MAC, UDN)</li>
+     * <li>Firmware version</li>
+     * <li>Network status (WiFi signal strength)</li>
+     * <li>Multiroom configuration</li>
+     * </ul>
+     *
+     * @param json The JSON response from the device's extended status API
      */
     public void handleGetStatusExResponse(JsonObject json) {
         // Process multiroom status first via GroupManager
@@ -647,22 +623,43 @@ public class DeviceManager {
     }
 
     /**
-     * Get the HTTP manager instance for this device
-     * 
-     * @return The HTTP manager
+     * Handles communication results from device interactions.
+     * Implements a threshold-based approach to prevent status flickering:
+     * <ul>
+     * <li>Tracks consecutive communication failures</li>
+     * <li>Updates Thing status to OFFLINE after threshold exceeded</li>
+     * <li>Restores ONLINE status on successful communication</li>
+     * </ul>
+     *
+     * @param success Whether the communication attempt was successful
+     * @param source Description of the communication attempt (for logging)
      */
-    public HttpManager getHttpManager() {
-        return httpManager;
+    public void handleCommunicationResult(boolean success, String source) {
+        if (!success) {
+            logger.debug("[{}] Communication failed: {}", config.getDeviceName(), source);
+            communicationFailures++;
+
+            // Only go offline after threshold failures and if currently online
+            if (communicationFailures >= OFFLINE_THRESHOLD
+                    && thingHandler.getThing().getStatus() == ThingStatus.ONLINE) {
+                handleStatusUpdate(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
+                        "Device unreachable: " + source);
+            }
+        } else {
+            // Reset counter on success and ensure online
+            communicationFailures = 0;
+            if (thingHandler.getThing().getStatus() != ThingStatus.ONLINE) {
+                logger.info("[{}] Communication restored: {}", config.getDeviceName(), source);
+                handleStatusUpdate(ThingStatus.ONLINE);
+            }
+        }
     }
 
-    public LinkPlayConfiguration getConfig() {
-        return config;
-    }
-
-    public LinkPlayThingHandler getThingHandler() {
-        return thingHandler;
-    }
-
+    /**
+     * Updates metadata for the current track.
+     * Attempts to retrieve additional information like album art
+     * when both artist and title are available.
+     */
     private void updateMetadata() {
         String artist = deviceState.getTrackArtist();
         String title = deviceState.getTrackTitle();
@@ -675,5 +672,113 @@ public class DeviceManager {
                         new StringType(url));
             });
         }
+    }
+
+    /**
+     * Releases all resources and stops device communication.
+     * Ensures proper cleanup of all managers and scheduled tasks.
+     */
+    public void dispose() {
+        logger.trace("[{}] Disposing device manager", config.getDeviceName());
+
+        // Dispose all managers
+        httpManager.dispose();
+        uartManager.dispose();
+    }
+
+    // -------------------------------------------------------------------
+    // Internal Helpers
+    // -------------------------------------------------------------------
+
+    /**
+     * Updates a channel state and notifies the thing handler.
+     * All state updates should go through this method to ensure consistency.
+     *
+     * @param channelId The full channel ID including group
+     * @param state The new state to set
+     */
+    public void updateState(String channelId, State state) {
+        thingHandler.handleStateUpdate(channelId, state);
+    }
+
+    /**
+     * Updates the Thing status without additional detail or message.
+     * Shorthand for {@link #handleStatusUpdate(ThingStatus, ThingStatusDetail, String)}.
+     *
+     * @param status The new Thing status
+     */
+    private void handleStatusUpdate(ThingStatus status) {
+        thingHandler.handleStatusUpdate(status);
+    }
+
+    /**
+     * Updates the Thing status with detail and message.
+     * Delegates to the thing handler for actual status update.
+     *
+     * @param status The new Thing status
+     * @param detail Additional detail about the status
+     * @param msg Human-readable message explaining the status
+     */
+    private void handleStatusUpdate(ThingStatus status, ThingStatusDetail detail, String msg) {
+        thingHandler.handleStatusUpdate(status, detail, msg);
+    }
+
+    /**
+     * Safely extracts a string value from a JSON object.
+     * Returns empty string if the key doesn't exist or value is null.
+     *
+     * @param obj The JSON object to extract from
+     * @param key The key to look up
+     * @return The string value or empty string if not found
+     */
+    private String getJsonString(JsonObject obj, String key) {
+        try {
+            if (!obj.has(key) || obj.get(key).isJsonNull()) {
+                return "";
+            }
+            return obj.get(key).getAsString();
+        } catch (Exception e) {
+            logger.trace("[{}] Failed to get string value for '{}': {}", config.getDeviceName(), key, e.getMessage());
+            return "";
+        }
+    }
+
+    /**
+     * Safely extracts an integer value from a JSON object.
+     * Returns default value if the key doesn't exist or value is invalid.
+     *
+     * @param obj The JSON object to extract from
+     * @param key The key to look up
+     * @param defaultValue Value to return if key not found or invalid
+     * @return The integer value or defaultValue if not found/invalid
+     */
+    private int getJsonInt(JsonObject obj, String key, int defaultValue) {
+        try {
+            if (!obj.has(key) || obj.get(key).isJsonNull()) {
+                return defaultValue;
+            }
+            return obj.get(key).getAsInt();
+        } catch (Exception e) {
+            logger.trace("[{}] Failed to get int value for '{}': {}", config.getDeviceName(), key, e.getMessage());
+            return defaultValue;
+        }
+    }
+
+    /**
+     * Gets the current configuration for this device.
+     *
+     * @return The LinkPlay configuration
+     */
+    public LinkPlayConfiguration getConfig() {
+        return config;
+    }
+
+    /**
+     * Gets the thing handler associated with this device manager.
+     *
+     * @return The LinkPlay thing handler
+     */
+    public LinkPlayThingHandler getThingHandler() {
+        return thingHandler;
     }
 }

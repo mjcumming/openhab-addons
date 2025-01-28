@@ -29,6 +29,7 @@ import org.openhab.binding.linkplay.internal.DeviceManager;
 import org.openhab.binding.linkplay.internal.handler.LinkPlayThingHandler;
 import org.openhab.binding.linkplay.internal.model.MultiroomState;
 import org.openhab.binding.linkplay.internal.transport.http.CommandResult;
+import org.openhab.binding.linkplay.internal.transport.http.HttpManager;
 import org.openhab.core.library.types.OnOffType;
 import org.openhab.core.library.types.PercentType;
 import org.openhab.core.library.types.StringType;
@@ -64,6 +65,7 @@ public class GroupManager {
     private final DeviceManager deviceManager;
     private final ThingRegistry thingRegistry;
     private final MultiroomState state;
+    private final HttpManager httpManager;
 
     private static final String GROUP_MULTIROOM = "multiroom";
     private static final String CHANNEL_UNGROUP = "ungroup"; // Trigger channel for ungrouping devices
@@ -73,8 +75,9 @@ public class GroupManager {
     private static final String CHANNEL_KICKOUT = "kickout"; // Command channel for removing a slave
     private static final String CHANNEL_JOIN = "join"; // Command channel for joining a group
 
-    public GroupManager(DeviceManager deviceManager, ThingRegistry thingRegistry) {
+    public GroupManager(DeviceManager deviceManager, HttpManager httpManager, ThingRegistry thingRegistry) {
         this.deviceManager = deviceManager;
+        this.httpManager = httpManager;
         this.thingRegistry = thingRegistry;
         this.state = new MultiroomState();
     }
@@ -111,7 +114,7 @@ public class GroupManager {
                                 deviceManager.getConfig().getDeviceName());
                         return;
                     }
-                    deviceManager.getHttpManager().joinGroup(masterIP).thenAccept(result -> {
+                    httpManager.joinGroup(masterIP).thenAccept(result -> {
                         if (result.isSuccess()) {
                             // State will be updated via device status polling
                             logger.debug("[{}] Successfully sent join group command",
@@ -130,7 +133,7 @@ public class GroupManager {
                     // Store current slave IPs before ungrouping
                     Set<String> previousSlaves = new HashSet<>(Arrays.asList(state.getSlaveIPs().split(",")));
 
-                    deviceManager.getHttpManager().ungroup().thenAccept(result -> {
+                    httpManager.ungroup().thenAccept(result -> {
                         if (result.isSuccess()) {
                             // Update our state immediately
                             state.setStandaloneState();
@@ -183,16 +186,19 @@ public class GroupManager {
                             DeviceManager masterDeviceManager = masterHandler.getDeviceManager();
                             if (masterDeviceManager != null) {
                                 // Send kickout command through master's HTTP manager
-                                masterDeviceManager.getHttpManager().kickoutSlave(myIP).thenAccept(result -> {
-                                    if (result.isSuccess()) {
-                                        logger.debug("[{}] Successfully requested to leave group via master kickout",
-                                                deviceManager.getConfig().getDeviceName());
-                                        updateMultiroomStatus();
-                                    } else {
-                                        logger.warn("[{}] Failed to leave group: {}",
-                                                deviceManager.getConfig().getDeviceName(), result.getErrorMessage());
-                                    }
-                                });
+                                masterDeviceManager.getGroupManager().httpManager.kickoutSlave(myIP)
+                                        .thenAccept(result -> {
+                                            if (result.isSuccess()) {
+                                                logger.debug(
+                                                        "[{}] Successfully requested to leave group via master kickout",
+                                                        deviceManager.getConfig().getDeviceName());
+                                                updateMultiroomStatus();
+                                            } else {
+                                                logger.warn("[{}] Failed to leave group: {}",
+                                                        deviceManager.getConfig().getDeviceName(),
+                                                        result.getErrorMessage());
+                                            }
+                                        });
                             }
                         } else {
                             logger.warn("[{}] Cannot leave group - master device not found in registry",
@@ -225,7 +231,7 @@ public class GroupManager {
                                 deviceManager.getConfig().getDeviceName());
                         return;
                     }
-                    deviceManager.getHttpManager().kickoutSlave(slaveIP).thenAccept(result -> {
+                    httpManager.kickoutSlave(slaveIP).thenAccept(result -> {
                         if (result.isSuccess()) {
                             // Update our slave list by removing the kicked slave
                             List<String> updatedSlaveIPs = new ArrayList<>();
@@ -303,7 +309,7 @@ public class GroupManager {
         List<CompletableFuture<CommandResult>> statusQueries = new ArrayList<>();
 
         // Add master status query
-        statusQueries.add(deviceManager.getHttpManager().getPlayerStatus());
+        statusQueries.add(httpManager.getPlayerStatus());
 
         // Add slave status queries
         for (String slaveIP : state.getSlaveIPs().split(",")) {
@@ -312,7 +318,7 @@ public class GroupManager {
                 if (slaveThing != null && slaveThing.getHandler() instanceof LinkPlayThingHandler slaveHandler) {
                     DeviceManager slaveDeviceManager = slaveHandler.getDeviceManager();
                     if (slaveDeviceManager != null) {
-                        statusQueries.add(slaveDeviceManager.getHttpManager().getPlayerStatus());
+                        statusQueries.add(slaveDeviceManager.getGroupManager().httpManager.getPlayerStatus());
                     }
                 }
             }
@@ -468,7 +474,7 @@ public class GroupManager {
 
         // Only fetch slave list if we weren't already a master
         if (!wasMaster) {
-            deviceManager.getHttpManager().getSlaveList().thenAccept(result -> {
+            httpManager.getSlaveList().thenAccept(result -> {
                 if (result.isSuccess()) {
                     JsonObject slaveListStatus = result.getResponse();
                     if (slaveListStatus != null && slaveListStatus.has("slave_list")) {
@@ -618,7 +624,7 @@ public class GroupManager {
      * This is typically called after group operations or during initialization.
      */
     public void updateMultiroomStatus() {
-        deviceManager.getHttpManager().getStatusEx().thenAccept(result -> {
+        httpManager.getStatusEx().thenAccept(result -> {
             JsonObject response = result.getResponse();
             if (result.isSuccess() && response != null) {
                 handleDeviceStatus(response);
@@ -756,7 +762,7 @@ public class GroupManager {
 
         int volume = command.intValue();
         List<CompletableFuture<CommandResult>> volumeCommands = collectGroupCommands(
-                dm -> dm.getHttpManager().setVolume(volume));
+                dm -> dm.getGroupManager().httpManager.setVolume(volume));
 
         executeGroupCommand(volumeCommands, CHANNEL_GROUP_VOLUME, result -> {
             @Nullable
@@ -784,7 +790,7 @@ public class GroupManager {
 
         boolean mute = command == OnOffType.ON;
         List<CompletableFuture<CommandResult>> muteCommands = collectGroupCommands(
-                dm -> dm.getHttpManager().setMute(mute));
+                dm -> dm.getGroupManager().httpManager.setMute(mute));
 
         executeGroupCommand(muteCommands, CHANNEL_GROUP_MUTE, result -> {
             @Nullable
