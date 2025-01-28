@@ -192,17 +192,33 @@ public class LinkPlaySslUtil {
      * @throws IllegalStateException if the client creation or startup fails
      */
     public static HttpClient createHttpsClient(SSLContext sslContext) {
-        SslContextFactory.Client sslContextFactory = new SslContextFactory.Client();
-        sslContextFactory.setSslContext(sslContext);
-        sslContextFactory.setEndpointIdentificationAlgorithm(null);
-
-        HttpClient httpClient = new HttpClient(sslContextFactory);
         try {
+            // Create keystore with our certificate
+            KeyStore keyStore = KeyStore.getInstance(KeyStore.getDefaultType());
+            keyStore.load(null, null);
+
+            // Extract and load certificate
+            String certPem = extractCertificate(PemConstants.PEM_CONTENT);
+            CertificateFactory cf = CertificateFactory.getInstance("X.509");
+            X509Certificate cert = (X509Certificate) cf
+                    .generateCertificate(new ByteArrayInputStream(Base64.getDecoder().decode(certPem)));
+            keyStore.setCertificateEntry("linkplay-cert", cert);
+
+            // Configure SSL context factory with both SSL context and keystore
+            SslContextFactory.Client sslContextFactory = new SslContextFactory.Client(false);
+            sslContextFactory.setSslContext(sslContext);
+            sslContextFactory.setKeyStore(keyStore);
+            sslContextFactory.setTrustStore(keyStore);
+
+            // Required for IP address connections with self-signed certs
+            sslContextFactory.setEndpointIdentificationAlgorithm("");
+
+            HttpClient httpClient = new HttpClient(sslContextFactory);
             httpClient.start();
             return httpClient;
         } catch (Exception e) {
-            logger.error("Error starting HTTPS client: {}", e.getMessage());
-            throw new IllegalStateException("Failed to start HTTPS client", e);
+            logger.error("Error creating/starting HTTPS client: {}", e.getMessage());
+            throw new IllegalStateException("Failed to create/start HTTPS client", e);
         }
     }
 
