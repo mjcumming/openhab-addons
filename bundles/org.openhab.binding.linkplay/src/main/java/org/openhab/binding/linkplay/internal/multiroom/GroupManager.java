@@ -45,9 +45,16 @@ import com.google.gson.JsonObject;
 
 /**
  * The {@link GroupManager} handles multiroom functionality for LinkPlay devices.
- * This includes role detection, command synchronization, and state updates.
+ * It manages:
+ * - Device role detection (master/slave/standalone)
+ * - Group command synchronization across devices
+ * - Multiroom state updates and channel management
+ * - Group volume and mute control
+ * - Device joining/leaving group operations
  *
  * @author Michael Cumming - Initial contribution
+ * @see org.openhab.binding.linkplay.internal.DeviceManager
+ * @see org.openhab.binding.linkplay.internal.handler.LinkPlayThingHandler
  */
 @NonNullByDefault
 public class GroupManager {
@@ -59,12 +66,12 @@ public class GroupManager {
     private final MultiroomState state;
 
     private static final String GROUP_MULTIROOM = "multiroom";
-    private static final String CHANNEL_UNGROUP = "ungroup";
-    private static final String CHANNEL_LEAVE = "leave";
-    private static final String CHANNEL_GROUP_VOLUME = "groupVolume";
-    private static final String CHANNEL_GROUP_MUTE = "groupMute";
-    private static final String CHANNEL_KICKOUT = "kickout";
-    private static final String CHANNEL_JOIN = "join";
+    private static final String CHANNEL_UNGROUP = "ungroup"; // Trigger channel for ungrouping devices
+    private static final String CHANNEL_LEAVE = "leave"; // Trigger channel for leaving a group
+    private static final String CHANNEL_GROUP_VOLUME = "groupVolume"; // Volume control for entire group
+    private static final String CHANNEL_GROUP_MUTE = "groupMute"; // Mute control for entire group
+    private static final String CHANNEL_KICKOUT = "kickout"; // Command channel for removing a slave
+    private static final String CHANNEL_JOIN = "join"; // Command channel for joining a group
 
     public GroupManager(DeviceManager deviceManager, ThingRegistry thingRegistry) {
         this.deviceManager = deviceManager;
@@ -73,7 +80,17 @@ public class GroupManager {
     }
 
     /**
-     * Handle multiroom-related commands from DeviceManager
+     * Handle multiroom-related commands from DeviceManager.
+     * Processes various channel commands including:
+     * - join: Join a group with specified master IP
+     * - ungroup: Disband current group (master only)
+     * - leave: Leave current group (slave only)
+     * - kickout: Remove a slave from group (master only)
+     * - groupVolume: Set volume for all group devices
+     * - groupMute: Set mute state for all group devices
+     *
+     * @param channelId The channel identifier receiving the command
+     * @param command The command to process
      */
     public void handleCommand(String channelId, Command command) {
         // Extract base channel name for trigger channels
@@ -339,7 +356,14 @@ public class GroupManager {
     }
 
     /**
-     * Process device status updates for multiroom functionality
+     * Processes device status updates for multiroom functionality.
+     * Updates the device's role (master/slave/standalone) and associated state based on
+     * the status information received from the device.
+     *
+     * @param status JsonObject containing device status information. May include:
+     *            - group: 1 if device is in a group, 0 if standalone
+     *            - master_ip: IP of master device if in a group
+     *            - host_ip: Alternative field for master IP
      */
     public void handleDeviceStatus(@Nullable JsonObject status) {
         if (status == null) {
@@ -567,6 +591,15 @@ public class GroupManager {
         }
     }
 
+    /**
+     * Updates all multiroom-related channels based on current state.
+     * Channels updated:
+     * - role: Current device role (master/slave/standalone)
+     * - masterIP: IP address of master device (if slave)
+     * - slaveIPs: Comma-separated list of slave IPs (if master)
+     * - groupName: Name of the current group
+     * - groupVolume/groupMute: Reset for standalone devices
+     */
     private void updateChannels() {
         deviceManager.updateState(GROUP_MULTIROOM + "#" + CHANNEL_ROLE, new StringType(state.getRole()));
         deviceManager.updateState(GROUP_MULTIROOM + "#" + CHANNEL_MASTER_IP, new StringType(state.getMasterIP()));
@@ -581,7 +614,8 @@ public class GroupManager {
     }
 
     /**
-     * Update multiroom status via getStatusEx command
+     * Updates the multiroom status by querying the device's extended status.
+     * This is typically called after group operations or during initialization.
      */
     public void updateMultiroomStatus() {
         deviceManager.getHttpManager().getStatusEx().thenAccept(result -> {
@@ -595,10 +629,21 @@ public class GroupManager {
         });
     }
 
+    /**
+     * Handles cleanup when the GroupManager is being disposed.
+     * Currently just logs the disposal event.
+     */
     public void dispose() {
         logger.debug("[{}] Disposing GroupManager", deviceManager.getConfig().getDeviceName());
     }
 
+    /**
+     * Finds a Thing in the registry by its IP address.
+     * Used to locate master/slave devices for group operations.
+     *
+     * @param ipAddress IP address to search for
+     * @return Thing if found, null otherwise
+     */
     private @Nullable Thing findThingByIP(String ipAddress) {
         if (ipAddress.isEmpty()) {
             return null;
@@ -615,7 +660,12 @@ public class GroupManager {
     }
 
     /**
-     * Utility method to execute a command on all devices in a group
+     * Executes a command on all devices in a group and processes their responses.
+     * Handles aggregation of results and updates the corresponding channel state.
+     *
+     * @param commands List of command futures to execute
+     * @param channelSuffix Channel suffix to update with the result
+     * @param resultProcessor Function to process individual command results
      */
     private void executeGroupCommand(List<CompletableFuture<CommandResult>> commands, String channelSuffix,
             Function<CommandResult, Optional<Boolean>> resultProcessor) {
@@ -661,7 +711,11 @@ public class GroupManager {
     }
 
     /**
-     * Utility method to collect commands for all devices in a group
+     * Collects commands to be executed on all devices in a group.
+     * Builds a list of command futures for both master and slave devices.
+     *
+     * @param commandSupplier Function that generates the command for each device
+     * @return List of command futures to be executed
      */
     private List<CompletableFuture<CommandResult>> collectGroupCommands(
             Function<DeviceManager, CompletableFuture<CommandResult>> commandSupplier) {
@@ -687,7 +741,11 @@ public class GroupManager {
     }
 
     /**
-     * Handle group volume command
+     * Handles volume control for the entire group.
+     * Sets the same volume level on all devices in the group.
+     * Only available when device is master.
+     *
+     * @param command PercentType command containing the target volume level
      */
     private void handleGroupVolumeCommand(PercentType command) {
         if (!state.isMaster()) {
@@ -711,7 +769,11 @@ public class GroupManager {
     }
 
     /**
-     * Handle group mute command
+     * Handles mute control for the entire group.
+     * Sets the same mute state on all devices in the group.
+     * Only available when device is master.
+     *
+     * @param command OnOffType command indicating desired mute state
      */
     private void handleGroupMuteCommand(OnOffType command) {
         if (!state.isMaster()) {

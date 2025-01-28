@@ -1,10 +1,23 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+	LinkPlay Binding for OpenHAB
+
+	This binding provides integration with LinkPlay/Arylic-based audio devices through:
+	- UPnP discovery
+	- HTTP API control and status monitoring
+	- Multiroom audio grouping capabilities
+
+	API Reference:
+	https://developer.arylic.com/httpapi/
+-->
 <addon:addon id="linkplay" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
 	xmlns:addon="https://openhab.org/schemas/addon/v1.0.0"
 	xsi:schemaLocation="https://openhab.org/schemas/addon/v1.0.0 https://openhab.org/schemas/addon-1.0.0.xsd">
 	<type>binding</type>
 	<name>LinkPlay Binding</name>
-	<description>This is the binding for LinkPlay devices.</description>
+	<description>This binding integrates LinkPlay/Arylic-based audio devices, providing control over playback, volume,
+		multiroom grouping, and device status. Supports automatic discovery via UPnP and direct HTTP API communication.</description>
+	<connection>local</connection>
 	<discovery-methods>
 		<discovery-method>
 			<service-type>upnp</service-type>

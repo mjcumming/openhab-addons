@@ -18,28 +18,54 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.openhab.core.config.core.Configuration;
 
 /**
- * Configuration class for the binding.
- * Follows OpenHAB configuration patterns for thing configuration.
+ * Configuration class for LinkPlay devices.
+ * Holds configuration parameters for network settings and polling intervals.
+ * The configuration can be initialized from Thing properties if not directly configured.
  *
  * @author Michael Cumming - Initial contribution
  */
 @NonNullByDefault
 public class LinkPlayConfiguration {
 
-    // We keep a default, but no min or max
-    private static final int DEFAULT_PLAYER_STATUS_POLLING_INTERVAL = 5;
-    private static final int DEFAULT_DEVICE_STATUS_POLLING_INTERVAL = 10;
+    /**
+     * Default polling intervals in seconds
+     */
+    public static final int DEFAULT_PLAYER_STATUS_POLLING_INTERVAL = 5;
+    public static final int DEFAULT_DEVICE_STATUS_POLLING_INTERVAL = 10;
 
+    /**
+     * IP address of the device. Required for communication.
+     * Can be automatically discovered via UPnP or manually configured.
+     */
     private String ipAddress = "";
+
+    /**
+     * Optional device name for logging and identification.
+     */
     private String deviceName = "";
+
+    /**
+     * UPnP Unique Device Name. Optional - will be discovered if not provided.
+     */
     private String udn = "";
+
+    /**
+     * Polling interval for player status (playback, volume, etc.) in seconds.
+     * Default: 5 seconds
+     */
     private int playerStatusPollingInterval = DEFAULT_PLAYER_STATUS_POLLING_INTERVAL;
+
+    /**
+     * Polling interval for device status (network, system info) in seconds.
+     * Default: 10 seconds
+     */
     private int deviceStatusPollingInterval = DEFAULT_DEVICE_STATUS_POLLING_INTERVAL;
 
     /**
      * Creates a new configuration instance from a {@link Configuration} object.
+     * Used during Thing initialization and configuration updates.
      *
-     * @param configuration The configuration object
+     * @param config The configuration object from the Thing handler
      * @return A new configuration instance
      */
     public static LinkPlayConfiguration fromConfiguration(Configuration config) {
@@ -77,51 +103,26 @@ public class LinkPlayConfiguration {
         return deviceConfig;
     }
 
-    public void put(String key, String value) {
-        switch (key) {
-            case "ipAddress":
-                this.ipAddress = value;
-                break;
-            case "deviceName":
-                this.deviceName = value;
-                break;
-            case "udn":
-                this.udn = value;
-                break;
-            default:
-                // Ignore unknown keys
-                break;
-        }
-    }
-
-    public void put(String key, int value) {
-        switch (key) {
-            case "playerStatusPollingInterval":
-                this.playerStatusPollingInterval = value;
-                break;
-            case "deviceStatusPollingInterval":
-                this.deviceStatusPollingInterval = value;
-                break;
-            default:
-                // Ignore unknown keys
-                break;
-        }
+    /**
+     * Validates the configuration.
+     * Only IP address is required as it's essential for device communication.
+     * Other fields are optional and will be discovered or use defaults.
+     *
+     * @return true if config has required fields, false otherwise
+     */
+    public boolean isValid() {
+        return !ipAddress.isEmpty() && isValidIpAddress(ipAddress);
     }
 
     /**
-     * Validates the configuration. Only IP address is required.
-     * UDN will be discovered via HTTP if not provided.
-     *
-     * @return true if config is valid, false otherwise
+     * Helper method to validate IP address format.
      */
-    public boolean isValid() {
-        // Only IP address is required
-        if (ipAddress.isEmpty()) {
+    private static boolean isValidIpAddress(String ip) {
+        if (ip.isEmpty()) {
             return false;
         }
 
-        // Validate IP address format
-        String[] octets = ipAddress.split("\\.");
+        String[] octets = ip.split("\\.");
         if (octets.length != 4) {
             return false;
         }
@@ -141,6 +142,7 @@ public class LinkPlayConfiguration {
     }
 
     // ---- Getters ----
+
     public String getIpAddress() {
         return ipAddress;
     }
@@ -153,20 +155,10 @@ public class LinkPlayConfiguration {
         return udn;
     }
 
-    /**
-     * Gets the player status polling interval in seconds
-     * 
-     * @return polling interval, or 0 if polling is disabled
-     */
     public int getPlayerStatusPollingInterval() {
         return playerStatusPollingInterval;
     }
 
-    /**
-     * Gets the device status polling interval in seconds
-     * 
-     * @return polling interval, or 0 if polling is disabled
-     */
     public int getDeviceStatusPollingInterval() {
         return deviceStatusPollingInterval;
     }

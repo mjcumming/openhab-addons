@@ -28,8 +28,16 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * The {@link HttpManager} handles HTTP communication with devices,
- * including polling, command sending, and optional retry logic.
+ * The {@link HttpManager} handles HTTP communication with LinkPlay devices.
+ * 
+ * This class is responsible for:
+ * - Sending commands to control playback, volume, and device settings
+ * - Managing periodic status polling for player and device state
+ * - Coordinating multiroom functionality between master and slave devices
+ * - Maintaining connection state and error reporting
+ *
+ * Communication is done via HTTP GET requests to the device's API endpoints.
+ * Status polling intervals are configurable through the binding configuration.
  *
  * @author Michael Cumming - Initial contribution
  */
@@ -94,14 +102,32 @@ public class HttpManager {
     // Playback Control Methods
     // ------------------------------------------------------------------------
 
+    /**
+     * Play a specific URL directly
+     *
+     * @param url The URL to play
+     * @return A CompletableFuture containing the command result
+     */
     public CompletableFuture<CommandResult> play(String url) {
         return httpClient.sendRequest(config.getIpAddress(), "setPlayerCmd:play:" + url);
     }
 
+    /**
+     * Play an M3U playlist URL
+     *
+     * @param url The M3U playlist URL
+     * @return A CompletableFuture containing the command result
+     */
     public CompletableFuture<CommandResult> playM3u(String url) {
         return httpClient.sendRequest(config.getIpAddress(), "setPlayerCmd:m3u:play:" + url);
     }
 
+    /**
+     * Play a specific track by index in the current playlist
+     *
+     * @param index The 1-based index of the track to play
+     * @return A CompletableFuture containing the command result
+     */
     public CompletableFuture<CommandResult> playIndex(int index) {
         if (index < 1) {
             logger.warn("Invalid playlist index: {}. Must be >= 1", index);
@@ -110,6 +136,12 @@ public class HttpManager {
         return httpClient.sendRequest(config.getIpAddress(), "setPlayerCmd:playindex:" + index);
     }
 
+    /**
+     * Set the loop mode for the current playback
+     *
+     * @param mode Loop mode value (0-5)
+     * @return A CompletableFuture containing the command result
+     */
     public CompletableFuture<CommandResult> setLoopMode(int mode) {
         if (mode < 0 || mode > 5) {
             logger.warn("Invalid loop mode: {}. Must be between 0-5", mode);
@@ -118,30 +150,66 @@ public class HttpManager {
         return httpClient.sendRequest(config.getIpAddress(), "setPlayerCmd:loopmode:" + mode);
     }
 
+    /**
+     * Pause the current playback
+     *
+     * @return A CompletableFuture containing the command result
+     */
     public CompletableFuture<CommandResult> pause() {
         return httpClient.sendRequest(config.getIpAddress(), "setPlayerCmd:pause");
     }
 
+    /**
+     * Resume the current playback
+     *
+     * @return A CompletableFuture containing the command result
+     */
     public CompletableFuture<CommandResult> resume() {
         return httpClient.sendRequest(config.getIpAddress(), "setPlayerCmd:resume");
     }
 
+    /**
+     * Toggle between play and pause states
+     *
+     * @return A CompletableFuture containing the command result
+     */
     public CompletableFuture<CommandResult> togglePlayPause() {
         return httpClient.sendRequest(config.getIpAddress(), "setPlayerCmd:onepause");
     }
 
+    /**
+     * Stop the current playback
+     *
+     * @return A CompletableFuture containing the command result
+     */
     public CompletableFuture<CommandResult> stop() {
         return httpClient.sendRequest(config.getIpAddress(), "setPlayerCmd:stop");
     }
 
+    /**
+     * Skip to the previous track
+     *
+     * @return A CompletableFuture containing the command result
+     */
     public CompletableFuture<CommandResult> previous() {
         return httpClient.sendRequest(config.getIpAddress(), "setPlayerCmd:prev");
     }
 
+    /**
+     * Skip to the next track
+     *
+     * @return A CompletableFuture containing the command result
+     */
     public CompletableFuture<CommandResult> next() {
         return httpClient.sendRequest(config.getIpAddress(), "setPlayerCmd:next");
     }
 
+    /**
+     * Seek to a specific position in the current track
+     *
+     * @param seconds Position to seek to in seconds
+     * @return A CompletableFuture containing the command result
+     */
     public CompletableFuture<CommandResult> seek(int seconds) {
         if (seconds < 0) {
             logger.warn("Invalid seek position: {}. Must be >= 0", seconds);
@@ -150,6 +218,12 @@ public class HttpManager {
         return httpClient.sendRequest(config.getIpAddress(), "setPlayerCmd:seek:" + seconds);
     }
 
+    /**
+     * Set the volume level
+     *
+     * @param volume Volume level (0-100)
+     * @return A CompletableFuture containing the command result
+     */
     public CompletableFuture<CommandResult> setVolume(int volume) {
         if (volume < 0 || volume > 100) {
             logger.warn("Invalid volume: {}. Must be between {}-{}", volume, 0, 100);
@@ -158,22 +232,52 @@ public class HttpManager {
         return httpClient.sendRequest(config.getIpAddress(), "setPlayerCmd:vol:" + volume);
     }
 
+    /**
+     * Increase the volume by one step
+     *
+     * @return A CompletableFuture containing the command result
+     */
     public CompletableFuture<CommandResult> volumeUp() {
         return httpClient.sendRequest(config.getIpAddress(), "setPlayerCmd:vol++");
     }
 
+    /**
+     * Decrease the volume by one step
+     *
+     * @return A CompletableFuture containing the command result
+     */
     public CompletableFuture<CommandResult> volumeDown() {
         return httpClient.sendRequest(config.getIpAddress(), "setPlayerCmd:vol--");
     }
 
-    public CompletableFuture<CommandResult> setPlaybackMode(String mode) {
-        return httpClient.sendRequest(config.getIpAddress(), "setPlayerCmd:switchmode:" + mode);
+    /**
+     * Set the repeat and shuffle modes
+     *
+     * @param repeat Whether to enable repeat mode
+     * @param shuffle Whether to enable shuffle mode
+     * @return A CompletableFuture containing the command result
+     */
+    public CompletableFuture<CommandResult> setLoopMode(boolean repeat, boolean shuffle) {
+        String command = String.format("setPlayerCmd:loopmode:%d:randommode:%d", repeat ? 1 : 0, shuffle ? 1 : 0);
+        return httpClient.sendRequest(config.getIpAddress(), command);
     }
 
+    /**
+     * Set the mute state
+     *
+     * @param mute Whether to mute the device
+     * @return A CompletableFuture containing the command result
+     */
     public CompletableFuture<CommandResult> setMute(boolean mute) {
         return httpClient.sendRequest(config.getIpAddress(), "setPlayerCmd:mute:" + (mute ? "1" : "0"));
     }
 
+    /**
+     * Play a preset by number
+     *
+     * @param preset Preset number (0-10)
+     * @return A CompletableFuture containing the command result
+     */
     public CompletableFuture<CommandResult> playPreset(int preset) {
         if (preset < 0 || preset > 10) {
             logger.warn("Invalid preset: {}. Must be between {}-{}", preset, 0, 10);
@@ -182,10 +286,21 @@ public class HttpManager {
         return httpClient.sendRequest(config.getIpAddress(), "MCUKeyShortClick:" + preset);
     }
 
+    /**
+     * Get the total number of tracks in the current playlist
+     *
+     * @return A CompletableFuture containing the command result
+     */
     public CompletableFuture<CommandResult> getTrackCount() {
         return httpClient.sendRequest(config.getIpAddress(), "GetTrackNumber");
     }
 
+    /**
+     * Play a notification sound
+     *
+     * @param url URL of the notification sound to play
+     * @return A CompletableFuture containing the command result
+     */
     public CompletableFuture<CommandResult> playNotification(String url) {
         return httpClient.sendRequest(config.getIpAddress(), "playPromptUrl:" + url);
     }
@@ -193,24 +308,37 @@ public class HttpManager {
     // ------------------------------------------------------------------------
     // Input Source Control Methods
     // ------------------------------------------------------------------------
+
     /**
-     * Sets the playback mode of the device
-     *
-     * @param mode The mode to set (e.g., "wifi", "line-in", "bluetooth")
+     * Set the input source for playback
+     * 
+     * @param source The source to switch to (e.g., "wifi", "line-in", "bluetooth")
      * @return A CompletableFuture containing the command result
      */
-    public CompletableFuture<CommandResult> setPlayMode(String mode) {
-        return httpClient.sendRequest(config.getIpAddress(), "setPlayerCmd:switchmode:" + mode);
+    public CompletableFuture<CommandResult> setPlaySource(String source) {
+        return httpClient.sendRequest(config.getIpAddress(), "setPlayerCmd:switchmode:" + source);
     }
 
     // ------------------------------------------------------------------------
     // Multiroom Control Methods
     // ------------------------------------------------------------------------
 
+    /**
+     * Get the list of slave devices in the current group
+     *
+     * @return A CompletableFuture containing the command result
+     */
     public CompletableFuture<CommandResult> getSlaveList() {
         return httpClient.sendRequest(config.getIpAddress(), "multiroom:getSlaveList");
     }
 
+    /**
+     * Set the volume for a specific slave device
+     *
+     * @param ipAddress IP address of the slave device
+     * @param volume Volume level (0-100)
+     * @return A CompletableFuture containing the command result
+     */
     public CompletableFuture<CommandResult> setSlaveVolume(String ipAddress, int volume) {
         if (volume < 0 || volume > 100) {
             logger.warn("Invalid volume: {}. Must be between {}-{}", volume, 0, 100);
@@ -219,25 +347,49 @@ public class HttpManager {
         return httpClient.sendRequest(config.getIpAddress(), "multiroom:SlaveVolume:" + ipAddress + ":" + volume);
     }
 
+    /**
+     * Set the mute state for a specific slave device
+     *
+     * @param ipAddress IP address of the slave device
+     * @param mute Whether to mute the slave device
+     * @return A CompletableFuture containing the command result
+     */
     public CompletableFuture<CommandResult> setSlaveMute(String ipAddress, boolean mute) {
         return httpClient.sendRequest(config.getIpAddress(),
                 "multiroom:SlaveMute:" + ipAddress + ":" + (mute ? "1" : "0"));
     }
 
+    /**
+     * Remove a slave device from the current group
+     *
+     * @param ipAddress IP address of the slave device to remove
+     * @return A CompletableFuture containing the command result
+     */
     public CompletableFuture<CommandResult> kickoutSlave(String ipAddress) {
         return httpClient.sendRequest(config.getIpAddress(), "multiroom:SlaveKickout:" + ipAddress);
     }
 
+    /**
+     * Dissolve the current multiroom group
+     *
+     * @return A CompletableFuture containing the command result
+     */
     public CompletableFuture<CommandResult> ungroup() {
         return httpClient.sendRequest(config.getIpAddress(), "multiroom:Ungroup");
     }
 
+    /**
+     * Join a multiroom group as a slave
+     *
+     * @param masterIp IP address of the master device to join
+     * @return A CompletableFuture containing the command result
+     */
     public CompletableFuture<CommandResult> joinGroup(String masterIp) {
         return httpClient.sendRequest(config.getIpAddress(),
                 "ConnectMasterAp:JoinGroupMaster:eth" + masterIp + ":wifi0.0.0.0");
     }
 
-    public CompletableFuture<CommandResult> setPlayMode(boolean repeat, boolean shuffle) {
+    public CompletableFuture<CommandResult> setPlaybackOptions(boolean repeat, boolean shuffle) {
         String command = String.format("setPlayerCmd:loopmode:%d:randommode:%d", repeat ? 1 : 0, shuffle ? 1 : 0);
         return httpClient.sendRequest(config.getIpAddress(), command);
     }

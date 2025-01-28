@@ -16,6 +16,9 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 
 /**
  * The {@link HexConverter} provides utility methods for hex-to-ASCII conversion.
+ * This class is used to decode hexadecimal strings received from LinkPlay devices into readable text.
+ * It handles various edge cases such as empty strings, non-hex input, and ensures only printable ASCII
+ * characters are included in the output.
  *
  * @author Michael Cumming - Initial contribution
  */
@@ -24,35 +27,45 @@ public class HexConverter {
 
     /**
      * Converts a hex string to its UTF-8 string representation.
-     * Handles null input, empty strings, and invalid hex values.
+     * This method is designed to be robust and handle various input cases:
+     * - Empty strings return empty string
+     * - The string "Unknown" is returned as-is
+     * - Invalid hex strings (odd length or non-hex chars) return the original input
+     * - Only printable ASCII characters (32-126) are included in the output
      *
-     * @param hex The hex string to convert (e.g. "556E6B6E6F776E" for "Unknown")
-     * @return The decoded ASCII text, or the original string if not valid hex
+     * Example:
+     * Input: "556E6B6E6F776E" -> Output: "Unknown"
+     * Input: "48656C6C6F" -> Output: "Hello"
+     *
+     * @param hex The hex string to convert, must not be null (enforced by @NonNullByDefault)
+     * @return The decoded ASCII text, or the original string if conversion fails
      */
     public static String hexToString(String hex) {
+        // Handle empty input
         if (hex.isEmpty()) {
             return "";
         }
 
-        // If already "Unknown", no need to try decoding
+        // Special case: already in decoded form
         if ("Unknown".equals(hex)) {
             return hex;
         }
 
-        // Remove any whitespace
+        // Normalize input by removing whitespace
         hex = hex.replaceAll("\\s", "");
 
-        // Check if it's a valid hex string (must be even length and contain only hex chars)
+        // Validate hex string format
         if (hex.length() % 2 != 0 || !hex.matches("[0-9A-Fa-f]+")) {
             return hex; // Return original if not valid hex
         }
 
         try {
             StringBuilder output = new StringBuilder();
+            // Process hex string two characters at a time
             for (int i = 0; i < hex.length(); i += 2) {
                 String str = hex.substring(i, i + 2);
                 int value = Integer.parseInt(str, 16);
-                // Only include printable ASCII characters
+                // Filter for printable ASCII range (32-126)
                 if (value >= 32 && value <= 126) {
                     output.append((char) value);
                 }
@@ -60,7 +73,8 @@ public class HexConverter {
             String result = output.toString();
             return result.isEmpty() ? hex : result;
         } catch (Exception e) {
-            return hex; // Return original string if decoding fails
+            // Return original string if any parsing error occurs
+            return hex;
         }
     }
 }

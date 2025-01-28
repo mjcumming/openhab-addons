@@ -38,8 +38,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * The {@link LinkPlayHandlerFactory} is responsible for creating things and thing
- * handlers for the LinkPlay binding.
+ * The {@link LinkPlayHandlerFactory} is responsible for creating things and thing handlers for the LinkPlay binding.
+ * It manages the lifecycle of handlers and provides lookup functionality for finding handlers by IP address.
  *
  * @author Michael Cumming - Initial contribution
  */
@@ -49,6 +49,7 @@ public class LinkPlayHandlerFactory extends BaseThingHandlerFactory {
 
     private final Logger logger = LoggerFactory.getLogger(LinkPlayHandlerFactory.class);
 
+    // Map to store active handlers by their Thing UID
     private final Map<ThingUID, ThingHandler> handlers = new HashMap<>();
 
     private final UpnpIOService upnpIOService;
@@ -63,6 +64,12 @@ public class LinkPlayHandlerFactory extends BaseThingHandlerFactory {
         this.httpClient = httpClient;
     }
 
+    /**
+     * Lookup method to find a handler by IP address
+     *
+     * @param ipAddress The IP address to search for
+     * @return The handler if found, null otherwise
+     */
     public @Nullable ThingHandler getHandlerByIP(String ipAddress) {
         for (Thing thing : thingRegistry.getAll()) {
             if (THING_TYPE_MEDIASTREAMER.equals(thing.getThingTypeUID())) {
@@ -87,15 +94,18 @@ public class LinkPlayHandlerFactory extends BaseThingHandlerFactory {
 
         if (SUPPORTED_THING_TYPES_UIDS.contains(thingTypeUID)) {
             synchronized (handlers) {
+                // Check if handler already exists
                 if (handlers.containsKey(thing.getUID())) {
                     logger.debug("Handler already exists for Thing: {}", thing.getUID());
                     return handlers.get(thing.getUID());
                 }
 
                 try {
+                    // Create and validate configuration
                     LinkPlayConfiguration config = LinkPlayConfiguration.fromConfiguration(thing.getConfiguration());
 
                     if (!config.isValid()) {
+                        // Attempt to restore configuration from properties if invalid
                         restoreConfigurationFromProperties(thing);
                         config = LinkPlayConfiguration.fromConfiguration(thing.getConfiguration());
                         if (!config.isValid()) {
@@ -103,12 +113,13 @@ public class LinkPlayHandlerFactory extends BaseThingHandlerFactory {
                         }
                     }
 
-                    // Store IP in properties
+                    // Store IP in properties for persistence
                     thing.setProperty(PROPERTY_IP, config.getIpAddress());
 
                     logger.debug("Creating LinkPlayThingHandler for Thing '{}' with IP '{}' and UDN '{}'",
                             thing.getUID(), config.getIpAddress(), config.getUdn());
 
+                    // Create and store the handler
                     ThingHandler handler = new LinkPlayThingHandler(thing, httpClient, upnpIOService, config,
                             thingRegistry);
                     handlers.put(thing.getUID(), handler);
@@ -121,8 +132,12 @@ public class LinkPlayHandlerFactory extends BaseThingHandlerFactory {
         return null;
     }
 
+    /**
+     * Attempts to restore configuration from Thing properties
+     *
+     * @param thing The Thing to restore configuration for
+     */
     private void restoreConfigurationFromProperties(Thing thing) {
-        // Create new map to avoid modifying the original properties
         Map<String, String> properties = new HashMap<>(thing.getProperties());
         if (properties.isEmpty()) {
             return;
@@ -161,7 +176,6 @@ public class LinkPlayHandlerFactory extends BaseThingHandlerFactory {
     public @Nullable Thing createThing(ThingTypeUID thingTypeUID, Configuration configuration,
             @Nullable ThingUID thingUID, @Nullable ThingUID bridgeUID) {
         if (SUPPORTED_THING_TYPES_UIDS.contains(thingTypeUID)) {
-            // For now we just create the Thing, later we might want to add more properties
             return super.createThing(thingTypeUID, configuration, thingUID, bridgeUID);
         }
         return null;

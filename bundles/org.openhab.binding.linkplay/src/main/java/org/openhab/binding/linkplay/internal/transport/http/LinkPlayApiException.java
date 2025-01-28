@@ -15,7 +15,16 @@ package org.openhab.binding.linkplay.internal.transport.http;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 
 /**
- * Exception thrown when the LinkPlay API returns an error response
+ * Custom exception class for handling LinkPlay API-specific errors.
+ * This exception is thrown when:
+ * <ul>
+ * <li>The LinkPlay device returns an error response</li>
+ * <li>The API call fails due to invalid parameters or state</li>
+ * <li>Communication with the device fails in an API-specific way</li>
+ * </ul>
+ * 
+ * This exception should be caught and handled by the {@link HttpManager} or higher-level components
+ * to provide appropriate error handling and user feedback.
  *
  * @author Michael Cumming - Initial contribution
  */
@@ -24,10 +33,21 @@ public class LinkPlayApiException extends Exception {
 
     private static final long serialVersionUID = 1L;
 
+    /**
+     * Constructs a new exception with the specified detail message.
+     *
+     * @param message the detail message describing the API error
+     */
     public LinkPlayApiException(String message) {
         super(message);
     }
 
+    /**
+     * Constructs a new exception with the specified detail message and cause.
+     *
+     * @param message the detail message describing the API error
+     * @param cause the underlying cause of the API error
+     */
     public LinkPlayApiException(String message, Throwable cause) {
         super(message, cause);
     }

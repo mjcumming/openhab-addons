@@ -37,6 +37,13 @@ public class CommandResult {
     private final @Nullable Exception error;
     private final @Nullable JsonObject jsonContent; // Cached parsed JSON if valid
 
+    /**
+     * Private constructor for CommandResult
+     * 
+     * @param success whether the command executed successfully
+     * @param content the raw response content, if any
+     * @param error the exception that occurred, if any
+     */
     private CommandResult(boolean success, @Nullable String content, @Nullable Exception error) {
         this.success = success;
         this.content = content;

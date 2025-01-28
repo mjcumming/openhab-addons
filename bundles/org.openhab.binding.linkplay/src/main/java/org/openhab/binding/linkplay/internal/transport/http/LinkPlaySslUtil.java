@@ -37,12 +37,17 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Utility class for SSL/TLS configuration in the LinkPlay binding.
+ * The {@link LinkPlaySslUtil} class provides SSL/TLS configuration utilities for the LinkPlay binding.
  * <p>
- * Responsibilities:
- * - Create custom TrustManagers (trust-all or using an embedded cert).
- * - Create an SSLContext that includes our private key and certificate.
- * - Provide a specialized HttpClient for HTTPS communication with LinkPlay.
+ * This utility class handles:
+ * <ul>
+ * <li>Creation of trust managers for server certificate validation</li>
+ * <li>Setup of client certificates for mutual TLS authentication</li>
+ * <li>Configuration of HTTPS clients for secure communication with LinkPlay devices</li>
+ * </ul>
+ * <p>
+ * The class supports both standard certificate validation and a trust-all mode for development/testing.
+ * It manages embedded certificates and private keys stored in PEM format for client authentication.
  *
  * @author Michael Cumming - Initial contribution
  */
@@ -51,30 +56,34 @@ public class LinkPlaySslUtil {
 
     private static final Logger logger = LoggerFactory.getLogger(LinkPlaySslUtil.class);
 
-    // PEM section markers
+    // PEM section markers for certificate and key extraction
     private static final String BEGIN_PRIVATE_KEY = "-----BEGIN PRIVATE KEY-----";
     private static final String END_PRIVATE_KEY = "-----END PRIVATE KEY-----";
     private static final String BEGIN_CERTIFICATE = "-----BEGIN CERTIFICATE-----";
     private static final String END_CERTIFICATE = "-----END CERTIFICATE-----";
 
     private LinkPlaySslUtil() {
-        // Utility class - prevent instantiation
+        // Prevent instantiation of utility class
     }
 
     /**
-     * Creates an X.509 trust manager that trusts ALL servers (dangerous, but often needed for custom device firmware).
-     * Use with caution if security is a concern.
+     * Creates an X.509 trust manager that accepts all server certificates.
+     * <p>
+     * WARNING: This trust manager bypasses all certificate validation and should only be used
+     * in controlled environments where security is not a primary concern.
+     *
+     * @return An {@link X509TrustManager} that trusts all certificates
      */
     public static X509TrustManager createTrustAllManager() {
         return new X509TrustManager() {
             @Override
             public void checkClientTrusted(X509Certificate @Nullable [] chain, @Nullable String authType) {
-                // No-op: trust all clients
+                // Trust all clients
             }
 
             @Override
             public void checkServerTrusted(X509Certificate @Nullable [] chain, @Nullable String authType) {
-                // No-op: trust all servers
+                // Trust all servers
             }
 
             @Override
@@ -85,39 +94,39 @@ public class LinkPlaySslUtil {
     }
 
     /**
-     * Creates an X.509 trust manager, either:
-     * - trustAll = true => calls createTrustAllManager(), or
-     * - baseTrustManager != null => uses it, or
-     * - else => calls createTrustManager() to load the embedded LinkPlay cert from the PEM.
+     * Creates an appropriate X.509 trust manager based on configuration settings.
+     *
+     * @param trustAll true to create a trust-all manager, false for certificate validation
+     * @param baseTrustManager optional base trust manager to use if provided
+     * @return An {@link X509TrustManager} configured according to the parameters
      */
     public static X509TrustManager createLearningTrustManager(boolean trustAll,
             @Nullable X509TrustManager baseTrustManager) {
         if (trustAll) {
+            logger.debug("Creating trust-all manager as requested");
             return createTrustAllManager();
         }
         return baseTrustManager != null ? baseTrustManager : createTrustManager();
     }
 
     /**
-     * Creates a trust manager from the embedded certificate in {@link PemConstants#PEM_CONTENT}.
-     * If the device uses the same cert for all firmware, this is sufficient.
+     * Creates a trust manager using the embedded LinkPlay certificate.
+     *
+     * @return An {@link X509TrustManager} initialized with the embedded certificate
+     * @throws IllegalStateException if the trust manager creation fails
      */
     public static X509TrustManager createTrustManager() {
         try {
-            // Create a KeyStore containing our trusted CA/cert
             KeyStore keyStore = KeyStore.getInstance(KeyStore.getDefaultType());
             keyStore.load(null, null);
 
-            // Extract the single certificate from our PEM blob
             String certPem = extractCertificate(PemConstants.PEM_CONTENT);
             CertificateFactory cf = CertificateFactory.getInstance("X.509");
             X509Certificate cert = (X509Certificate) cf
                     .generateCertificate(new ByteArrayInputStream(Base64.getDecoder().decode(certPem)));
 
-            // Store it in the KeyStore
             keyStore.setCertificateEntry("linkplay-cert", cert);
 
-            // Build a standard trust manager from that KeyStore
             TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
             tmf.init(keyStore);
 
@@ -129,41 +138,42 @@ public class LinkPlaySslUtil {
     }
 
     /**
-     * Creates an SSLContext that includes both a trust manager (for server verification)
-     * and a client private key/cert from the embedded PEM. This is used if LinkPlay
-     * devices require mutual TLS (client auth).
+     * Creates an SSL context configured for mutual TLS authentication.
+     * <p>
+     * This context includes both the trust manager for server verification and
+     * the client certificate/private key pair for client authentication.
+     *
+     * @param trustManager the trust manager to use for server certificate validation
+     * @return A configured {@link SSLContext}
+     * @throws IllegalStateException if the SSL context creation fails
      */
     public static SSLContext createSslContext(X509TrustManager trustManager) {
         try {
-            // Build a KeyStore with the private key and certificate
             KeyStore keyStore = KeyStore.getInstance(KeyStore.getDefaultType());
             keyStore.load(null, null);
 
-            // Extract private key
+            // Extract and decode private key
             String privateKeyPem = extractPrivateKey(PemConstants.PEM_CONTENT);
             byte[] privateKeyBytes = Base64.getDecoder().decode(privateKeyPem);
             PKCS8EncodedKeySpec keySpec = new PKCS8EncodedKeySpec(privateKeyBytes);
             KeyFactory keyFactory = KeyFactory.getInstance("RSA");
             PrivateKey privateKey = keyFactory.generatePrivate(keySpec);
 
-            // Extract certificate
+            // Extract and decode certificate
             String certPem = extractCertificate(PemConstants.PEM_CONTENT);
             CertificateFactory cf = CertificateFactory.getInstance("X.509");
             X509Certificate cert = (X509Certificate) cf
                     .generateCertificate(new ByteArrayInputStream(Base64.getDecoder().decode(certPem)));
 
-            // Store them in the KeyStore
             keyStore.setKeyEntry("linkplay", privateKey, new char[0], new X509Certificate[] { cert });
 
-            // KeyManager for the client-side certificate
             KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
             kmf.init(keyStore, new char[0]);
             KeyManager[] keyManagers = kmf.getKeyManagers();
 
-            // Initialize SSLContext with key & trust managers
             SSLContext sslContext = SSLContext.getInstance("TLS");
             sslContext.init(keyManagers, new TrustManager[] { trustManager }, null);
-            logger.info("SSL context successfully created with client certificate");
+            logger.debug("SSL context created successfully with client certificate");
             return sslContext;
         } catch (Exception e) {
             logger.error("Error creating SSL context: {}", e.getMessage());
@@ -172,13 +182,18 @@ public class LinkPlaySslUtil {
     }
 
     /**
-     * Creates a Jetty HttpClient preconfigured with the given SSLContext (including custom trust or client cert).
-     * Disables hostname verification since LinkPlay devices often present mismatched hostnames.
+     * Creates a pre-configured HTTPS client using the provided SSL context.
+     * <p>
+     * The client is configured to skip hostname verification since LinkPlay devices
+     * often use self-signed certificates with mismatched hostnames.
+     *
+     * @param sslContext the SSL context to use for HTTPS connections
+     * @return A configured {@link HttpClient}
+     * @throws IllegalStateException if the client creation or startup fails
      */
     public static HttpClient createHttpsClient(SSLContext sslContext) {
         SslContextFactory.Client sslContextFactory = new SslContextFactory.Client();
         sslContextFactory.setSslContext(sslContext);
-        // LinkPlay devices may not have a matching certificate hostname
         sslContextFactory.setEndpointIdentificationAlgorithm(null);
 
         HttpClient httpClient = new HttpClient(sslContextFactory);
@@ -192,8 +207,10 @@ public class LinkPlaySslUtil {
     }
 
     /**
-     * Extracts the base64-encoded private key material from the combined PEM content,
-     * removing the PEM headers and footers.
+     * Extracts the private key from a PEM-formatted string.
+     *
+     * @param pemContent the complete PEM content containing the private key
+     * @return The base64-encoded private key without PEM headers/footers
      */
     public static String extractPrivateKey(String pemContent) {
         int startIndex = pemContent.indexOf(BEGIN_PRIVATE_KEY) + BEGIN_PRIVATE_KEY.length();
@@ -202,8 +219,10 @@ public class LinkPlaySslUtil {
     }
 
     /**
-     * Extracts the base64-encoded certificate material from the combined PEM content,
-     * removing the PEM headers and footers.
+     * Extracts the certificate from a PEM-formatted string.
+     *
+     * @param pemContent the complete PEM content containing the certificate
+     * @return The base64-encoded certificate without PEM headers/footers
      */
     public static String extractCertificate(String pemContent) {
         int startIndex = pemContent.indexOf(BEGIN_CERTIFICATE) + BEGIN_CERTIFICATE.length();

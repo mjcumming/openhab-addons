@@ -34,7 +34,9 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
 /**
- * Service for retrieving music metadata and cover art from external services
+ * The {@link MetadataService} is responsible for retrieving music metadata and cover art from external services.
+ * It implements caching and rate limiting to avoid excessive API calls. The service uses MusicBrainz for track
+ * lookup and CoverArtArchive for album artwork retrieval.
  *
  * @author Michael Cumming - Initial contribution
  */
@@ -43,13 +45,22 @@ public class MetadataService {
     private final Logger logger = LoggerFactory.getLogger(MetadataService.class);
     private final LinkPlayHttpClient httpClient;
     private final DeviceManager deviceManager;
-    private static final int TIMEOUT_MS = 5000;
-    private static final Duration RATE_LIMIT = Duration.ofSeconds(2);
-    private static final Duration CACHE_DURATION = Duration.ofHours(24);
+
+    // API endpoints
+    private static final String MUSICBRAINZ_API_URL = "https://musicbrainz.org/ws/2/recording";
+    private static final String COVERART_API_URL = "https://coverartarchive.org/release/%s";
+
+    // Configuration constants
+    private static final int TIMEOUT_MS = 5000; // Timeout for external API calls
+    private static final Duration RATE_LIMIT = Duration.ofSeconds(2); // Minimum time between API requests
+    private static final Duration CACHE_DURATION = Duration.ofHours(24); // How long to cache metadata
 
     private @Nullable Instant lastRequestTime;
     private final Map<String, CachedMetadata> metadataCache = new ConcurrentHashMap<>();
 
+    /**
+     * Represents cached metadata with timestamp for expiration checking
+     */
     private static class CachedMetadata {
         final String url;
         final Instant timestamp;
@@ -64,17 +75,24 @@ public class MetadataService {
         }
     }
 
+    /**
+     * Creates a new instance of the metadata service.
+     *
+     * @param httpClient The HTTP client for making external API calls
+     * @param deviceManager The device manager for accessing device configuration
+     */
     public MetadataService(LinkPlayHttpClient httpClient, DeviceManager deviceManager) {
         this.httpClient = httpClient;
         this.deviceManager = deviceManager;
     }
 
     /**
-     * Retrieve music metadata for the given artist and title
-     * 
-     * @param artist The artist name, must not be null
-     * @param title The track title, must not be null
-     * @return Optional containing album art URL if found
+     * Retrieves music metadata including album art URL for the given artist and title.
+     * Implements caching and rate limiting to minimize external API calls.
+     *
+     * @param artist The artist name
+     * @param title The track title
+     * @return Optional containing album art URL if found, empty if no metadata available or if rate limited
      */
     public Optional<String> retrieveMusicMetadata(String artist, String title) {
         // Skip metadata lookup for Unknown tracks
@@ -111,10 +129,7 @@ public class MetadataService {
 
         try {
             // Build MusicBrainz query URL with proper URL encoding
-            String encodedTitle = URLEncoder.encode("title:" + title, StandardCharsets.UTF_8.name());
-            String encodedArtist = URLEncoder.encode("artist:" + artist, StandardCharsets.UTF_8.name());
-            String query = encodedTitle + "%20AND%20" + encodedArtist;
-            String url = String.format("https://musicbrainz.org/ws/2/recording?query=%s&fmt=json", query);
+            String url = buildMusicBrainzQuery(title, artist);
 
             logger.debug("[{}] Querying MusicBrainz: {}", deviceManager.getConfig().getDeviceName(), url);
             CompletableFuture<@Nullable String> futureMb = httpClient.rawGetRequest(url);
@@ -156,6 +171,12 @@ public class MetadataService {
         return Optional.empty();
     }
 
+    /**
+     * Extracts the first available release ID from a MusicBrainz API response.
+     * 
+     * @param mbJson The JSON response from MusicBrainz API
+     * @return The release ID if found, empty string otherwise
+     */
     private String extractReleaseId(JsonObject mbJson) {
         if (mbJson.has("recordings")) {
             JsonArray recordings = mbJson.getAsJsonArray("recordings");
@@ -173,9 +194,16 @@ public class MetadataService {
         return "";
     }
 
+    /**
+     * Retrieves the cover art URL from CoverArtArchive for a given release ID.
+     * Makes an HTTP request to the CoverArtArchive API and extracts the first available image URL.
+     *
+     * @param releaseId The MusicBrainz release ID to look up
+     * @return The cover art URL if found, null otherwise
+     */
     private @Nullable String retrieveCoverArtUrl(String releaseId) {
         try {
-            String url = String.format("https://coverartarchive.org/release/%s", releaseId);
+            String url = buildCoverArtUrl(releaseId);
             CompletableFuture<@Nullable String> future = httpClient.rawGetRequest(url);
             String response = future.get(TIMEOUT_MS, TimeUnit.MILLISECONDS);
 
@@ -196,10 +224,22 @@ public class MetadataService {
     }
 
     /**
-     * Clear the metadata cache
+     * Clears the metadata cache, forcing fresh metadata retrieval on next request.
+     * This can be useful when testing or when cached data becomes invalid.
      */
     public void clearCache() {
         metadataCache.clear();
         logger.debug("[{}] Metadata cache cleared", deviceManager.getConfig().getDeviceName());
+    }
+
+    private String buildMusicBrainzQuery(String title, String artist) throws Exception {
+        String encodedTitle = URLEncoder.encode("title:" + title, StandardCharsets.UTF_8.name());
+        String encodedArtist = URLEncoder.encode("artist:" + artist, StandardCharsets.UTF_8.name());
+        String query = encodedTitle + "%20AND%20" + encodedArtist;
+        return String.format("%s?query=%s&fmt=json", MUSICBRAINZ_API_URL, query);
+    }
+
+    private String buildCoverArtUrl(String releaseId) {
+        return String.format(COVERART_API_URL, releaseId);
     }
 }

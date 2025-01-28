@@ -17,6 +17,19 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 /**
  * Provides the PEM content for SSL/TLS configuration.
  * Contains the embedded private key and certificate from the LinkPlay device.
+ * 
+ * <p>
+ * This class stores the SSL/TLS certificate and private key used for secure communication
+ * with LinkPlay devices. The certificate is a self-signed certificate issued by LinkPlay
+ * and is common across their devices.
+ * </p>
+ * 
+ * <p>
+ * Security Note:
+ * - This certificate is embedded in the code as it's a device-specific certificate
+ * - The private key is included as it's required for SSL/TLS client authentication
+ * - This follows the LinkPlay device authentication scheme where all devices use the same certificate
+ * </p>
  *
  * @author Michel Cumming - Initial contribution
  */

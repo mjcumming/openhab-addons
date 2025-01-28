@@ -245,15 +245,19 @@ public class DeviceManager {
                     boolean repeat = deviceState.isRepeat();
                     boolean shuffle = deviceState.isShuffle();
 
+                    // Update the appropriate flag based on which channel received the command
                     if (channel.equals(BindingConstants.CHANNEL_REPEAT)) {
                         repeat = newState;
                     } else {
                         shuffle = newState;
                     }
 
+                    // Store final values for use in lambda
                     final boolean finalRepeat = repeat;
                     final boolean finalShuffle = shuffle;
-                    future = httpManager.setPlayMode(repeat, shuffle).thenApply(result -> {
+
+                    // Send command to device and update state on success
+                    future = httpManager.setLoopMode(repeat, shuffle).thenApply(result -> {
                         if (result.isSuccess()) {
                             deviceState.setRepeat(finalRepeat);
                             deviceState.setShuffle(finalShuffle);
@@ -271,7 +275,8 @@ public class DeviceManager {
                         String requestedSource = command.toString();
                         String sourceCommand = BindingConstants.INPUT_SOURCE_COMMANDS.get(requestedSource);
                         if (sourceCommand != null) {
-                            future = httpManager.setPlayMode(sourceCommand).thenApply(result -> {
+                            // Send command to switch input source and update state on success
+                            future = httpManager.setPlaySource(sourceCommand).thenApply(result -> {
                                 if (result.isSuccess()) {
                                     deviceState.setInputSource(requestedSource);
                                     updateState(

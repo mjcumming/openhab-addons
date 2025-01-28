@@ -21,13 +21,15 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.openhab.core.thing.ThingTypeUID;
 
 /**
- * The {@link BindingConstants} class defines common constants used across the binding.
+ * The {@link BindingConstants} class defines common constants used across the LinkPlay binding.
+ * This includes Thing Type UIDs, Channel IDs, configuration parameters, and API-specific constants.
  *
  * @author Michael Cumming - Initial contribution
  */
 @NonNullByDefault
 public class BindingConstants {
 
+    // Binding ID
     public static final String BINDING_ID = "linkplay";
 
     // Thing Type UIDs
@@ -105,7 +107,7 @@ public class BindingConstants {
     public static final String UPNP_MANUFACTURER = "LinkPlay";
     public static final String UPNP_DEVICE_TYPE_PREFIX = "urn:schemas-upnp-org:device:";
 
-    // Mode constants (read-only status)
+    // Device Mode Constants (read-only status)
     public static final String MODE_UNKNOWN = "UNKNOWN";
     public static final String MODE_IDLE = "IDLE";
     public static final String MODE_AIRPLAY = "AIRPLAY";
@@ -123,7 +125,7 @@ public class BindingConstants {
     public static final String MODE_USB_DAC = "USB_DAC";
     public static final String MODE_UDISK = "UDISK";
 
-    // Input source constants (controllable)
+    // Input Source Constants (controllable)
     public static final String INPUT_UNKNOWN = "UNKNOWN";
     public static final String INPUT_WIFI = "WIFI";
     public static final String INPUT_LINE_IN = "LINE_IN";
@@ -136,19 +138,19 @@ public class BindingConstants {
     public static final String INPUT_USB_DAC = "USB_DAC";
     public static final String INPUT_UDISK = "UDISK";
 
-    // Map of input sources to API commands
+    // Input Source API Command Mapping
     public static final Map<String, String> INPUT_SOURCE_COMMANDS = Map.ofEntries(Map.entry(INPUT_WIFI, "wifi"),
             Map.entry(INPUT_LINE_IN, "line-in"), Map.entry(INPUT_BLUETOOTH, "bluetooth"),
             Map.entry(INPUT_OPTICAL, "optical"), Map.entry(INPUT_COAXIAL, "co-axial"),
             Map.entry(INPUT_LINE_IN_2, "line-in2"), Map.entry(INPUT_USB_DAC, "PCUSB"), Map.entry(INPUT_UDISK, "udisk"));
 
-    // Playback control constants
+    // Playback Control Constants
     public static final String CONTROL_PLAY = "play";
     public static final String CONTROL_PAUSE = "pause";
     public static final String CONTROL_STOP = "stop";
     public static final String CONTROL_LOAD = "load";
 
-    // Source constants (legacy - for backward compatibility)
+    // Legacy Constants (for backward compatibility)
     public static final String SOURCE_UNKNOWN = "UNKNOWN";
 
     private BindingConstants() {

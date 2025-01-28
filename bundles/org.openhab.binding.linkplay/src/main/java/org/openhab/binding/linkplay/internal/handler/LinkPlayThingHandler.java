@@ -36,9 +36,18 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * The {@link LinkPlayThingHandler} is responsible for handling commands and status updates for devices.
- * It manages the lifecycle of a device and integrates with the Device Manager.
+ * The {@link LinkPlayThingHandler} is responsible for handling commands and status updates for LinkPlay devices.
+ * It serves as the primary interface between OpenHAB's core and LinkPlay devices, managing:
+ * <ul>
+ * <li>Device lifecycle (initialization, disposal)</li>
+ * <li>Command handling for all channels</li>
+ * <li>Status updates and state management</li>
+ * <li>Configuration validation and updates</li>
+ * </ul>
  * 
+ * This handler delegates most device-specific operations to the {@link DeviceManager} which
+ * coordinates HTTP, UPnP, and multiroom functionality.
+ *
  * @author Michael Cumming - Initial contribution
  */
 @NonNullByDefault
@@ -46,13 +55,30 @@ public class LinkPlayThingHandler extends BaseThingHandler {
 
     private static final Logger logger = LoggerFactory.getLogger(LinkPlayThingHandler.class);
 
+    /** UPnP service for device discovery and events */
     private final UpnpIOService upnpIOService;
+
+    /** HTTP client for device communication */
     private final LinkPlayHttpClient httpClient;
+
+    /** Registry for looking up other LinkPlay things (used for multiroom) */
     private final ThingRegistry thingRegistry;
+
+    /** Device configuration parameters */
     private LinkPlayConfiguration config;
 
+    /** Central coordinator for device operations */
     private @Nullable DeviceManager deviceManager;
 
+    /**
+     * Creates a new instance of the LinkPlay thing handler.
+     *
+     * @param thing The Thing object representing the LinkPlay device
+     * @param httpClient Client for making HTTP requests to the device
+     * @param upnpIOService Service for UPnP communication
+     * @param config Initial configuration parameters
+     * @param thingRegistry Registry for looking up other Things (used for multiroom)
+     */
     public LinkPlayThingHandler(Thing thing, LinkPlayHttpClient httpClient, UpnpIOService upnpIOService,
             LinkPlayConfiguration config, ThingRegistry thingRegistry) {
         super(thing);
@@ -62,6 +88,15 @@ public class LinkPlayThingHandler extends BaseThingHandler {
         this.thingRegistry = thingRegistry;
     }
 
+    /**
+     * Initializes the handler through multiple phases:
+     * 1. Validates and potentially restores configuration
+     * 2. Starts immediate HTTP polling
+     * 3. Triggers async initialization for UPnP and metadata
+     * 
+     * The initialization process is designed to bring up critical functionality quickly
+     * while deferring non-essential setup to async operations.
+     */
     @Override
     public void initialize() {
         logger.debug("[{}] Initializing handler...", config.getDeviceName());
@@ -106,7 +141,11 @@ public class LinkPlayThingHandler extends BaseThingHandler {
     }
 
     /**
-     * Starts polling for device and player status immediately with minimal configuration.
+     * Begins HTTP polling for device status.
+     * This is started immediately during initialization as it's critical
+     * for basic device functionality.
+     * 
+     * Note: This method is called from initialize() and should not be called directly.
      */
     private void startPolling() {
         DeviceManager manager = deviceManager;
@@ -122,6 +161,15 @@ public class LinkPlayThingHandler extends BaseThingHandler {
         }
     }
 
+    /**
+     * Performs asynchronous initialization steps including:
+     * - UPnP setup
+     * - Metadata service initialization
+     * - Additional device feature setup
+     * 
+     * This is done async to avoid blocking the thing handler initialization.
+     * The Thing will be marked ONLINE once all async initialization completes successfully.
+     */
     private void initializeAsync() {
         DeviceManager manager = deviceManager;
         if (manager != null) {
@@ -141,6 +189,10 @@ public class LinkPlayThingHandler extends BaseThingHandler {
         }
     }
 
+    /**
+     * Cleans up resources and stops all background operations.
+     * This includes stopping HTTP polling and UPnP subscriptions.
+     */
     @Override
     public void dispose() {
         logger.debug("Disposing ThingHandler for Thing: {}", getThing().getUID());
@@ -154,6 +206,15 @@ public class LinkPlayThingHandler extends BaseThingHandler {
         super.dispose();
     }
 
+    /**
+     * Handles commands received from OpenHAB core.
+     * Delegates actual command execution to the DeviceManager.
+     * 
+     * Thread-safe: This method may be called from different threads by the OpenHAB framework.
+     *
+     * @param channelUID The channel that received the command
+     * @param command The command to execute
+     */
     @Override
     public void handleCommand(ChannelUID channelUID, Command command) {
         logger.trace("Received command: {} for channel: {}", command, channelUID.getIdWithoutGroup());
@@ -167,7 +228,14 @@ public class LinkPlayThingHandler extends BaseThingHandler {
     }
 
     /**
-     * Public method for updating channel state, used by the device manager.
+     * Updates the state of a channel, supporting both direct channel IDs and group-prefixed channels.
+     * Channel groups supported: playback, system, network, multiroom
+     * 
+     * Thread-safe: This method may be called from different threads by the device manager
+     * or other asynchronous operations.
+     *
+     * @param channelId The channel ID, with or without group prefix
+     * @param state The new state to set
      */
     public final void handleStateUpdate(String channelId, State state) {
         Channel channel = getThing().getChannel(channelId);
@@ -193,15 +261,35 @@ public class LinkPlayThingHandler extends BaseThingHandler {
         }
     }
 
+    /**
+     * Updates the Thing status with optional detail and description.
+     * This method is thread-safe and can be called from any context.
+     *
+     * @param status The new Thing status
+     * @param detail Optional status detail
+     * @param description Optional description of the status
+     */
     public final void handleStatusUpdate(ThingStatus status, @Nullable ThingStatusDetail detail,
             @Nullable String description) {
         updateStatus(status, detail != null ? detail : ThingStatusDetail.NONE, description != null ? description : "");
     }
 
+    /**
+     * Updates the Thing status without additional detail.
+     * This is a convenience method for simple status updates.
+     *
+     * @param status The new Thing status
+     */
     public final void handleStatusUpdate(ThingStatus status) {
         updateStatus(status);
     }
 
+    /**
+     * Updates the UDN (Unique Device Name) in the Thing configuration.
+     * This is typically called during device discovery or when UPnP information is updated.
+     *
+     * @param udn The new UDN to store in configuration
+     */
     public final void updateUdnInConfig(String udn) {
         Configuration config = editConfiguration();
         config.put("udn", udn);
@@ -210,8 +298,11 @@ public class LinkPlayThingHandler extends BaseThingHandler {
     }
 
     /**
-     * Get the device manager instance
-     * Added to support multiroom functionality
+     * Gets the device manager instance.
+     * This method supports multiroom functionality by allowing access to the device manager
+     * from other components.
+     *
+     * @return The current device manager instance, or null if not initialized
      */
     public @Nullable DeviceManager getDeviceManager() {
         return deviceManager;

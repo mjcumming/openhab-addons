@@ -41,10 +41,14 @@ import org.slf4j.LoggerFactory;
 import com.google.gson.JsonObject;
 
 /**
- * A UPnP discovery participant for LinkPlay devices. We discover all
- * "MediaRenderer" or "MediaServer" devices, then do an HTTP check
- * using our LinkPlayHttpClient to confirm it's truly LinkPlay.
+ * A UPnP discovery participant for LinkPlay devices.
  * 
+ * Discovery workflow:
+ * 1. Detects UPnP devices with MediaRenderer/MediaServer capabilities
+ * 2. Validates required UPnP services (AVTransport, RenderingControl)
+ * 3. Extracts device IP and performs HTTP validation
+ * 4. Creates Thing discovery result if validation succeeds
+ *
  * @author Michael Cumming - Initial contribution
  */
 @NonNullByDefault

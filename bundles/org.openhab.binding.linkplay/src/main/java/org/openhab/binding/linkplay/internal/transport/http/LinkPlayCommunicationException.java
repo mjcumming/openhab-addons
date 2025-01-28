@@ -15,7 +15,14 @@ package org.openhab.binding.linkplay.internal.transport.http;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 
 /**
- * Exception thrown when there is a communication error with the LinkPlay device
+ * Exception thrown when there is a communication error with the LinkPlay device.
+ * This can occur in situations such as:
+ * <ul>
+ * <li>Network connectivity issues</li>
+ * <li>Device timeout</li>
+ * <li>Invalid HTTP responses</li>
+ * <li>Connection refused by device</li>
+ * </ul>
  *
  * @author Michael Cumming - Initial contribution
  */
@@ -24,10 +31,21 @@ public class LinkPlayCommunicationException extends Exception {
 
     private static final long serialVersionUID = 1L;
 
+    /**
+     * Constructs a new exception with the specified detail message.
+     *
+     * @param message the detail message describing the cause of the exception
+     */
     public LinkPlayCommunicationException(String message) {
         super(message);
     }
 
+    /**
+     * Constructs a new exception with the specified detail message and cause.
+     *
+     * @param message the detail message describing the cause of the exception
+     * @param cause the underlying cause of the exception
+     */
     public LinkPlayCommunicationException(String message, Throwable cause) {
         super(message, cause);
     }

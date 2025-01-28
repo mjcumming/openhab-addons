@@ -34,8 +34,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * The {@link LinkPlayHttpClient} is responsible for handling HTTP communication with devices.
- * It provides low-level access to the HTTP API endpoints and manages shared HTTP clients.
+ * The {@link LinkPlayHttpClient} handles HTTP/HTTPS communication with LinkPlay devices.
+ * It provides:
+ * <ul>
+ * <li>Automatic HTTPS/HTTP fallback with configurable ports</li>
+ * <li>SSL certificate handling for secure communication</li>
+ * <li>Asynchronous request handling with timeouts</li>
+ * <li>Error handling and logging</li>
+ * </ul>
  *
  * @author Michael Cumming - Initial contribution
  */
@@ -44,8 +50,11 @@ import org.slf4j.LoggerFactory;
 public class LinkPlayHttpClient {
     private final Logger logger = LoggerFactory.getLogger(LinkPlayHttpClient.class);
 
+    /** HTTPS ports to try in order (443 = standard HTTPS, 4443 = alternative) */
     private static final int[] HTTPS_PORTS = { 443, 4443 };
+    /** Standard HTTP port for fallback */
     private static final int HTTP_PORT = 80;
+    /** Request timeout in milliseconds */
     private static final int TIMEOUT_MS = 2000;
 
     private final HttpClient httpClient;
@@ -80,11 +89,11 @@ public class LinkPlayHttpClient {
     }
 
     /**
-     * Send a request to a LinkPlay device
+     * Send a command request to a LinkPlay device with automatic HTTPS/HTTP fallback
      *
-     * @param deviceIp IP address of the device to send command to
-     * @param command Command to send (will be URL encoded)
-     * @return CompletableFuture with CommandResult containing raw response
+     * @param deviceIp IP address of the target device
+     * @param command Raw command to send (will be URL encoded)
+     * @return CompletableFuture with {@link CommandResult} containing either the response text or error message
      */
     public CompletableFuture<CommandResult> sendRequest(String deviceIp, String command) {
         if (deviceIp.isEmpty()) {
@@ -130,7 +139,11 @@ public class LinkPlayHttpClient {
     }
 
     /**
-     * Raw HTTP GET request for external services (like metadata)
+     * Perform a raw HTTP GET request to external services
+     * Used primarily for metadata retrieval (e.g., album art, track info)
+     *
+     * @param url The complete URL to request
+     * @return CompletableFuture with response text if successful, null otherwise
      */
     public CompletableFuture<@Nullable String> rawGetRequest(String url) {
         return CompletableFuture.supplyAsync(() -> {
