@@ -66,22 +66,31 @@ Thing linkplay:device:living [ ipAddress="192.168.1.100" ]
 
 #### Loop Mode Combinations
 
-The device supports various combinations of repeat, shuffle, and loop once modes:
+The device supports various combinations of repeat, shuffle, and loop once modes. These are controlled through three independent switches that can be combined:
 
-| Mode | Shuffle | Repeat | Description |
-|------|---------|---------|-------------|
-| 0 | Off | On | Normal repeat - plays playlist continuously |
-| 1 | Off | On | Loop once - plays playlist once and stops |
-| 2 | On | On | Shuffle repeat - plays playlist continuously in random order |
-| 3 | On | Off | Shuffle only - plays playlist once in random order |
-| 4 | Off | Off | No repeat or shuffle - plays playlist once in order |
-| 5 | On | On | Shuffle loop once - plays playlist once in random order then stops |
+| Channel    | Type   | Description                                          |
+|-----------|--------|------------------------------------------------------|
+| repeat    | Switch | When ON, playlist will repeat continuously           |
+| shuffle   | Switch | When ON, tracks will play in random order           |
+| loopOnce  | Switch | When ON with repeat, playlist plays once then stops |
 
-These modes are controlled through three channels:
+The binding automatically converts these switch combinations into the appropriate device loop mode:
 
-- `repeat`: Enables/disables repeat mode
-- `shuffle`: Enables/disables shuffle mode
-- `loopOnce`: When enabled with repeat, plays playlist once instead of continuously
+| repeat | shuffle | loopOnce | Device Mode | Behavior                                    |
+|--------|---------|----------|-------------|---------------------------------------------|
+| OFF    | OFF     | OFF/ON   | 4          | Play once through playlist and stop         |
+| ON     | OFF     | OFF      | 0          | Play playlist continuously in order         |
+| ON     | OFF     | ON       | 1          | Play playlist once in order then stop       |
+| OFF    | ON      | OFF/ON   | 3          | Play playlist once in random order          |
+| ON     | ON      | OFF      | 2          | Play playlist continuously in random order  |
+| ON     | ON      | ON       | 5          | Play playlist once in random order then stop|
+
+Notes:
+
+- The `loopOnce` switch only has effect when `repeat` is ON
+- When `repeat` is OFF, the playlist will always stop after playing through once
+- The shuffle setting determines if tracks play in order or randomly
+- The device mode number is shown for reference but is handled internally by the binding
 
 ### System Group (`system`)
 
