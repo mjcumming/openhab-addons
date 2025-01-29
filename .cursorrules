@@ -1,4 +1,4 @@
-# .cursorrules for OpenHAB LinkPlay Binding
+# .cursorrules for OpenHAB Total Comfort Binding
 
 # General Guidelines
 - Adhere to the OpenHAB coding guidelines: https://www.openhab.org/docs/developer/guidelines.html
@@ -11,98 +11,158 @@
 - Leverage OpenHAB APIs and libraries.
 - Minimize external dependencies; rely on built-in or well-supported libraries for JSON, HTTP, etc.
 
-# Binding Purpose and Documentation
-This binding integrates with LinkPlay/Arylic-based audio devices, allowing:
-- Device discovery via UPnP (optional).
-- Device control and status via LinkPlay HTTP APIs (primary).
-- Multiroom grouping (join/leave/kick) via the LinkPlay multiroom API.
-- UART support (placeholder for specialized devices).
-Consult the following resources for more details:
-- LinkPlay HTTP API Docs: https://developer.arylic.com/httpapi/#http-api
-- OpenHAB Binding Development: https://www.openhab.org/docs/developer/bindings/
-- Existing LinkPlay references, such as https://github.com/Velleman/python-linkplay/tree/main/src/linkplay
+# SomeComfort OpenHAB Binding
 
-# Directory Structure and File Roles
+## Overview
+Implementation of the Honeywell Total Comfort Control API as an OpenHAB binding. Based on the Python async-somecomfort library, providing control and monitoring of Honeywell thermostats.
 
-## `org.openhab.binding.linkplay.internal`
-Entry point for internal code. Contains a device manager and shared utilities.
+## Directory Structure
+```
+org.openhab.binding.somecomfort/
+├── src/
+│   └── main/
+│       ├── java/
+│       │   └── org/openhab/binding/somecomfort/
+│       │       └── internal/
+│       │           ├── SomecomfortBindingConstants.java   # Constants and identifiers
+│       │           ├── client/                            # API client implementation
+│       │           │   ├── SomecomfortHttpClient.java     # Low-level HTTP client
+│       │           │   ├── SomecomfortApi.java           # High-level API operations
+│       │           │   ├── model/                        # Data model classes
+│       │           │   │   ├── Location.java            # Location data model
+│       │           │   │   └── Device.java              # Device data model
+│       │           │   └── exceptions/                   # Custom exceptions
+│       │           │       ├── SomeComfortError.java     # Base exception class
+│       │           │       ├── AuthError.java            # Authentication errors
+│       │           │       ├── APIError.java             # General API errors
+│       │           │       ├── SessionError.java         # Session handling errors
+│       │           │       ├── RateLimitError.java       # Rate limiting errors
+│       │           │       └── RequestError.java         # HTTP request errors
+│       │           ├── handler/                          # Thing handlers
+│       │           │   ├── SomecomfortHandlerFactory.java # Handler factory
+│       │           │   ├── SomecomfortBridgeHandler.java  # Bridge handler
+│       │           │   └── SomecomfortHandler.java        # Thing handler
+│       │           └── discovery/                         # Discovery service
+│       │               └── SomecomfortDiscoveryService.java
+│       └── resources/
+│           └── ESH-INF/
+│               └── thing/
+│                   └── thing-types.xml                   # Thing type definitions
+└── pom.xml                                              # Project build file
+```
 
-### `config`
-- **`LinkPlayConfiguration.java`**  
-  Holds and validates user/device config (e.g., IP address, polling intervals).  
-  Ensures default values and correct data types.
+## Client Package Organization
 
-### `discovery`
-- **`LinkPlayUpnpDiscoveryParticipant.java`**  
-  Detects LinkPlay devices on the network via UPnP.  
-  Determines device compatibility before creating the Thing.
+### Model Classes
+The `client/model` package contains data model classes that represent the core entities in the Honeywell Total Comfort system:
 
-### `handler`
-- **`LinkPlayThingHandler.java`**  
-  Primary openHAB interface for each LinkPlay device.  
-  Manages lifecycle events (initialize/dispose) and delegates commands.
-- **`LinkPlayHandlerFactory.java`**  
-  Creates new Thing handlers (e.g., `LinkPlayThingHandler`) for discovered or manually added Things.
+1. **Location.java**
+   - Represents a physical location containing thermostats
+   - Manages collection of devices at the location
+   - Properties:
+     - Location ID
+     - Name
+     - Collection of devices
 
-### `model`
-- **`LinkPlayMultiroomInfo.java`**  
-  Data model representing multiroom state (role, master IP, slave IPs).  
-  Parsed from device JSON and used by the multiroom manager.
+2. **Device.java**
+   - Represents a Honeywell thermostat device
+   - Manages device state and capabilities
+   - Properties:
+     - Device ID
+     - Name
+     - MAC ID
+     - Temperature readings
+     - Setpoints
+     - System modes
+     - Fan modes
+     - Equipment status
 
-### `multiroom`
-- **`LinkPlayGroupManager.java`**  
-  Coordinates grouping/ungrouping, join/leave commands, and master/slave roles.  
-  Relies on HTTP calls to implement multiroom operations.
+### Client Implementation
+The client package implements the API communication layer:
 
-### `transport`
-- **`http/LinkPlayHttpClient.java`**  
-  Low-level HTTP requests (GET/POST, timeouts).  
-- **`http/LinkPlayHttpManager.java`**  
-  Orchestrates HTTP polling, command sending, and JSON parsing.  
-- **`upnp/LinkPlayUpnpManager.java`**  
-  Subscribes to UPnP events for real-time state changes, if available.  
-- **`uart/LinkPlayUartManager.java`**  
-  (Optional) Placeholder for LinkPlay UART protocol support.
+1. **SomecomfortHttpClient.java**
+   - Low-level HTTP operations
+   - Session management
+   - Raw API calls
 
-### `metadata`
-- **`LinkPlayMetadataService.java`**  
-  Retrieves additional metadata (e.g., album art) from external sources.  
-  Invoked when title/artist changes to enrich displayed info.
+2. **SomecomfortApi.java**
+   - High-level API operations
+   - Data model conversion
+   - Business logic implementation
 
-### `utils`
-- **`HexConverter.java`**  
-  Utility class for converting hex-encoded strings to plain text.
+### Exception Handling
+The `client/exceptions` package provides a hierarchy of custom exceptions for different error scenarios:
 
-### Core Coordinator
-- **`LinkPlayDeviceManager.java`**  
-  Central coordinator that creates/holds references to `LinkPlayHttpManager`, `LinkPlayUpnpManager`, `LinkPlayGroupManager`, etc.  
-  Processes device status and updates channels via `LinkPlayThingHandler`.
+1. **SomeComfortError.java** - Base exception class
+2. **AuthError.java** - Authentication failures
+3. **APIError.java** - General API errors
+4. **SessionError.java** - Session management issues
+5. **RateLimitError.java** - Rate limiting violations
+6. **RequestError.java** - HTTP request failures
 
-### `resources` (OpenHAB internal config files)
-- **`OH-INF/addon.xml`**  
-  Metadata about this binding (name, version, author).
-- **`OH-INF/thing/linkplay-player.xml`**  
-  Defines channels (volume, mute, etc.) for LinkPlay-based devices.
-- **`OH-INF/i18n/linkplay.properties`**  
-  Localization keys and messages for the LinkPlay binding.
+## Critical Implementation Details
 
-# **References & Further Reading**
+### HTTP Client Requirements
+1. Must exactly match Python requests library headers:
+   ```
+   User-Agent: Mozilla/5.0
+   X-Requested-With: XMLHttpRequest
+   Accept: application/json, text/javascript, */*; q=0.01
+   ```
+2. Login requires initial GET then POST with timeOffset=480
+3. Cookie handling must persist across requests
+4. Session handling matches Python implementation with keepalive checks
+
+### API Endpoints
+- `/Account/LogOn` - Authentication
+- `/Location/GetLocationListData` - List locations
+- `/Device/CheckDataSession/{deviceId}` - Get device data
+- `/Device/SubmitControlScreenChanges` - Update device settings
+
+### Device Features
+1. Temperature units (F/C) handling
+2. Outdoor temp/humidity when available
+3. Hold modes: none/temporary/permanent
+4. System modes: emheat, heat, off, cool, auto
+5. Fan modes: auto, on, circulate, follow schedule
+
+### Authentication Flow
+1. Initial GET to /portal
+2. POST credentials with timeOffset
+3. Store session cookies
+4. Verify with keepalive check
+5. Handle automatic re-auth on timeout
+
+### OpenHAB Integration Points
+1. Bridge represents account
+2. Things represent thermostats
+3. Channels for:
+   - Temperature readings
+   - Setpoints
+   - System/Fan modes
+   - Hold settings
+   - Outdoor conditions
+
+## Reference Code
+Reference Python implementation in `async-somecomfort`:
+- Connection handling in Client class
+- Device data structures
+- API endpoint mappings
+
+## Critical Notes
+1. API rate limiting at 6 requests/minute
+2. All temperature values in Fahrenheit
+3. Hold times must be 15-minute boundaries
+4. Polling interval minimum 60 seconds
+5. Must handle partial device data
 
 1. [OpenHAB Developer Guidelines](https://www.openhab.org/docs/developer/guidelines.html)  
 2. [OpenHAB Binding Development](https://www.openhab.org/docs/developer/bindings/)  
-3. [LinkPlay/Arylic HTTP API Docs](https://developer.arylic.com/httpapi/#http-api)  
-4. [LinkPlay Python Implementation](https://github.com/Velleman/python-linkplay/tree/main/src/linkplay)  
-5. WeMo Binding (UPnP Example) - [openhab-addons GitHub](https://github.com/openhab/openhab-addons/tree/main/bundles/org.openhab.binding.wemo)  
-6. Samsung TV Binding (HTTP + UPnP Example) - [openhab-addons GitHub](https://github.com/openhab/openhab-addons/tree/main/bundles/org.openhab.binding.samsungtv)
-
+3. [OpenHAB Add-on Development](https://www.openhab.org/docs/developer/addons/)
+4. python reference code [text](https://github.com/kk7ds/somecomfort)
 ---
 
-**End of Document**
-## **Research and Reference Documents**
-- **LinkPlay API Documentation**: [LinkPlay API Docs](https://developer.arylic.com/httpapi/#http-api)
-- **LinkPlay Python Implementation**: [GitHub Repository](https://github.com/Velleman/python-linkplay/tree/main/src/linkplay)
-- **Wemo Binding**: Reference for modern UPnP implementation.
-- **Sonos Binding**: Robust patterns for audio devices.
+
 - **OpenHAB Developer Resources**:
   - [Binding Development](https://www.openhab.org/docs/developer/bindings/)
   - [Add-on Development](https://www.openhab.org/docs/developer/addons/)

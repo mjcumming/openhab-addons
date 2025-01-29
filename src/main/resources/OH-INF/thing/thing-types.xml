@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<thing:thing-descriptions bindingId="somecomfort"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:thing="https://openhab.org/schemas/thing-description/v1.0.0"
+    xsi:schemaLocation="https://openhab.org/schemas/thing-description/v1.0.0 https://openhab.org/schemas/thing-description/v1.0.0">
+
+    <bridge-type id="bridge">
+        <label>SomeComfort Account</label>
+        <description>Bridge representing a Honeywell Total Connect Comfort account</description>
+        <config-description>
+            <parameter name="username" type="text" required="true">
+                <label>Username</label>
+                <description>Total Connect Comfort account username</description>
+            </parameter>
+            <parameter name="password" type="text" required="true">
+                <context>password</context>
+                <label>Password</label>
+                <description>Total Connect Comfort account password</description>
+            </parameter>
+            <parameter name="pollingInterval" type="integer" min="60" max="3600" unit="s" required="false">
+                <label>Polling Interval</label>
+                <description>Interval between device updates (in seconds)</description>
+                <default>120</default>
+            </parameter>
+        </config-description>
+    </bridge-type>
+
+    <thing-type id="thermostat">
+        <supported-bridge-type-refs>
+            <bridge-type-ref id="bridge"/>
+        </supported-bridge-type-refs>
+        <label>Honeywell Thermostat</label>
+        <description>Honeywell Total Connect Comfort Thermostat</description>
+        
+        <channels>
+            <channel id="temperature" typeId="temperature">
+                <label>Indoor Temperature</label>
+                <description>Current indoor temperature</description>
+            </channel>
+            <channel id="humidity" typeId="humidity">
+                <label>Indoor Humidity</label>
+                <description>Current indoor humidity</description>
+            </channel>
+            <channel id="outdoorTemperature" typeId="temperature">
+                <label>Outdoor Temperature</label>
+                <description>Current outdoor temperature (if available)</description>
+                <properties>
+                    <property name="isOutdoor">true</property>
+                </properties>
+            </channel>
+            <channel id="outdoorHumidity" typeId="humidity">
+                <label>Outdoor Humidity</label>
+                <description>Current outdoor humidity (if available)</description>
+                <properties>
+                    <property name="isOutdoor">true</property>
+                </properties>
+            </channel>
+            <channel id="setpointHeat" typeId="setpoint">
+                <label>Heat Setpoint</label>
+                <description>Target heating temperature</description>
+            </channel>
+            <channel id="setpointCool" typeId="setpoint">
+                <label>Cool Setpoint</label>
+                <description>Target cooling temperature</description>
+            </channel>
+            <channel id="fanMode" typeId="fanMode"/>
+            <channel id="systemMode" typeId="systemMode"/>
+            <channel id="runningState" typeId="runningState"/>
+            <channel id="holdMode" typeId="holdMode"/>
+        </channels>
+
+        <config-description>
+            <parameter name="deviceId" type="text" required="true">
+                <label>Device ID</label>
+                <description>The ID of the thermostat device</description>
+            </parameter>
+            <parameter name="locationId" type="text" required="true">
+                <label>Location ID</label>
+                <description>The ID of the location where the thermostat is installed</description>
+            </parameter>
+        </config-description>
+    </thing-type>
+
+    <!-- Channel Types -->
+    <channel-type id="temperature">
+        <item-type>Number:Temperature</item-type>
+        <label>Temperature</label>
+        <category>Temperature</category>
+        <state pattern="%.1f %unit%" readOnly="true"/>
+    </channel-type>
+
+    <channel-type id="setpoint">
+        <item-type>Number:Temperature</item-type>
+        <label>Temperature Setpoint</label>
+        <category>Temperature</category>
+        <state pattern="%.1f %unit%" min="40" max="99" step="0.5"/>
+    </channel-type>
+
+    <channel-type id="humidity">
+        <item-type>Number:Dimensionless</item-type>
+        <label>Humidity</label>
+        <category>Humidity</category>
+        <state pattern="%.1f %%" readOnly="true"/>
+    </channel-type>
+
+    <channel-type id="fanMode">
+        <item-type>String</item-type>
+        <label>Fan Mode</label>
+        <category>Fan</category>
+        <state>
+            <options>
+                <option value="auto">Auto</option>
+                <option value="on">On</option>
+                <option value="circulate">Circulate</option>
+                <option value="followSchedule">Follow Schedule</option>
+            </options>
+        </state>
+    </channel-type>
+
+    <channel-type id="systemMode">
+        <item-type>String</item-type>
+        <label>System Mode</label>
+        <category>HVAC</category>
+        <state>
+            <options>
+                <option value="off">Off</option>
+                <option value="heat">Heat</option>
+                <option value="cool">Cool</option>
+                <option value="auto">Auto</option>
+                <option value="emheat">Emergency Heat</option>
+            </options>
+        </state>
+    </channel-type>
+
+    <channel-type id="runningState">
+        <item-type>String</item-type>
+        <label>Running State</label>
+        <category>HVAC</category>
+        <state readOnly="true">
+            <options>
+                <option value="off">Off</option>
+                <option value="heat">Heating</option>
+                <option value="cool">Cooling</option>
+                <option value="fan">Fan Only</option>
+            </options>
+        </state>
+    </channel-type>
+
+    <channel-type id="holdMode">
+        <item-type>String</item-type>
+        <label>Hold Mode</label>
+        <description>Temperature hold mode</description>
+        <state>
+            <options>
+                <option value="none">None</option>
+                <option value="temporary">Temporary</option>
+                <option value="permanent">Permanent</option>
+            </options>
+        </state>
+    </channel-type>
+</thing:thing-descriptions> 
