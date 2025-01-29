@@ -28,6 +28,7 @@ import org.openhab.binding.linkplay.internal.transport.http.LinkPlayHttpClient;
 import org.openhab.binding.linkplay.internal.transport.uart.UartManager;
 import org.openhab.binding.linkplay.internal.utils.HexConverter;
 import org.openhab.core.io.transport.upnp.UpnpIOService;
+import org.openhab.core.library.types.DecimalType;
 import org.openhab.core.library.types.OnOffType;
 import org.openhab.core.library.types.PercentType;
 import org.openhab.core.library.types.PlayPauseType;
@@ -275,30 +276,52 @@ public class DeviceManager {
 
                 case BindingConstants.CHANNEL_REPEAT:
                 case BindingConstants.CHANNEL_SHUFFLE:
+                case BindingConstants.CHANNEL_LOOP_ONCE:
                     boolean newState = command.toString().equalsIgnoreCase("ON");
                     boolean repeat = deviceState.isRepeat();
                     boolean shuffle = deviceState.isShuffle();
+                    boolean loopOnce = deviceState.isLoopOnce();
 
                     // Update the appropriate flag based on which channel received the command
                     if (channel.equals(BindingConstants.CHANNEL_REPEAT)) {
                         repeat = newState;
+                    } else if (channel.equals(BindingConstants.CHANNEL_LOOP_ONCE)) {
+                        loopOnce = newState;
                     } else {
                         shuffle = newState;
+                    }
+
+                    // Calculate loop mode value based on combination:
+                    int loopMode;
+                    if (loopOnce) {
+                        loopMode = shuffle ? 5 : 1; // Loop once with/without shuffle
+                    } else if (repeat && shuffle) {
+                        loopMode = 2; // Loop with shuffle
+                    } else if (repeat) {
+                        loopMode = 0; // Loop without shuffle
+                    } else if (shuffle) {
+                        loopMode = 3; // Shuffle without repeat
+                    } else {
+                        loopMode = 4; // All disabled
                     }
 
                     // Store final values for use in lambda
                     final boolean finalRepeat = repeat;
                     final boolean finalShuffle = shuffle;
+                    final boolean finalLoopOnce = loopOnce;
 
                     // Send command to device and update state on success
-                    future = httpManager.setLoopMode(repeat, shuffle).thenApply(result -> {
+                    future = httpManager.setLoopMode(loopMode).thenApply(result -> {
                         if (result.isSuccess()) {
                             deviceState.setRepeat(finalRepeat);
                             deviceState.setShuffle(finalShuffle);
+                            deviceState.setLoopOnce(finalLoopOnce);
                             updateState(BindingConstants.GROUP_PLAYBACK + "#" + BindingConstants.CHANNEL_REPEAT,
                                     OnOffType.from(finalRepeat));
                             updateState(BindingConstants.GROUP_PLAYBACK + "#" + BindingConstants.CHANNEL_SHUFFLE,
                                     OnOffType.from(finalShuffle));
+                            updateState(BindingConstants.GROUP_PLAYBACK + "#" + BindingConstants.CHANNEL_LOOP_ONCE,
+                                    OnOffType.from(finalLoopOnce));
                         }
                         return result;
                     });
@@ -324,6 +347,30 @@ public class DeviceManager {
                             logger.warn("[{}] Unsupported input source requested: {}", config.getDeviceName(),
                                     requestedSource);
                         }
+                    }
+                    break;
+
+                case BindingConstants.CHANNEL_URL_PLAY:
+                    if (command instanceof StringType) {
+                        future = httpManager.play(command.toString());
+                    }
+                    break;
+
+                case BindingConstants.CHANNEL_M3U_PLAY:
+                    if (command instanceof StringType) {
+                        future = httpManager.playM3u(command.toString());
+                    }
+                    break;
+
+                case BindingConstants.CHANNEL_PRESET:
+                    if (command instanceof DecimalType) {
+                        future = httpManager.playPreset(((DecimalType) command).intValue());
+                    }
+                    break;
+
+                case BindingConstants.CHANNEL_NOTIFICATION:
+                    if (command instanceof StringType) {
+                        future = httpManager.playNotification(command.toString());
                     }
                     break;
 
@@ -533,16 +580,50 @@ public class DeviceManager {
         // Process repeat and shuffle based on loop mode
         try {
             int loopMode = Integer.parseInt(getJsonString(json, "loop"));
-            boolean repeat = (loopMode & 1) == 1; // Bit 0: repeat
-            boolean shuffle = (loopMode & 2) == 2; // Bit 1: shuffle
+            boolean repeat = false;
+            boolean shuffle = false;
+            boolean loopOnce = false;
+
+            // Parse loop mode:
+            // 0: SHUFFLE: disabled, REPEAT: enabled - loop
+            // 1: SHUFFLE: disabled, REPEAT: enabled - loop once
+            // 2: SHUFFLE: enabled, REPEAT: enabled - loop
+            // 3: SHUFFLE: enabled, REPEAT: disabled
+            // 4: SHUFFLE: disabled, REPEAT: disabled
+            // 5: SHUFFLE: enabled, REPEAT: enabled - loop once
+            switch (loopMode) {
+                case 0:
+                    repeat = true;
+                    break;
+                case 1:
+                    repeat = true;
+                    loopOnce = true;
+                    break;
+                case 2:
+                    repeat = true;
+                    shuffle = true;
+                    break;
+                case 3:
+                    shuffle = true;
+                    break;
+                case 5:
+                    repeat = true;
+                    shuffle = true;
+                    loopOnce = true;
+                    break;
+                // case 4 is all disabled (default values)
+            }
 
             deviceState.setRepeat(repeat);
             deviceState.setShuffle(shuffle);
+            deviceState.setLoopOnce(loopOnce);
 
             updateState(BindingConstants.GROUP_PLAYBACK + "#" + BindingConstants.CHANNEL_REPEAT,
                     OnOffType.from(repeat));
             updateState(BindingConstants.GROUP_PLAYBACK + "#" + BindingConstants.CHANNEL_SHUFFLE,
                     OnOffType.from(shuffle));
+            updateState(BindingConstants.GROUP_PLAYBACK + "#" + BindingConstants.CHANNEL_LOOP_ONCE,
+                    OnOffType.from(loopOnce));
         } catch (NumberFormatException e) {
             logger.debug("[{}] Failed to parse loop mode: {}", config.getDeviceName(), e.getMessage());
         }

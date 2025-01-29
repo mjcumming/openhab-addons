@@ -60,6 +60,7 @@ public class DeviceState {
     // Mute, repeat, and shuffle are boolean toggles
     private boolean mute;
     private boolean repeat;
+    private boolean loopOnce;
     private boolean shuffle;
     // Current audio source (e.g., Spotify, AirPlay, Line-in)
     private @Nullable String source;
@@ -91,6 +92,7 @@ public class DeviceState {
         this.volume = 0;
         this.mute = false;
         this.repeat = false;
+        this.loopOnce = false;
         this.shuffle = false;
         this.source = SOURCE_UNKNOWN;
         this.deviceMac = null;
@@ -246,6 +248,14 @@ public class DeviceState {
 
     public void setRepeat(boolean repeat) {
         this.repeat = repeat;
+    }
+
+    public boolean isLoopOnce() {
+        return loopOnce;
+    }
+
+    public void setLoopOnce(boolean loopOnce) {
+        this.loopOnce = loopOnce;
     }
 
     public boolean isShuffle() {

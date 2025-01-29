@@ -71,10 +71,15 @@ public class BindingConstants {
     public static final String CHANNEL_VOLUME = "volume";
     public static final String CHANNEL_MUTE = "mute";
     public static final String CHANNEL_REPEAT = "repeat";
+    public static final String CHANNEL_LOOP_ONCE = "loopOnce";
     public static final String CHANNEL_SHUFFLE = "shuffle";
     public static final String CHANNEL_INPUT_SOURCE = "input_source";
     public static final String CHANNEL_MODE = "mode";
     public static final String CHANNEL_ALBUM_ART = "albumArt";
+    public static final String CHANNEL_URL_PLAY = "url";
+    public static final String CHANNEL_M3U_PLAY = "m3u";
+    public static final String CHANNEL_PRESET = "preset";
+    public static final String CHANNEL_NOTIFICATION = "notification";
 
     // System Channels
     public static final String CHANNEL_DEVICE_NAME = "deviceName";

@@ -54,10 +54,34 @@ Thing linkplay:device:living [ ipAddress="192.168.1.100" ]
 | position   | Number:Time    | Current playback position in seconds         |
 | volume     | Dimmer        | Volume control (0-100%)                      |
 | mute       | Switch        | Mute control                                 |
-| repeat     | Switch        | Repeat mode                                  |
-| shuffle    | Switch        | Shuffle mode                                 |
+| repeat     | Switch        | Enable/disable repeat mode                   |
+| shuffle    | Switch        | Enable/disable shuffle mode                  |
+| loopOnce   | Switch        | Enable/disable loop once mode               |
 | mode       | String        | Current playback mode (read-only)            |
 | input_source | String      | Input source selection (controllable)        |
+| url        | String        | Play audio directly from a URL               |
+| m3u        | String        | Play M3U/M3U8 playlist from URL             |
+| preset     | Number        | Select and play preset (0-10)               |
+| notification | String      | Play notification sound from URL             |
+
+#### Loop Mode Combinations
+
+The device supports various combinations of repeat, shuffle, and loop once modes:
+
+| Mode | Shuffle | Repeat | Description |
+|------|---------|---------|-------------|
+| 0 | Off | On | Normal repeat - plays playlist continuously |
+| 1 | Off | On | Loop once - plays playlist once and stops |
+| 2 | On | On | Shuffle repeat - plays playlist continuously in random order |
+| 3 | On | Off | Shuffle only - plays playlist once in random order |
+| 4 | Off | Off | No repeat or shuffle - plays playlist once in order |
+| 5 | On | On | Shuffle loop once - plays playlist once in random order then stops |
+
+These modes are controlled through three channels:
+
+- `repeat`: Enables/disables repeat mode
+- `shuffle`: Enables/disables shuffle mode
+- `loopOnce`: When enabled with repeat, plays playlist once instead of continuously
 
 ### System Group (`system`)
 
@@ -89,50 +113,8 @@ The binding provides both state channels and trigger channels for multiroom cont
 | groupMute   | Switch    | Group-wide mute control                        |
 | join        | String    | Join a group (provide master IP)               |
 | kickout     | String    | Remove a slave from group (provide slave IP)   |
-
-#### Trigger Channels
-
-| Channel ID   | Description                                    |
-|-------------|------------------------------------------------|
-| leave       | Leave current multiroom group (if slave)        |
-| ungroup     | Disband entire group (if master)               |
-
-### Example Rules
-
-1. Join a group:
-
-```java
-rule "Join Living Room Group"
-when
-    Item BedroomJoinGroup received command "192.168.1.100"
-then
-    // The command itself will trigger the join
-end
-```
-
-2. Using trigger channels:
-
-```java
-rule "Ungroup Living Room"
-when
-    Channel "linkplay:mediastreamer:living_room:multiroom#ungroup" triggered
-then
-    // The group will be disbanded
-end
-```
-
-3. Kick a device from group:
-
-```java
-rule "Kick Device from Group"
-when
-    Item KickoutDevice received command "192.168.1.101"
-then
-    // The command will remove the specified device from the group
-end
-```
-
-The trigger channels can also be used directly in the UI rule builder by selecting the appropriate trigger channel.
+| leave       | Switch    | Leave current multiroom group (if slave)       |
+| ungroup     | Switch    | Disband entire group (if master)              |
 
 ### Playback Modes and Input Sources
 
@@ -180,6 +162,53 @@ Users can control the device's input source through this channel:
 | UNKNOWN      | Unknown Source             |
 
 Note: Available inputs vary by device model. The mode channel provides detailed status about the current playback source (including streaming services), while the input_source channel allows switching between physical inputs and the network streaming mode.
+
+### URL Playback Capabilities
+
+The binding supports various URL-based playback methods:
+
+#### Direct URL Playback (`playback#url`)
+
+Play audio directly from a URL. Supports common audio formats (MP3, AAC, etc.):
+
+```java
+String LivingRoom_URL "Direct URL" { channel="linkplay:device:living:playback#url" }
+```
+
+#### M3U Playlist Playback (`playback#m3u`)
+
+Play M3U/M3U8 playlists from a URL:
+
+```java
+String LivingRoom_M3U "M3U Playlist" { channel="linkplay:device:living:playback#m3u" }
+```
+
+#### Preset Selection (`playback#preset`)
+
+Select and play a stored preset (0-10):
+
+```java
+Number LivingRoom_Preset "Preset" { channel="linkplay:device:living:playback#preset" }
+```
+
+#### Notification Sounds (`playback#notification`)
+
+Play notification sounds from a URL (only during NETWORK or USB playback):
+
+```java
+String LivingRoom_Notification "Notification" { channel="linkplay:device:living:playback#notification" }
+```
+
+Example rule for playing a notification:
+
+```java
+rule "Doorbell Notification"
+when
+    Item Doorbell changed to ON
+then
+    LivingRoom_Notification.sendCommand("http://example.com/doorbell.mp3")
+end
+```
 
 ## Full Example
 

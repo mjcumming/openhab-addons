@@ -66,9 +66,14 @@
 			<channel id="volume" typeId="system.volume"/>
 			<channel id="mute" typeId="system.mute"/>
 			<channel id="repeat" typeId="repeat"/>
+			<channel id="loopOnce" typeId="loopOnce"/>
 			<channel id="shuffle" typeId="shuffle"/>
 			<channel id="input_source" typeId="input_source"/>
 			<channel id="mode" typeId="mode"/>
+			<channel id="url" typeId="url"/>
+			<channel id="m3u" typeId="m3u"/>
+			<channel id="preset" typeId="preset"/>
+			<channel id="notification" typeId="notification"/>
 		</channels>
 	</channel-group-type>
 
@@ -117,6 +122,16 @@
 		<item-type>Switch</item-type>
 		<label>Repeat</label>
 		<description>Enable/disable repeat mode</description>
+		<category>MediaControl</category>
+		<state readOnly="false"/>
+	</channel-type>
+
+	<!-- "loopOnce" => Switch -->
+	<channel-type id="loopOnce">
+		<item-type>Switch</item-type>
+		<label>Loop Once</label>
+		<description>When enabled with repeat: plays through playlist once and stops. Can be combined with shuffle (mode 1
+			without shuffle, mode 5 with shuffle)</description>
 		<category>MediaControl</category>
 		<state readOnly="false"/>
 	</channel-type>
@@ -248,18 +263,22 @@
 		<autoUpdatePolicy>veto</autoUpdatePolicy>
 	</channel-type>
 
-	<!-- leave => Trigger -->
+	<!-- leave => Switch -->
 	<channel-type id="leave">
-		<kind>trigger</kind>
+		<item-type>Switch</item-type>
 		<label>Leave Group</label>
-		<description>Leave current multiroom group (if slave)</description>
+		<description>Leave current multiroom group (if slave). Send ON to trigger.</description>
+		<category>Switch</category>
+		<state readOnly="false"/>
 	</channel-type>
 
-	<!-- ungroup => Trigger -->
+	<!-- ungroup => Switch -->
 	<channel-type id="ungroup">
-		<kind>trigger</kind>
+		<item-type>Switch</item-type>
 		<label>Ungroup</label>
-		<description>Disband current multiroom group (if master)</description>
+		<description>Disband current multiroom group (if master). Send ON to trigger.</description>
+		<category>Switch</category>
+		<state readOnly="false"/>
 	</channel-type>
 
 	<!-- kickout => String -->
@@ -323,6 +342,42 @@
 		<label>Set Group Mute</label>
 		<description>Set mute state for all devices in the group</description>
 		<category>SoundVolume</category>
+	</channel-type>
+
+	<!-- url => String -->
+	<channel-type id="url">
+		<item-type>String</item-type>
+		<label>Play URL</label>
+		<description>Play audio directly from a URL</description>
+		<category>MediaControl</category>
+		<state readOnly="false"/>
+	</channel-type>
+
+	<!-- m3u => String -->
+	<channel-type id="m3u">
+		<item-type>String</item-type>
+		<label>Play M3U</label>
+		<description>Play M3U/M3U8 playlist from URL</description>
+		<category>MediaControl</category>
+		<state readOnly="false"/>
+	</channel-type>
+
+	<!-- preset => Number -->
+	<channel-type id="preset">
+		<item-type>Number</item-type>
+		<label>Preset</label>
+		<description>Select and play preset (0-10)</description>
+		<category>MediaControl</category>
+		<state min="0" max="10" step="1"/>
+	</channel-type>
+
+	<!-- notification => String -->
+	<channel-type id="notification">
+		<item-type>String</item-type>
+		<label>Notification Sound</label>
+		<description>Play notification sound from URL (only during NETWORK or USB playback)</description>
+		<category>MediaControl</category>
+		<state readOnly="false"/>
 	</channel-type>
 
 </thing:thing-descriptions>

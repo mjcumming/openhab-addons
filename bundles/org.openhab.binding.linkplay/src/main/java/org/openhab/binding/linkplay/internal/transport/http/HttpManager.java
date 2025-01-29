@@ -140,6 +140,12 @@ public class HttpManager {
      * Set the loop mode for the current playback
      *
      * @param mode Loop mode value (0-5)
+     *            0: SHUFFLE: disabled, REPEAT: enabled - loop
+     *            1: SHUFFLE: disabled, REPEAT: enabled - loop once
+     *            2: SHUFFLE: enabled, REPEAT: enabled - loop
+     *            3: SHUFFLE: enabled, REPEAT: disabled
+     *            4: SHUFFLE: disabled, REPEAT: disabled
+     *            5: SHUFFLE: enabled, REPEAT: enabled - loop once
      * @return A CompletableFuture containing the command result
      */
     public CompletableFuture<CommandResult> setLoopMode(int mode) {
@@ -248,18 +254,6 @@ public class HttpManager {
      */
     public CompletableFuture<CommandResult> volumeDown() {
         return httpClient.sendRequest(config.getIpAddress(), "setPlayerCmd:vol--");
-    }
-
-    /**
-     * Set the repeat and shuffle modes
-     *
-     * @param repeat Whether to enable repeat mode
-     * @param shuffle Whether to enable shuffle mode
-     * @return A CompletableFuture containing the command result
-     */
-    public CompletableFuture<CommandResult> setLoopMode(boolean repeat, boolean shuffle) {
-        String command = String.format("setPlayerCmd:loopmode:%d:randommode:%d", repeat ? 1 : 0, shuffle ? 1 : 0);
-        return httpClient.sendRequest(config.getIpAddress(), command);
     }
 
     /**
