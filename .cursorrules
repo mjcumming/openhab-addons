@@ -1,168 +1,312 @@
-# .cursorrules for OpenHAB Total Comfort Binding
+REFERNCE API https://github.com/kk7ds/somecomfort
 
-# General Guidelines
-- Adhere to the OpenHAB coding guidelines: https://www.openhab.org/docs/developer/guidelines.html
-- Follow established patterns and best practices from existing OpenHAB bindings.
-- Prioritize code readability and maintainability.
-- Use clear and concise comments to explain code logic.
-
-# Language and Framework
-- Use Java for all code within the binding.
-- Leverage OpenHAB APIs and libraries.
-- Minimize external dependencies; rely on built-in or well-supported libraries for JSON, HTTP, etc.
-
-# SomeComfort OpenHAB Binding
+# HoneywellTCC OpenHAB Binding Development Guide
 
 ## Overview
-Implementation of the Honeywell Total Comfort Control API as an OpenHAB binding. Based on the Python async-somecomfort library, providing control and monitoring of Honeywell thermostats.
+This guide details the implementation of a binding for Honeywell Total Comfort Control (TCC) thermostats in OpenHAB. The implementation must follow the OpenHAB development guidelines and patterns while exactly matching the HTTP behavior of the reference Python implementation.
 
-## Directory Structure
+**IMPORTANT: Follow existing OpenHAB design patterns. Reference existing bindings in the OpenHAB codebase for implementation guidance. Consistency with OpenHAB conventions is critical.**
+
+# HoneywellTCC OpenHAB Binding Development Guide
+
+## Overview
+This guide details the implementation of a binding for Honeywell Total Comfort Control (TCC) thermostats in OpenHAB. The implementation must follow the OpenHAB development guidelines and patterns while exactly matching the HTTP behavior of the reference Python implementation: https://github.com/kk7ds/somecomfort
+
+**IMPORTANT: Follow existing OpenHAB design patterns. Reference existing bindings in the OpenHAB codebase for implementation guidance.**
+
+## Project Structure
 ```
-org.openhab.binding.somecomfort/
-├── src/
-│   └── main/
-│       ├── java/
-│       │   └── org/openhab/binding/somecomfort/
-│       │       └── internal/
-│       │           ├── SomecomfortBindingConstants.java   # Constants and identifiers
-│       │           ├── client/                            # API client implementation
-│       │           │   ├── SomecomfortHttpClient.java     # Low-level HTTP client
-│       │           │   ├── SomecomfortApi.java           # High-level API operations
-│       │           │   ├── model/                        # Data model classes
-│       │           │   │   ├── Location.java            # Location data model
-│       │           │   │   └── Device.java              # Device data model
-│       │           │   └── exceptions/                   # Custom exceptions
-│       │           │       ├── SomeComfortError.java     # Base exception class
-│       │           │       ├── AuthError.java            # Authentication errors
-│       │           │       ├── APIError.java             # General API errors
-│       │           │       ├── SessionError.java         # Session handling errors
-│       │           │       ├── RateLimitError.java       # Rate limiting errors
-│       │           │       └── RequestError.java         # HTTP request errors
-│       │           ├── handler/                          # Thing handlers
-│       │           │   ├── SomecomfortHandlerFactory.java # Handler factory
-│       │           │   ├── SomecomfortBridgeHandler.java  # Bridge handler
-│       │           │   └── SomecomfortHandler.java        # Thing handler
-│       │           └── discovery/                         # Discovery service
-│       │               └── SomecomfortDiscoveryService.java
-│       └── resources/
-│           └── ESH-INF/
-│               └── thing/
-│                   └── thing-types.xml                   # Thing type definitions
-└── pom.xml                                              # Project build file
+org.openhab.binding.honeywelltcc/
+├── README.md                              // Binding documentation
+├── pom.xml                                // Maven build file
+├── src/main/java/org/openhab/binding/honeywelltcc/
+│   └── internal/
+│       ├── HoneywellTCCBindingConstants.java
+│       ├── HoneywellTCCHandlerFactory.java
+│       ├── handler/
+│       │   ├── HoneywellTCCBridgeHandler.java
+│       │   └── HoneywellTCCThermostatHandler.java
+│       └── client/                        // API client implementation
+│           └── TCCClient.java            // Based on Python implementation
+└── src/main/resources/
+    └── OH-INF/
+        ├── binding/
+        │   └── binding.xml               // Binding definition
+        └── thing/
+            └── thing-types.xml           // Thing type definitions
 ```
 
-## Client Package Organization
+## Core Files Implementation
 
-### Model Classes
-The `client/model` package contains data model classes that represent the core entities in the Honeywell Total Comfort system:
+### 1. pom.xml
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://maven.apache.org/POM/4.0.0"
+    xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
 
-1. **Location.java**
-   - Represents a physical location containing thermostats
-   - Manages collection of devices at the location
-   - Properties:
-     - Location ID
-     - Name
-     - Collection of devices
+  <modelVersion>4.0.0</modelVersion>
 
-2. **Device.java**
-   - Represents a Honeywell thermostat device
-   - Manages device state and capabilities
-   - Properties:
-     - Device ID
-     - Name
-     - MAC ID
-     - Temperature readings
-     - Setpoints
-     - System modes
-     - Fan modes
-     - Equipment status
+  <parent>
+    <groupId>org.openhab.addons.bundles</groupId>
+    <artifactId>org.openhab.addons.reactor.bundles</artifactId>
+    <version>4.1.0-SNAPSHOT</version>
+  </parent>
 
-### Client Implementation
-The client package implements the API communication layer:
+  <artifactId>org.openhab.binding.honeywelltcc</artifactId>
 
-1. **SomecomfortHttpClient.java**
-   - Low-level HTTP operations
-   - Session management
-   - Raw API calls
+  <name>openHAB Add-ons :: Bundles :: HoneywellTCC Binding</name>
 
-2. **SomecomfortApi.java**
-   - High-level API operations
-   - Data model conversion
-   - Business logic implementation
+  <dependencies>
+    <dependency>
+      <groupId>com.google.code.gson</groupId>
+      <artifactId>gson</artifactId>
+      <version>${gson.version}</version>
+      <scope>provided</scope>
+    </dependency>
+  </dependencies>
+</project>
+```
 
-### Exception Handling
-The `client/exceptions` package provides a hierarchy of custom exceptions for different error scenarios:
+### 2. binding.xml
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<binding:binding id="honeywelltcc" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:binding="https://openhab.org/schemas/binding/v1.0.0"
+    xsi:schemaLocation="https://openhab.org/schemas/binding/v1.0.0 https://openhab.org/schemas/binding-1.0.0.xsd">
 
-1. **SomeComfortError.java** - Base exception class
-2. **AuthError.java** - Authentication failures
-3. **APIError.java** - General API errors
-4. **SessionError.java** - Session management issues
-5. **RateLimitError.java** - Rate limiting violations
-6. **RequestError.java** - HTTP request failures
+  <name>HoneywellTCC Binding</name>
+  <description>Controls Honeywell Total Comfort Control thermostats</description>
+  <author>Your Name</author>
 
-## Critical Implementation Details
+</binding:binding>
+```
 
-### HTTP Client Requirements
-1. Must exactly match Python requests library headers:
-   ```
-   User-Agent: Mozilla/5.0
-   X-Requested-With: XMLHttpRequest
-   Accept: application/json, text/javascript, */*; q=0.01
-   ```
-2. Login requires initial GET then POST with timeOffset=480
-3. Cookie handling must persist across requests
-4. Session handling matches Python implementation with keepalive checks
+### 3. thing-types.xml
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<thing:thing-descriptions bindingId="honeywelltcc"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:thing="https://openhab.org/schemas/thing-description/v1.0.0"
+    xsi:schemaLocation="https://openhab.org/schemas/thing-description/v1.0.0 https://openhab.org/schemas/thing-description-1.0.0.xsd">
 
-### API Endpoints
-- `/Account/LogOn` - Authentication
-- `/Location/GetLocationListData` - List locations
-- `/Device/CheckDataSession/{deviceId}` - Get device data
-- `/Device/SubmitControlScreenChanges` - Update device settings
+    <!-- Bridge -->
+    <bridge-type id="bridge">
+        <label>Honeywell TCC Account</label>
+        <description>Honeywell Total Comfort Control account connection</description>
 
-### Device Features
-1. Temperature units (F/C) handling
-2. Outdoor temp/humidity when available
-3. Hold modes: none/temporary/permanent
-4. System modes: emheat, heat, off, cool, auto
-5. Fan modes: auto, on, circulate, follow schedule
+        <config-description>
+            <parameter name="username" type="text" required="true">
+                <context>username</context>
+                <label>Username</label>
+                <description>Honeywell TCC account username</description>
+            </parameter>
+            <parameter name="password" type="text" required="true">
+                <context>password</context>
+                <label>Password</label>
+                <description>Honeywell TCC account password</description>
+            </parameter>
+            <parameter name="refresh" type="integer" min="60" unit="s">
+                <label>Refresh Interval</label>
+                <description>Time between device updates (minimum 60 seconds)</description>
+                <default>300</default>
+            </parameter>
+        </config-description>
+    </bridge-type>
 
-### Authentication Flow
-1. Initial GET to /portal
-2. POST credentials with timeOffset
-3. Store session cookies
-4. Verify with keepalive check
-5. Handle automatic re-auth on timeout
+    <!-- Thermostat -->
+    <thing-type id="thermostat">
+        <supported-bridge-type-refs>
+            <bridge-type-ref id="bridge"/>
+        </supported-bridge-type-refs>
 
-### OpenHAB Integration Points
-1. Bridge represents account
-2. Things represent thermostats
-3. Channels for:
-   - Temperature readings
-   - Setpoints
-   - System/Fan modes
-   - Hold settings
-   - Outdoor conditions
+        <label>Honeywell Thermostat</label>
+        <description>Honeywell TCC Thermostat</description>
 
-## Reference Code
-Reference Python implementation in `async-somecomfort`:
-- Connection handling in Client class
-- Device data structures
-- API endpoint mappings
+        <channels>
+            <channel id="temperature" typeId="system.temperature">
+                <label>Temperature</label>
+                <description>Current temperature reading</description>
+            </channel>
+            <channel id="setpointHeat" typeId="system.temperature">
+                <label>Heat Setpoint</label>
+                <description>Target heating temperature</description>
+            </channel>
+            <channel id="setpointCool" typeId="system.temperature">
+                <label>Cool Setpoint</label>
+                <description>Target cooling temperature</description>
+            </channel>
+            <channel id="humidity" typeId="system.humidity">
+                <label>Indoor Humidity</label>
+                <description>Current indoor humidity</description>
+            </channel>
+            <channel id="outdoorTemperature" typeId="system.temperature">
+                <label>Outdoor Temperature</label>
+                <description>Current outdoor temperature</description>
+            </channel>
+            <channel id="outdoorHumidity" typeId="system.humidity">
+                <label>Outdoor Humidity</label>
+                <description>Current outdoor humidity</description>
+            </channel>
+            <channel id="fanMode" typeId="fanMode"/>
+            <channel id="systemMode" typeId="systemMode"/>
+            <channel id="holdMode" typeId="holdMode"/>
+        </channels>
 
-## Critical Notes
-1. API rate limiting at 6 requests/minute
-2. All temperature values in Fahrenheit
-3. Hold times must be 15-minute boundaries
-4. Polling interval minimum 60 seconds
-5. Must handle partial device data
+        <config-description>
+            <parameter name="deviceId" type="text" required="true">
+                <label>Device ID</label>
+                <description>The ID of the thermostat device</description>
+            </parameter>
+            <parameter name="locationId" type="text" required="true">
+                <label>Location ID</label>
+                <description>The ID of the location containing the thermostat</description>
+            </parameter>
+        </config-description>
+    </thing-type>
 
-1. [OpenHAB Developer Guidelines](https://www.openhab.org/docs/developer/guidelines.html)  
-2. [OpenHAB Binding Development](https://www.openhab.org/docs/developer/bindings/)  
-3. [OpenHAB Add-on Development](https://www.openhab.org/docs/developer/addons/)
-4. python reference code [text](https://github.com/kk7ds/somecomfort)
----
+    <!-- Channel Types -->
+    <channel-type id="fanMode">
+        <item-type>String</item-type>
+        <label>Fan Mode</label>
+        <description>Fan operation mode</description>
+        <state>
+            <options>
+                <option value="auto">Auto</option>
+                <option value="on">On</option>
+                <option value="circulate">Circulate</option>
+                <option value="follow schedule">Follow Schedule</option>
+            </options>
+        </state>
+    </channel-type>
+
+    <channel-type id="systemMode">
+        <item-type>String</item-type>
+        <label>System Mode</label>
+        <description>System operation mode</description>
+        <state>
+            <options>
+                <option value="emheat">Emergency Heat</option>
+                <option value="heat">Heat</option>
+                <option value="off">Off</option>
+                <option value="cool">Cool</option>
+                <option value="auto">Auto</option>
+            </options>
+        </state>
+    </channel-type>
+
+    <channel-type id="holdMode">
+        <item-type>String</item-type>
+        <label>Hold Mode</label>
+        <description>Temperature hold mode</description>
+        <state>
+            <options>
+                <option value="schedule">Follow Schedule</option>
+                <option value="temporary">Temporary Hold</option>
+                <option value="permanent">Permanent Hold</option>
+            </options>
+        </state>
+    </channel-type>
+</thing:thing-descriptions>
+```
+
+### 4. HoneywellTCCBindingConstants.java
+```java
+/**
+ * Copyright (c) 2010-2024 Contributors to the openHAB project
+ *
+ * See the NOTICE file distributed with this work for additional information
+ * regarding copyright ownership. Licensed under the EPL 2.0.
+ */
+package org.openhab.binding.honeywelltcc.internal;
+
+import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.openhab.core.thing.ThingTypeUID;
+
+/**
+ * The {@link HoneywellTCCBindingConstants} class defines common constants used across the binding.
+ *
+ * @author Your Name - Initial contribution
+ */
+@NonNullByDefault
+public class HoneywellTCCBindingConstants {
+
+    public static final String BINDING_ID = "honeywelltcc";
+
+    // Bridge & Thing Types
+    public static final ThingTypeUID THING_TYPE_BRIDGE = new ThingTypeUID(BINDING_ID, "bridge");
+    public static final ThingTypeUID THING_TYPE_THERMOSTAT = new ThingTypeUID(BINDING_ID, "thermostat");
+
+    // Channel IDs
+    public static final String CHANNEL_TEMPERATURE = "temperature";
+    public static final String CHANNEL_SETPOINT_HEAT = "setpointHeat";
+    public static final String CHANNEL_SETPOINT_COOL = "setpointCool";
+    public static final String CHANNEL_HUMIDITY = "humidity";
+    public static final String CHANNEL_OUTDOOR_TEMPERATURE = "outdoorTemperature";
+    public static final String CHANNEL_OUTDOOR_HUMIDITY = "outdoorHumidity";
+    public static final String CHANNEL_FAN_MODE = "fanMode";
+    public static final String CHANNEL_SYSTEM_MODE = "systemMode";
+    public static final String CHANNEL_HOLD_MODE = "holdMode";
+
+    // Configuration parameters
+    public static final String CONFIG_USERNAME = "username";
+    public static final String CONFIG_PASSWORD = "password";
+    public static final String CONFIG_REFRESH = "refresh";
+    public static final String CONFIG_DEVICE_ID = "deviceId";
+    public static final String CONFIG_LOCATION_ID = "locationId";
+
+    // Match Python implementation constants
+    public static final String[] FAN_MODES = {"auto", "on", "circulate", "follow schedule"};
+    public static final String[] SYSTEM_MODES = {"emheat", "heat", "off", "cool", "auto"};
+    public static final String[] HOLD_TYPES = {"schedule", "temporary", "permanent"};
+    public static final String[] EQUIPMENT_OUTPUT_STATUS = {"off/fan", "heat", "cool"};
+}
+```
 
 
-- **OpenHAB Developer Resources**:
-  - [Binding Development](https://www.openhab.org/docs/developer/bindings/)
-  - [Add-on Development](https://www.openhab.org/docs/developer/addons/)
+## Error Handling
+Implement specific exception handling for:
+- Authentication failures
+- Rate limiting
+- Network errors
+- Session timeouts
+- Invalid device responses
+
+## Testing Requirements
+1. Unit tests for all components
+2. Integration tests for HTTP client
+3. Mocked device responses
+4. Error condition handling
+5. State machine testing
+
+## Development Guidelines
+
+**Follow OpenHAB Patterns:**
+- Use standard OpenHAB foundation classes
+- Implement proper disposal in dispose() methods
+- Follow OpenHAB logging conventions
+- Use standard OpenHAB configuration patterns
+- Reference existing bindings for implementation patterns
+
+**Critical Implementation Notes:**
+1. Exactly match the Python implementation's HTTP behavior
+2. Implement proper rate limiting
+3. Handle all temperature values in Fahrenheit internally
+4. Validate hold times for 15-minute boundaries
+5. Handle partial device data gracefully
+6. Ensure thread safety in all components
+7. Implement proper resource cleanup
+8. Follow OpenHAB null annotation patterns
+9. Use appropriate OpenHAB type systems
+
+## API Reference
+Key endpoints:
+- Authentication: `/portal/Account/LogOn`
+- Location List: `/portal/Location/GetLocationListData`
+- Device Data: `/portal/Device/CheckDataSession/{deviceId}`
+- Settings Update: `/portal/Device/SubmitControlScreenChanges`
+
+## References
+- OpenHAB Developer Guide: https://www.openhab.org/docs/developer/
+- OpenHAB Guidelines: https://www.openhab.org/docs/developer/guidelines.html
+- Binding Development: https://www.openhab.org/docs/developer/bindings/
+- Add-ons: https://www.openhab.org/docs/developer/addons/
