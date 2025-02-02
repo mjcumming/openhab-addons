@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<thing:thing-descriptions bindingId="honeywelltcc"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:thing="https://openhab.org/schemas/thing-description/v1.0.0"
+	xsi:schemaLocation="https://openhab.org/schemas/thing-description/v1.0.0 https://openhab.org/schemas/thing-description-1.0.0.xsd">
+
+	<!-- Honeywell TCC Bridge -->
+	<bridge-type id="account">
+		<label>Honeywell TCC Account</label>
+		<description>Honeywell Total Comfort Control account bridge</description>
+
+		<config-description>
+			<parameter name="username" type="text" required="true">
+				<context>username</context>
+				<label>Username</label>
+				<description>Username for Honeywell TCC account</description>
+			</parameter>
+
+			<parameter name="password" type="text" required="true">
+				<context>password</context>
+				<label>Password</label>
+				<description>Password for Honeywell TCC account</description>
+			</parameter>
+
+			<parameter name="refresh" type="integer" min="1" max="60" unit="min">
+				<label>Refresh Interval</label>
+				<description>Interval between data refreshes in minutes</description>
+				<default>5</default>
+				<advanced>true</advanced>
+			</parameter>
+
+			<parameter name="timeout" type="integer" min="1" max="60" unit="s">
+				<label>Timeout</label>
+				<description>Connection timeout in seconds</description>
+				<default>10</default>
+				<advanced>true</advanced>
+			</parameter>
+		</config-description>
+	</bridge-type>
+</thing:thing-descriptions>

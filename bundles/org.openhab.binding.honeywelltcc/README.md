@@ -27,7 +27,7 @@ _If your binding requires or supports general configuration settings, please cre
 _In this section, you should link to this file and provide some information about the options._
 _The file could e.g. look like:_
 
-```
+```text
 # Configuration for the HoneywellTCC Binding
 #
 # Default secret key for the pairing of the HoneywellTCC Thing.
@@ -46,6 +46,12 @@ _Describe what is needed to manually configure a thing, either through the UI or
 _This should be mainly about its mandatory and optional configuration parameters._
 
 _Note that it is planned to generate some part of this based on the XML files within ```src/main/resources/OH-INF/thing``` of your binding._
+
+### Manual Thing Configuration
+
+```java
+Example thing configuration goes here.
+```
 
 ### `sample` Thing Configuration
 
@@ -71,11 +77,6 @@ _Provide a full usage example based on textual configuration files._
 _*.things, *.items examples are mandatory as textual configuration is well used by many users._
 _*.sitemap examples are optional._
 
-### Thing Configuration
-
-```java
-Example thing configuration goes here.
-```
 ### Item Configuration
 
 ```java
@@ -89,6 +90,6 @@ Optional Sitemap configuration goes here.
 Remove this section, if not needed.
 ```
 
-## Any custom content here!
+## Any custom content here
 
 _Feel free to add additional sections for whatever you think should also be mentioned about your binding!_

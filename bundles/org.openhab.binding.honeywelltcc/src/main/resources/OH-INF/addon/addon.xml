@@ -5,6 +5,7 @@
 
 	<type>binding</type>
 	<name>HoneywellTCC Binding</name>
-	<description>This is the binding for HoneywellTCC.</description>
+	<description>Binding for Honeywell Total Connect Comfort thermostats</description>
+	<connection>cloud</connection>
 
 </addon:addon>

@@ -4,45 +4,334 @@
 	xmlns:thing="https://openhab.org/schemas/thing-description/v1.0.0"
 	xsi:schemaLocation="https://openhab.org/schemas/thing-description/v1.0.0 https://openhab.org/schemas/thing-description-1.0.0.xsd">
 
-	<!-- Sample Thing Type -->
-	<thing-type id="sample">
-		<!-- Comment this in for Things which need a Bridge to function.
-			<supported-bridge-type-refs>
-			<bridge-type-ref id="HoneywellTCCBridge" />
-			</supported-bridge-type-refs>
-		-->
+	<thing-type id="thermostat">
+		<supported-bridge-type-refs>
+			<bridge-type-ref id="account"/>
+		</supported-bridge-type-refs>
 
-		<label>HoneywellTCC Binding Thing</label>
-		<description>Sample thing for HoneywellTCC Binding</description>
+		<label>Honeywell Thermostat</label>
+		<description>Honeywell TCC Thermostat</description>
 
-		<channels>
-			<channel id="channel1" typeId="sample-channel"/>
-		</channels>
+		<channel-groups>
+			<channel-group id="status" typeId="status">
+				<label>Status</label>
+				<description>Current thermostat status</description>
+			</channel-group>
+			<channel-group id="settings" typeId="settings">
+				<label>Settings</label>
+				<description>Thermostat settings</description>
+			</channel-group>
+			<channel-group id="schedule" typeId="schedule">
+				<label>Schedule</label>
+				<description>Schedule settings</description>
+			</channel-group>
+			<channel-group id="device" typeId="device">
+				<label>Device</label>
+				<description>Device information</description>
+			</channel-group>
+		</channel-groups>
+
+		<properties>
+			<property name="deviceModel"/>
+			<property name="deviceName"/>
+			<property name="macAddress"/>
+			<property name="firmwareVersion"/>
+		</properties>
 
 		<config-description>
-			<parameter name="hostname" type="text" required="true">
-				<context>network-address</context>
-				<label>Hostname</label>
-				<description>Hostname or IP address of the device</description>
+			<parameter name="deviceId" type="text" required="true">
+				<label>Device ID</label>
+				<description>Thermostat device identifier</description>
 			</parameter>
-			<parameter name="password" type="text" required="true">
-				<context>password</context>
-				<label>Password</label>
-				<description>Password to access the device</description>
-			</parameter>
-			<parameter name="refreshInterval" type="integer" unit="s" min="1">
-				<label>Refresh Interval</label>
-				<description>Interval the device is polled in sec.</description>
-				<default>600</default>
-				<advanced>true</advanced>
+			<parameter name="locationId" type="text" required="true">
+				<label>Location ID</label>
+				<description>Location identifier containing this thermostat</description>
 			</parameter>
 		</config-description>
 	</thing-type>
 
-	<!-- Sample Channel Type -->
-	<channel-type id="sample-channel">
-		<item-type>Number:Temperature</item-type>
-		<label>Example Temperature</label><!-- Use uppercase words, except prepositions. 2-3 words, max 25 chars -->
-		<description>Sample channel for HoneywellTCC Binding</description>
+	<!-- Channel Groups -->
+	<channel-group-type id="status">
+		<label>Status</label>
+		<description>Current thermostat status</description>
+		<channels>
+			<channel id="indoorTemperature" typeId="system.temperature">
+				<label>Indoor Temperature</label>
+				<description>Current indoor temperature</description>
+			</channel>
+			<channel id="indoorHumidity" typeId="system.humidity">
+				<label>Indoor Humidity</label>
+				<description>Current indoor humidity</description>
+			</channel>
+			<channel id="outdoorTemperature" typeId="system.temperature">
+				<label>Outdoor Temperature</label>
+				<description>Current outdoor temperature</description>
+			</channel>
+			<channel id="outdoorHumidity" typeId="system.humidity">
+				<label>Outdoor Humidity</label>
+				<description>Current outdoor humidity</description>
+			</channel>
+			<channel id="operatingState" typeId="operatingState"/>
+			<channel id="followingSchedule" typeId="system.switch">
+				<label>Following Schedule</label>
+				<description>Whether thermostat is following schedule</description>
+			</channel>
+			<channel id="equipmentStatus" typeId="equipmentStatus"/>
+			<channel id="fanCleanTime" typeId="system.duration">
+				<label>Fan Clean Time</label>
+				<description>Time until fan filter needs cleaning</description>
+			</channel>
+			<channel id="filterStatus" typeId="filterStatus"/>
+			<channel id="uvLampStatus" typeId="uvLampStatus"/>
+			<channel id="alerts" typeId="alerts"/>
+			<channel id="lastUpdate" typeId="system.datetime">
+				<autoUpdatePolicy>recommend</autoUpdatePolicy>
+			</channel>
+		</channels>
+	</channel-group-type>
+
+	<channel-group-type id="settings">
+		<label>Settings</label>
+		<description>Thermostat settings</description>
+		<channels>
+			<channel id="mode" typeId="mode"/>
+			<channel id="fanMode" typeId="fanMode"/>
+			<channel id="heatSetpoint" typeId="system.temperature">
+				<label>Heat Setpoint</label>
+				<description>Target heating temperature</description>
+			</channel>
+			<channel id="coolSetpoint" typeId="system.temperature">
+				<label>Cool Setpoint</label>
+				<description>Target cooling temperature</description>
+			</channel>
+			<channel id="dualSetpoint" typeId="system.switch">
+				<label>Dual Setpoint</label>
+				<description>Whether dual setpoint mode is enabled</description>
+			</channel>
+			<channel id="holdMode" typeId="holdMode"/>
+			<channel id="temporaryHold" typeId="system.switch">
+				<label>Temporary Hold</label>
+				<description>Whether temporary hold is active</description>
+			</channel>
+			<channel id="vacationHold" typeId="system.switch">
+				<label>Vacation Hold</label>
+				<description>Whether vacation hold is active</description>
+			</channel>
+			<channel id="deadband" typeId="system.temperature">
+				<label>Deadband</label>
+				<description>Temperature deadband between heating and cooling</description>
+			</channel>
+			<channel id="temperatureUnit" typeId="temperatureUnit"/>
+		</channels>
+	</channel-group-type>
+
+	<channel-group-type id="schedule">
+		<label>Schedule</label>
+		<description>Schedule settings</description>
+		<channels>
+			<channel id="schedulePeriod" typeId="schedulePeriod"/>
+			<channel id="nextPeriodTime" typeId="system.datetime">
+				<label>Next Period Time</label>
+				<description>Time of next schedule period</description>
+			</channel>
+			<channel id="scheduleEnabled" typeId="system.switch">
+				<label>Schedule Enabled</label>
+				<description>Whether schedule is enabled</description>
+			</channel>
+			<channel id="wakeTime" typeId="system.datetime">
+				<label>Wake Time</label>
+				<description>Wake period start time</description>
+			</channel>
+			<channel id="wakeHeatSetpoint" typeId="system.temperature">
+				<label>Wake Heat Setpoint</label>
+				<description>Wake period heat setpoint</description>
+			</channel>
+			<channel id="wakeCoolSetpoint" typeId="system.temperature">
+				<label>Wake Cool Setpoint</label>
+				<description>Wake period cool setpoint</description>
+			</channel>
+			<channel id="leaveTime" typeId="system.datetime">
+				<label>Leave Time</label>
+				<description>Leave period start time</description>
+			</channel>
+			<channel id="leaveHeatSetpoint" typeId="system.temperature">
+				<label>Leave Heat Setpoint</label>
+				<description>Leave period heat setpoint</description>
+			</channel>
+			<channel id="leaveCoolSetpoint" typeId="system.temperature">
+				<label>Leave Cool Setpoint</label>
+				<description>Leave period cool setpoint</description>
+			</channel>
+			<channel id="returnTime" typeId="system.datetime">
+				<label>Return Time</label>
+				<description>Return period start time</description>
+			</channel>
+			<channel id="returnHeatSetpoint" typeId="system.temperature">
+				<label>Return Heat Setpoint</label>
+				<description>Return period heat setpoint</description>
+			</channel>
+			<channel id="returnCoolSetpoint" typeId="system.temperature">
+				<label>Return Cool Setpoint</label>
+				<description>Return period cool setpoint</description>
+			</channel>
+			<channel id="sleepTime" typeId="system.datetime">
+				<label>Sleep Time</label>
+				<description>Sleep period start time</description>
+			</channel>
+			<channel id="sleepHeatSetpoint" typeId="system.temperature">
+				<label>Sleep Heat Setpoint</label>
+				<description>Sleep period heat setpoint</description>
+			</channel>
+			<channel id="sleepCoolSetpoint" typeId="system.temperature">
+				<label>Sleep Cool Setpoint</label>
+				<description>Sleep period cool setpoint</description>
+			</channel>
+		</channels>
+	</channel-group-type>
+
+	<channel-group-type id="device">
+		<label>Device</label>
+		<description>Device information</description>
+		<channels>
+			<channel id="rawData" typeId="rawData"/>
+		</channels>
+	</channel-group-type>
+
+	<!-- Channel Types -->
+	<channel-type id="mode">
+		<item-type>String</item-type>
+		<label>System Mode</label>
+		<description>System operation mode</description>
+		<state>
+			<options>
+				<option value="Off">Off</option>
+				<option value="Heat">Heat</option>
+				<option value="Cool">Cool</option>
+				<option value="Auto">Auto</option>
+				<option value="EmergencyHeat">Emergency Heat</option>
+			</options>
+		</state>
 	</channel-type>
+
+	<channel-type id="fanMode">
+		<item-type>String</item-type>
+		<label>Fan Mode</label>
+		<description>Fan operation mode</description>
+		<state>
+			<options>
+				<option value="Auto">Auto</option>
+				<option value="On">On</option>
+				<option value="Circulate">Circulate</option>
+			</options>
+		</state>
+	</channel-type>
+
+	<channel-type id="operatingState">
+		<item-type>String</item-type>
+		<label>Operating State</label>
+		<description>Current operating state</description>
+		<state readOnly="true">
+			<options>
+				<option value="Idle">Idle</option>
+				<option value="Heating">Heating</option>
+				<option value="Cooling">Cooling</option>
+				<option value="Offline">Offline</option>
+			</options>
+		</state>
+	</channel-type>
+
+	<channel-type id="holdMode">
+		<item-type>String</item-type>
+		<label>Hold Mode</label>
+		<description>Temperature hold mode</description>
+		<state>
+			<options>
+				<option value="NoHold">No Hold</option>
+				<option value="TemporaryHold">Temporary Hold</option>
+				<option value="PermanentHold">Permanent Hold</option>
+				<option value="VacationHold">Vacation Hold</option>
+			</options>
+		</state>
+	</channel-type>
+
+	<channel-type id="schedulePeriod">
+		<item-type>String</item-type>
+		<label>Schedule Period</label>
+		<description>Current schedule period</description>
+		<state readOnly="true">
+			<options>
+				<option value="Wake">Wake</option>
+				<option value="Leave">Leave</option>
+				<option value="Return">Return</option>
+				<option value="Sleep">Sleep</option>
+			</options>
+		</state>
+	</channel-type>
+
+	<channel-type id="equipmentStatus">
+		<item-type>String</item-type>
+		<label>Equipment Status</label>
+		<description>HVAC equipment status</description>
+		<state readOnly="true">
+			<options>
+				<option value="Off">Off</option>
+				<option value="Heat">Heat</option>
+				<option value="Cool">Cool</option>
+				<option value="Fan">Fan Only</option>
+			</options>
+		</state>
+	</channel-type>
+
+	<channel-type id="filterStatus">
+		<item-type>String</item-type>
+		<label>Filter Status</label>
+		<description>Air filter status</description>
+		<state readOnly="true">
+			<options>
+				<option value="Ok">OK</option>
+				<option value="Replace">Replace</option>
+				<option value="Unknown">Unknown</option>
+			</options>
+		</state>
+	</channel-type>
+
+	<channel-type id="uvLampStatus">
+		<item-type>String</item-type>
+		<label>UV Lamp Status</label>
+		<description>UV lamp status</description>
+		<state readOnly="true">
+			<options>
+				<option value="Ok">OK</option>
+				<option value="Replace">Replace</option>
+				<option value="Unknown">Unknown</option>
+			</options>
+		</state>
+	</channel-type>
+
+	<channel-type id="temperatureUnit">
+		<item-type>String</item-type>
+		<label>Temperature Unit</label>
+		<description>Temperature display unit</description>
+		<state>
+			<options>
+				<option value="F">Fahrenheit</option>
+				<option value="C">Celsius</option>
+			</options>
+		</state>
+	</channel-type>
+
+	<channel-type id="alerts">
+		<item-type>String</item-type>
+		<label>Alerts</label>
+		<description>Active alerts and warnings</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="rawData">
+		<item-type>String</item-type>
+		<label>Raw Data</label>
+		<description>Raw device data for debugging</description>
+		<state readOnly="true"/>
+	</channel-type>
+
 </thing:thing-descriptions>

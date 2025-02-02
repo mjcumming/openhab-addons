@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2010-2025 Contributors to the openHAB project
+ * Copyright (c) 2010-2024 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -10,22 +10,26 @@
  *
  * SPDX-License-Identifier: EPL-2.0
  */
-package org.openhab.binding.honeywelltcc.internal;
+package org.openhab.binding.honeywelltcc.internal.config;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
 
 /**
- * The {@link HoneywellTCCConfiguration} class contains fields mapping thing configuration parameters.
+ * Configuration class for Honeywell TCC thermostat.
  *
  * @author Michael Cumming - Initial contribution
  */
 @NonNullByDefault
-public class HoneywellTCCConfiguration {
+public class HoneywellTCCThermostatConfiguration {
 
     /**
-     * Sample configuration parameters. Replace with your own.
+     * Device ID from the TCC service
      */
-    public String hostname = "";
-    public String password = "";
-    public int refreshInterval = 600;
+    public @Nullable String deviceId;
+
+    /**
+     * Location ID from the TCC service
+     */
+    public @Nullable String locationId;
 }
