@@ -37,9 +37,9 @@ import org.slf4j.LoggerFactory;
 import com.google.gson.JsonObject;
 
 /**
- * The {@link HoneywellTCCThermostatHandler} is responsible for handling commands, which are
- * sent to one of the channels.
- *
+ * The HoneywellTCCThermostatHandler handles commands for thermostat channels,
+ * updates channel states based on data from the bridge, and converts temperature values.
+ * 
  * @author Michael Cumming - Initial contribution
  */
 @NonNullByDefault
@@ -61,12 +61,10 @@ public class HoneywellTCCThermostatHandler extends BaseThingHandler {
     @Override
     public void initialize() {
         config = getConfigAs(HoneywellTCCThermostatConfiguration.class);
-
         if (!validateConfig()) {
             return;
         }
-
-        // Register with bridge for updates
+        // Register with the bridge to receive updates.
         if (bridge.getHandler() instanceof HoneywellTCCBridgeHandler bridgeHandler) {
             bridgeHandler.registerThermostatHandler(this);
             updateStatus(ThingStatus.ONLINE);
@@ -77,29 +75,26 @@ public class HoneywellTCCThermostatHandler extends BaseThingHandler {
 
     @Override
     public void dispose() {
+        // Unregister this thermostat handler from the bridge.
         if (bridge.getHandler() instanceof HoneywellTCCBridgeHandler bridgeHandler) {
             bridgeHandler.unregisterThermostatHandler(getThing().getUID());
         }
+        super.dispose();
     }
 
     @Override
     public void handleCommand(ChannelUID channelUID, Command command) {
-        if (config == null || !ThingStatus.ONLINE.equals(getThing().getStatus())) {
+        // Ensure configuration is valid for non-null fields.
+        if (config == null) {
+            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR, "Configuration missing");
             return;
         }
+        // Extract non-null device and location IDs
+        String deviceId = Objects.requireNonNull(config.deviceId, "Device ID cannot be null");
+        String locationId = Objects.requireNonNull(config.locationId, "Location ID cannot be null");
 
         try {
-            // Extract configuration values to guarantee non-null values.
-            final String deviceId = Objects.requireNonNull(config.deviceId, "Device ID must not be null");
-            final String locationId = Objects.requireNonNull(config.locationId, "Location ID must not be null");
-
             switch (channelUID.getId()) {
-                case CHANNEL_MODE:
-                    if (command instanceof StringType) {
-                        client.setMode(deviceId, locationId, command.toString());
-                        updateState(channelUID, (StringType) command);
-                    }
-                    break;
                 case CHANNEL_HEAT_SETPOINT:
                     if (command instanceof QuantityType<?>) {
                         QuantityType<?> quantity = (QuantityType<?>) command;
@@ -126,6 +121,10 @@ public class HoneywellTCCThermostatHandler extends BaseThingHandler {
                         updateState(channelUID, (StringType) command);
                     }
                     break;
+                // Add additional channel handling as needed.
+                default:
+                    logger.debug("Unrecognized channel {} for command {}", channelUID, command);
+                    break;
             }
         } catch (HoneywellTCCException e) {
             logger.debug("Error handling command {}: {}", command, e.getMessage());
@@ -133,9 +132,11 @@ public class HoneywellTCCThermostatHandler extends BaseThingHandler {
         }
     }
 
+    /**
+     * Updates the thermostat's channels based on device data.
+     */
     public void updateData(JsonObject deviceData) {
         try {
-            // Update all channels with device data
             updateState(CHANNEL_INDOOR_TEMPERATURE,
                     new QuantityType<>(deviceData.get(API_KEY_INDOOR_TEMPERATURE).getAsDouble(), FAHRENHEIT));
             updateState(CHANNEL_INDOOR_HUMIDITY,
@@ -154,8 +155,12 @@ public class HoneywellTCCThermostatHandler extends BaseThingHandler {
         }
     }
 
+    /**
+     * Checks if the provided device and location IDs match this thermostat configuration.
+     */
     public boolean matchesDevice(String deviceId, String locationId) {
-        return config != null && config.deviceId.equals(deviceId) && config.locationId.equals(locationId);
+        return config != null && Objects.equals(config.deviceId, deviceId)
+                && Objects.equals(config.locationId, locationId);
     }
 
     private boolean validateConfig() {
@@ -163,17 +168,14 @@ public class HoneywellTCCThermostatHandler extends BaseThingHandler {
             updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR, "Configuration missing");
             return false;
         }
-
         if (config.deviceId == null || config.deviceId.isEmpty()) {
             updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR, "Device ID missing");
             return false;
         }
-
         if (config.locationId == null || config.locationId.isEmpty()) {
             updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR, "Location ID missing");
             return false;
         }
-
         return true;
     }
 }

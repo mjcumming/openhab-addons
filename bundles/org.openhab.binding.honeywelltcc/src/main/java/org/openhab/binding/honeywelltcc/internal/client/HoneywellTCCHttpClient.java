@@ -14,8 +14,16 @@ package org.openhab.binding.honeywelltcc.internal.client;
 
 import static org.openhab.binding.honeywelltcc.internal.HoneywellTCCBindingConstants.*;
 
+import java.net.CookieManager;
+import java.net.CookiePolicy;
+import java.net.HttpCookie;
+import java.net.MalformedURLException;
+import java.net.URL;
 import java.net.UnknownHostException;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
@@ -34,6 +42,7 @@ import org.eclipse.jetty.client.HttpClient;
 import org.eclipse.jetty.client.HttpResponseException;
 import org.eclipse.jetty.client.api.ContentResponse;
 import org.eclipse.jetty.client.api.Request;
+import org.eclipse.jetty.client.api.Response;
 import org.eclipse.jetty.client.util.FormContentProvider;
 import org.eclipse.jetty.client.util.StringContentProvider;
 import org.eclipse.jetty.http.HttpField;
@@ -70,6 +79,7 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
     private final String password;
     private final Gson gson;
     private final ScheduledExecutorService scheduler;
+    private final CookieManager cookieManager;
 
     // Session state
     private boolean isAuthenticated = false;
@@ -87,6 +97,10 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
     // Track the current page for Referer header
     private String currentPage = "";
 
+    // Define the cookie store and max cookie count
+    private final List<HttpCookie> cookieStore = new ArrayList<>();
+    private static final int MAX_COOKIE_COUNT = 5;
+
     public static HoneywellTCCHttpClient create(HttpClient httpClient, String username, String password,
             ScheduledExecutorService scheduler) throws HoneywellTCCException {
         return new HoneywellTCCHttpClient(httpClient, username, password, scheduler);
@@ -99,6 +113,7 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
         this.password = password;
         this.scheduler = scheduler;
         this.gson = new Gson();
+        this.cookieManager = new CookieManager(null, CookiePolicy.ACCEPT_ALL);
 
         // Configure timeouts using constants
         httpClient.setConnectTimeout(HTTP_REQUEST_TIMEOUT_SEC * 1000L);
@@ -725,5 +740,80 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
         } catch (Exception e) { // Catch only the exceptions that may actually be thrown.
             throw new HoneywellTCCException("Failed to execute request: " + e.getMessage(), e);
         }
+    }
+
+    // Method to update cookies from response headers
+    public void updateCookiesFromResponse(Response response) {
+        List<String> setCookieHeaders = response.getHeaders().getValuesList(HttpHeader.SET_COOKIE.asString());
+        for (String header : setCookieHeaders) {
+            List<HttpCookie> cookies = HttpCookie.parse(header);
+            for (HttpCookie cookie : cookies) {
+                if (cookie.getMaxAge() == 0) {
+                    // Remove expired cookies
+                    cookieManager.getCookieStore().remove(null, cookie);
+                } else {
+                    // Add or update cookies
+                    cookieManager.getCookieStore().add(null, cookie);
+                }
+            }
+        }
+    }
+
+    // Method to get cookies as a header string for a given URL,
+    // filtering cookies based on domain and path matching.
+    private String getCookieHeader(String url) {
+        try {
+            URL requestUrl = new URL(url);
+            return cookieManager.getCookieStore().getCookies().stream().filter(cookie -> {
+                boolean domainMatches = HttpCookie.domainMatches(cookie.getDomain(), requestUrl.getHost());
+                String cookiePath = cookie.getPath();
+                if (cookiePath == null || cookiePath.isEmpty()) {
+                    cookiePath = "/";
+                }
+                boolean pathMatches = requestUrl.getPath().startsWith(cookiePath);
+                // Exclude the problematic cookie (.ASPXAUTH_TRUEHOME_RT)
+                // Remove any leading dot and compare case-insensitively.
+                return domainMatches && pathMatches
+                        && !cookie.getName().replaceFirst("^\\.", "").equalsIgnoreCase("ASPXAUTH_TRUEHOME_RT");
+            }).map(cookie -> cookie.getName() + "=" + cookie.getValue()).collect(Collectors.joining("; "));
+        } catch (MalformedURLException e) {
+            logger.error("Malformed URL: {}", url, e);
+            return "";
+        }
+    }
+
+    public void logRequestHeaders(Request request) {
+        logger.debug("Request headers size: {}", request.getHeaders().toString().length());
+        logger.debug("Request headers: {}", request.getHeaders());
+    }
+
+    // Method to fetch locations
+    public void fetchLocations() {
+        // Define the endpoint for fetching locations
+        String locationEndpoint = "https://www.mytotalconnectcomfort.com/portal/Location/GetLocationListData";
+
+        // Create a request to fetch locations using filtered cookies for this endpoint
+        Request request = httpClient.newRequest(locationEndpoint).method(HttpMethod.GET).header(HttpHeader.COOKIE,
+                getCookieHeader(locationEndpoint));
+
+        // Send the request and handle the response
+        request.send(result -> {
+            if (result.getResponse().getStatus() == 200) {
+                // Parse the response to extract location data
+                ContentResponse response = (ContentResponse) result.getResponse();
+                String responseBody = new String(response.getContent(), StandardCharsets.UTF_8);
+                // Process the location data (e.g., update internal state, notify handlers)
+                processLocationData(responseBody);
+            } else {
+                logger.error("Failed to fetch locations: {}", result.getResponse().getStatus());
+            }
+        });
+    }
+
+    // Method to process location data
+    private void processLocationData(String responseBody) {
+        // Parse the JSON response and update the internal state or notify other components
+        // Example: parse JSON and log the locations
+        logger.debug("Location data: {}", responseBody);
     }
 }
