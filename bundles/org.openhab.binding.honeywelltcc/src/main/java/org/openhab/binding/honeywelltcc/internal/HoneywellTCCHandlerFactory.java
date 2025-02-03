@@ -48,7 +48,8 @@ import org.slf4j.LoggerFactory;
  * Since DS injection happens after construction, the dependency fields are marked as @Nullable.
  * At runtime, these fields are expected to be provided.
  * 
- * @author Michael Cumming
+ * @author Michael Cumming - Initial contribution
+ *
  */
 @NonNullByDefault
 @Component(configurationPid = "binding.honeywelltcc", service = ThingHandlerFactory.class)

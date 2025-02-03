@@ -17,8 +17,6 @@ import static org.openhab.binding.honeywelltcc.internal.HoneywellTCCBindingConst
 import java.net.CookieManager;
 import java.net.CookiePolicy;
 import java.net.HttpCookie;
-import java.net.MalformedURLException;
-import java.net.URL;
 import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -27,6 +25,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
@@ -50,7 +49,6 @@ import org.eclipse.jetty.http.HttpHeader;
 import org.eclipse.jetty.http.HttpMethod;
 import org.eclipse.jetty.http.HttpStatus;
 import org.eclipse.jetty.util.Fields;
-import org.openhab.binding.honeywelltcc.internal.client.exceptions.HoneywellTCCAuthException;
 import org.openhab.binding.honeywelltcc.internal.client.exceptions.HoneywellTCCException;
 import org.openhab.binding.honeywelltcc.internal.client.exceptions.HoneywellTCCInvalidParameterException;
 import org.openhab.binding.honeywelltcc.internal.client.exceptions.HoneywellTCCInvalidResponseException;
@@ -100,6 +98,9 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
     // Define the cookie store and max cookie count
     private final List<HttpCookie> cookieStore = new ArrayList<>();
     private static final int MAX_COOKIE_COUNT = 5;
+
+    // Instantiate the dedicated CookieHelper.
+    private final CookieHelper cookieHelper = new CookieHelper();
 
     public static HoneywellTCCHttpClient create(HttpClient httpClient, String username, String password,
             ScheduledExecutorService scheduler) throws HoneywellTCCException {
@@ -163,48 +164,45 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
     }
 
     private void keepaliveTask() {
-        try {
-            synchronized (sessionLock) {
-                if (isAuthenticated) {
-                    keepalive();
-                }
+        synchronized (sessionLock) {
+            if (isAuthenticated) {
+                keepalive().exceptionally(e -> {
+                    logger.debug("Keepalive failed: {}", e.getMessage());
+                    return null;
+                });
             }
-        } catch (HoneywellTCCException e) {
-            logger.debug("Keepalive failed: {}", e.getMessage());
         }
     }
 
     /**
      * Keeps session alive (matches Python's keepalive())
      */
-    public void keepalive() throws HoneywellTCCException {
+    public CompletableFuture<@Nullable Void> keepalive() {
+        CompletableFuture<@Nullable Void> future = new CompletableFuture<>();
+        String keepaliveUrl = BASE_URL + "/portal/KeepAlive"; // Adjust endpoint if different
+
+        Request request = httpClient.newRequest(keepaliveUrl).method(HttpMethod.GET)
+                .header(HttpHeader.COOKIE.asString(), getCookieHeader(keepaliveUrl))
+                .header(HttpHeader.REFERER.asString(), BASE_URL);
+
         logger.debug("Performing keepalive request");
-        try {
-            Request request = httpClient.newRequest(BASE_URL).method(HttpMethod.GET).timeout(REQUEST_TIMEOUT_SEC,
-                    TimeUnit.SECONDS);
-            addHeaders(request);
 
-            ContentResponse response = executeRequest(request, "keepalive");
-            logger.debug("Keepalive response status: {}", response.getStatus());
-
-            synchronized (sessionLock) {
-                if (response.getStatus() != HttpStatus.OK_200) {
-                    isAuthenticated = false;
-                    logger.debug("Session timed out, status: {}", response.getStatus());
-                    throw new HoneywellTCCSessionExpiredException("Session has timed out");
+        request.send(result -> {
+            try {
+                int status = result.getResponse().getStatus();
+                logger.debug("Keepalive response status: {}", status);
+                if (status == 200) {
+                    updateCookiesFromResponse(result.getResponse());
+                    logger.debug("Session refreshed successfully");
+                    future.complete((Void) null);
+                } else {
+                    future.completeExceptionally(new HoneywellTCCException("Keepalive failed: status " + status));
                 }
-
-                updateCookiesFromHeaders(response.getHeaders().getValuesList(HttpHeader.SET_COOKIE));
-                lastAuthTime = System.currentTimeMillis();
-                logger.debug("Session refreshed successfully");
+            } catch (Exception e) {
+                future.completeExceptionally(e);
             }
-        } catch (Exception e) {
-            synchronized (sessionLock) {
-                isAuthenticated = false;
-            }
-            logger.error("Keepalive request failed: {}", e.getMessage());
-            throw new HoneywellTCCException("Keepalive failed: " + e.getMessage(), e);
-        }
+        });
+        return future;
     }
 
     /**
@@ -214,19 +212,14 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
         synchronized (sessionLock) {
             if (!isAuthenticated || (System.currentTimeMillis() - lastAuthTime) > SESSION_TIMEOUT_MS) {
                 logger.debug("Session needs refresh, attempting keepalive");
-                try {
-                    keepalive();
-                } catch (HoneywellTCCSessionExpiredException e) {
-                    logger.info("Session expired, performing full login");
-                    login();
-                }
+                keepalive();
             }
         }
 
         try {
             return executor.execute();
-        } catch (HoneywellTCCSessionExpiredException e) {
-            logger.info("Session expired during request, retrying after login");
+        } catch (Exception e) {
+            logger.info("Exception during request, retrying after login");
             login();
             return executor.execute();
         }
@@ -253,70 +246,36 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
      *
      * @throws HoneywellTCCException if login fails.
      */
-    public void login() throws HoneywellTCCException {
-        logger.debug("Starting login process for user: {}", username);
+    public CompletableFuture<@Nullable Void> login() {
+        CompletableFuture<@Nullable Void> future = new CompletableFuture<>();
+        String loginUrl = BASE_URL + "/portal/Account/LogOn";
 
-        try {
-            // Step 1: GET request for initial cookies
-            Request getRequest = httpClient.newRequest(BASE_URL).method(HttpMethod.GET).timeout(REQUEST_TIMEOUT_SEC,
-                    TimeUnit.SECONDS);
-            addHeaders(getRequest);
+        // Prepare login data as JSON (adjust keys and values as needed)
+        Map<String, String> loginData = new HashMap<>();
+        loginData.put("UserName", username);
+        loginData.put("Password", password);
 
-            ContentResponse getResponse = executeRequest(getRequest, "login initial GET");
-            logger.debug("Initial GET response status: {}, headers: {}", getResponse.getStatus(),
-                    getResponse.getHeaders());
+        Request request = httpClient.POST(loginUrl).header(HttpHeader.CONTENT_TYPE.asString(), "application/json")
+                .content(new StringContentProvider(gson.toJson(loginData)));
 
-            if (getResponse.getStatus() != HttpStatus.OK_200) {
-                throw new HoneywellTCCAuthException("Failed to fetch login page: " + getResponse.getStatus());
+        logger.debug("Attempting login at: {}", loginUrl);
+
+        request.send(result -> {
+            try {
+                int status = result.getResponse().getStatus();
+                logger.debug("Login response status: {}", status);
+                if (status == 200) {
+                    updateCookiesFromResponse(result.getResponse());
+                    logger.info("Login successful for user: {}", username);
+                    future.complete((Void) null);
+                } else {
+                    future.completeExceptionally(new HoneywellTCCException("Login failed: status " + status));
+                }
+            } catch (Exception e) {
+                future.completeExceptionally(e);
             }
-
-            updateCookiesFromHeaders(getResponse.getHeaders().getValuesList(HttpHeader.SET_COOKIE));
-            updateRefererHeader(BASE_URL);
-
-            // Step 2: POST login data
-            Fields formFields = new Fields();
-            formFields.put(FORM_USERNAME, username);
-            formFields.put(FORM_PASSWORD, password);
-            formFields.put(FORM_REMEMBER_ME, LOGIN_REMEMBER_ME_VALUE);
-            formFields.put(FORM_TIME_OFFSET, LOGIN_TIME_OFFSET_VALUE);
-
-            Request postRequest = httpClient.newRequest(BASE_URL).method(HttpMethod.POST)
-                    .timeout(REQUEST_TIMEOUT_SEC, TimeUnit.SECONDS).content(new FormContentProvider(formFields));
-            addHeaders(postRequest);
-
-            ContentResponse postResponse = executeRequest(postRequest, "login POST");
-            String responseText = postResponse.getContentAsString();
-            logger.debug("Login POST response status: {}, headers: {}", postResponse.getStatus(),
-                    postResponse.getHeaders());
-
-            // Check for specific error messages like Python
-            if (responseText.contains("Invalid username or password")) {
-                throw new HoneywellTCCAuthException("Invalid username or password");
-            }
-
-            if (postResponse.getStatus() != HttpStatus.OK_200) {
-                throw new HoneywellTCCAuthException(
-                        "Login failed with status " + postResponse.getStatus() + ": " + responseText);
-            }
-
-            updateCookiesFromHeaders(postResponse.getHeaders().getValuesList(HttpHeader.SET_COOKIE));
-
-            synchronized (sessionLock) {
-                isAuthenticated = true;
-                lastAuthTime = System.currentTimeMillis();
-                logger.info("Login successful for user: {}", username);
-            }
-
-            // Perform initial keepalive like Python
-            keepalive();
-
-        } catch (Exception e) {
-            synchronized (sessionLock) {
-                isAuthenticated = false;
-            }
-            logger.error("Login failed: {}", e.getMessage());
-            throw new HoneywellTCCAuthException("Login failed: " + e.getMessage(), e);
-        }
+        });
+        return future;
     }
 
     /**
@@ -783,70 +742,75 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
 
     // Method to update cookies from response headers
     public void updateCookiesFromResponse(Response response) {
-        List<String> setCookieHeaders = response.getHeaders().getValuesList(HttpHeader.SET_COOKIE.asString());
-        for (String header : setCookieHeaders) {
-            List<HttpCookie> cookies = HttpCookie.parse(header);
-            for (HttpCookie cookie : cookies) {
-                if (cookie.getMaxAge() == 0) {
-                    // Remove expired cookies
-                    cookieManager.getCookieStore().remove(null, cookie);
-                } else {
-                    // Add or update cookies
-                    cookieManager.getCookieStore().add(null, cookie);
-                }
-            }
-        }
+        cookieHelper.updateCookiesFromResponse(response);
     }
 
     // Method to get cookies as a header string for a given URL,
     // filtering cookies based on domain and path matching.
     private String getCookieHeader(String url) {
-        try {
-            URL requestUrl = new URL(url);
-            return cookieManager.getCookieStore().getCookies().stream().filter(cookie -> {
-                boolean domainMatches = HttpCookie.domainMatches(cookie.getDomain(), requestUrl.getHost());
-                String cookiePath = cookie.getPath();
-                if (cookiePath == null || cookiePath.isEmpty()) {
-                    cookiePath = "/";
-                }
-                boolean pathMatches = requestUrl.getPath().startsWith(cookiePath);
-                // Exclude the problematic cookie (.ASPXAUTH_TRUEHOME_RT)
-                // Remove any leading dot and compare case-insensitively.
-                return domainMatches && pathMatches
-                        && !cookie.getName().replaceFirst("^\\.", "").equalsIgnoreCase("ASPXAUTH_TRUEHOME_RT");
-            }).map(cookie -> cookie.getName() + "=" + cookie.getValue()).collect(Collectors.joining("; "));
-        } catch (MalformedURLException e) {
-            logger.error("Malformed URL: {}", url, e);
-            return "";
-        }
+        return cookieHelper.getCookieHeader(url);
     }
 
-    public void logRequestHeaders(Request request) {
-        logger.debug("Request headers size: {}", request.getHeaders().toString().length());
-        logger.debug("Request headers: {}", request.getHeaders());
+    // Helper method to extract a proper value from the Fields entry; never returns null.
+    private String extractValue(Fields formFields, String param) {
+        org.eclipse.jetty.util.Fields.Field field = formFields.get(param);
+        if (field != null) {
+            String raw = field.getValue();
+            if (raw != null && raw.startsWith(param + "=[") && raw.endsWith("]")) {
+                // Remove the leading "param=[" and the trailing "]"
+                return raw.substring(param.length() + 2, raw.length() - 1);
+            }
+            return (raw != null) ? raw : "";
+        }
+        return "";
+    }
+
+    // New helper method to log the complete POST request details
+    public void logPostRequest(Request request, Fields formFields) {
+        // Build the POST body using the extracted parameter values
+        String pageValue = extractValue(formFields, PARAM_PAGE);
+        String filterValue = extractValue(formFields, PARAM_FILTER);
+        String requestBody = "page=" + pageValue + "&filter=" + filterValue;
+        logger.debug("Post Request URL: {}", request.getURI());
+        logger.debug("Post Request Method: {}", request.getMethod());
+        logger.debug("Post Request Headers: {}", request.getHeaders());
+        logger.debug("Post Request Body: {}", requestBody);
+        // Additionally, log the raw Fields content for complete insight
+        logger.debug("Raw Form Fields: {}", formFields.toString());
     }
 
     // Method to fetch locations
-    public void fetchLocations() {
+    public CompletableFuture<@Nullable Void> fetchLocations() {
         // Define the endpoint for fetching locations
         String locationEndpoint = "https://www.mytotalconnectcomfort.com/portal/Location/GetLocationListData";
 
-        // Create a request to fetch locations using filtered cookies for this endpoint
-        Request request = httpClient.newRequest(locationEndpoint).method(HttpMethod.GET).header(HttpHeader.COOKIE,
+        // Create a request using GET for the locations endpoint with the required headers
+        Request request = httpClient.newRequest(locationEndpoint).method(HttpMethod.GET)
+                .header(HttpHeader.COOKIE.asString(), getCookieHeader(locationEndpoint))
+                .header(HttpHeader.REFERER.asString(), BASE_URL).header(HttpHeader.ACCEPT.asString(), HEADER_ACCEPT);
+
+        logger.debug("Fetching locations from: {} with Cookie header: {}", locationEndpoint,
                 getCookieHeader(locationEndpoint));
 
-        // Send the request and handle the response
+        // Create and return the CompletableFuture
+        CompletableFuture<@Nullable Void> future = new CompletableFuture<>();
         request.send(result -> {
-            if (result.getResponse().getStatus() == 200) {
-                // Parse the response to extract location data
-                ContentResponse response = (ContentResponse) result.getResponse();
-                String responseBody = new String(response.getContent(), StandardCharsets.UTF_8);
-                // Process the location data (e.g., update internal state, notify handlers)
-                processLocationData(responseBody);
-            } else {
-                logger.error("Failed to fetch locations: {}", result.getResponse().getStatus());
+            try {
+                int status = result.getResponse().getStatus();
+                logger.debug("Location fetch response status: {}", status);
+                if (status == 200) {
+                    ContentResponse response = (ContentResponse) result.getResponse();
+                    String responseBody = new String(response.getContent(), StandardCharsets.UTF_8);
+                    processLocationData(responseBody);
+                    future.complete((Void) null);
+                } else {
+                    future.completeExceptionally(new HoneywellTCCException("Failed to fetch locations: " + status));
+                }
+            } catch (Exception e) {
+                future.completeExceptionally(e);
             }
         });
+        return future;
     }
 
     // Method to process location data
