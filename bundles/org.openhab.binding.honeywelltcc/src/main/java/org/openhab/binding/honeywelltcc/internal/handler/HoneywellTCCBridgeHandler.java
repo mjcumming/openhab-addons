@@ -103,8 +103,11 @@ public class HoneywellTCCBridgeHandler extends BaseBridgeHandler {
 
             // Attempt to log in immediately
             client.login();
+            logger.info("HoneywellTCCBridgeHandler logged in successfully, fetching locations...");
+            // Fetch locations immediately after login
+            client.fetchLocations();
+            logger.info("Location fetch initiated");
             updateStatus(ThingStatus.ONLINE);
-            logger.info("HoneywellTCCBridgeHandler activated and logged in");
 
         } catch (Exception e) {
             logger.error("Error during bridge initialization: {}", e.getMessage(), e);
