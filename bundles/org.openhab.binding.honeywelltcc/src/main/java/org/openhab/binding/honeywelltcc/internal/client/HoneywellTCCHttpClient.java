@@ -22,6 +22,7 @@ import java.net.URL;
 import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -45,7 +46,6 @@ import org.eclipse.jetty.client.api.Request;
 import org.eclipse.jetty.client.api.Response;
 import org.eclipse.jetty.client.util.FormContentProvider;
 import org.eclipse.jetty.client.util.StringContentProvider;
-import org.eclipse.jetty.http.HttpField;
 import org.eclipse.jetty.http.HttpHeader;
 import org.eclipse.jetty.http.HttpMethod;
 import org.eclipse.jetty.http.HttpStatus;
@@ -194,7 +194,7 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
                     throw new HoneywellTCCSessionExpiredException("Session has timed out");
                 }
 
-                updateCookies(response);
+                updateCookies(response.getHeaders().getValuesList(HttpHeader.SET_COOKIE));
                 lastAuthTime = System.currentTimeMillis();
                 logger.debug("Session refreshed successfully");
             }
@@ -270,7 +270,7 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
                 throw new HoneywellTCCAuthException("Failed to fetch login page: " + getResponse.getStatus());
             }
 
-            updateCookies(getResponse);
+            updateCookies(getResponse.getHeaders().getValuesList(HttpHeader.SET_COOKIE));
             updateRefererHeader(BASE_URL);
 
             // Step 2: POST login data
@@ -299,7 +299,7 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
                         "Login failed with status " + postResponse.getStatus() + ": " + responseText);
             }
 
-            updateCookies(postResponse);
+            updateCookies(postResponse.getHeaders().getValuesList(HttpHeader.SET_COOKIE));
 
             synchronized (sessionLock) {
                 isAuthenticated = true;
@@ -436,21 +436,20 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
     }
 
     /**
-     * Updates the session's cookie jar with cookies from API response.
-     * Matches Python's _update_cookies() exactly.
+     * Updates the internal cookie store using cookies received from an HTTP response.
+     * This method ensures that duplicate entries are overwritten and the Cookie header is rebuilt.
      */
-    private void updateCookies(ContentResponse response) {
-        logger.debug("Updating cookies from response headers: {}", response.getHeaders());
+    private void updateCookies(Collection<String> responseCookies) {
+        // Using a map to keep one cookie per name.
+        Map<String, HttpCookie> cookiesMap = new HashMap<>();
 
-        for (HttpField field : response.getHeaders()) {
-            if (!field.getName().equalsIgnoreCase("Set-Cookie")) {
-                continue;
-            }
+        // First, add existing cookies to the map.
+        for (HttpCookie cookie : cookieStore) {
+            cookiesMap.put(cookie.getName(), cookie);
+        }
 
-            String cookieStr = field.getValue();
-            logger.debug("Processing cookie: {}", cookieStr);
-
-            // Parse cookie string (name=value; path=/; domain=.example.com)
+        // Then add (or update) cookies from the response.
+        for (String cookieStr : responseCookies) {
             String[] cookieParts = cookieStr.split(";");
             String[] nameValue = cookieParts[0].split("=", 2);
 
@@ -460,25 +459,24 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
 
                 // Don't store empty or "deleted" cookies
                 if (!value.isEmpty() && !"deleted".equalsIgnoreCase(value)) {
-                    cookies.put(name, value);
-                    logger.debug("Added cookie: {}={}", name, value);
+                    cookiesMap.put(name, HttpCookie.parse(value).get(0));
                 } else {
-                    cookies.remove(name);
-                    logger.debug("Removed cookie: {}", name);
+                    cookiesMap.remove(name);
                 }
             }
         }
 
-        // Update cookie header like Python
-        if (!cookies.isEmpty()) {
-            String cookieHeader = cookies.entrySet().stream().map(e -> e.getKey() + "=" + e.getValue())
-                    .collect(Collectors.joining("; "));
-            headers.put(HttpHeader.COOKIE.asString(), cookieHeader);
-            logger.debug("Updated cookie header: {}", cookieHeader);
-        } else {
-            headers.remove(HttpHeader.COOKIE.asString());
-            logger.debug("Removed cookie header - no cookies present");
-        }
+        // Update the cookie store with unique cookies.
+        cookieStore.clear();
+        cookieStore.addAll(cookiesMap.values());
+
+        // Reconstruct the Cookie header from the unique cookies.
+        String cookieHeader = cookiesMap.values().stream().map(cookie -> cookie.getName() + "=" + cookie.getValue())
+                .collect(Collectors.joining("; "));
+
+        // Update the headers used for subsequent requests.
+        headers.put(HttpHeader.COOKIE.asString(), cookieHeader);
+        logger.debug("Updated cookie header: {}", cookieHeader);
     }
 
     /**
@@ -497,7 +495,7 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
             if (contentType != null && contentType.contains("application/json")) {
                 try {
                     JsonElement result = JsonParser.parseString(content);
-                    updateCookies(response);
+                    updateCookies(response.getHeaders().getValuesList(HttpHeader.SET_COOKIE));
                     return result;
                 } catch (Exception e) {
                     logger.error("Failed to parse JSON response: {}", content);
