@@ -45,11 +45,19 @@ public class CookieHelper {
      *
      * @param response the Jetty Response containing Set-Cookie headers
      */
+
     public void updateCookiesFromResponse(Response response) {
         List<String> setCookieHeaders = response.getHeaders().getValuesList("Set-Cookie");
         for (String header : setCookieHeaders) {
             List<HttpCookie> cookies = HttpCookie.parse(header);
             for (HttpCookie cookie : cookies) {
+                // Skip cookies with empty or null value
+                if (cookie.getValue() == null || cookie.getValue().trim().isEmpty()) {
+                    cookieStore.remove(cookie.getName());
+                    logger.debug("Removed or skipped cookie with empty value: {}", cookie.getName());
+                    continue;
+                }
+                // Remove expired cookies.
                 if (cookie.getMaxAge() == 0) {
                     cookieStore.remove(cookie.getName());
                     logger.debug("Removed expired cookie: {}", cookie.getName());

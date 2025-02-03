@@ -43,12 +43,14 @@ import org.eclipse.jetty.client.HttpResponseException;
 import org.eclipse.jetty.client.api.ContentResponse;
 import org.eclipse.jetty.client.api.Request;
 import org.eclipse.jetty.client.api.Response;
+import org.eclipse.jetty.client.util.BufferingResponseListener;
 import org.eclipse.jetty.client.util.FormContentProvider;
 import org.eclipse.jetty.client.util.StringContentProvider;
 import org.eclipse.jetty.http.HttpHeader;
 import org.eclipse.jetty.http.HttpMethod;
 import org.eclipse.jetty.http.HttpStatus;
 import org.eclipse.jetty.util.Fields;
+import org.openhab.binding.honeywelltcc.internal.client.exceptions.HoneywellTCCAuthException;
 import org.openhab.binding.honeywelltcc.internal.client.exceptions.HoneywellTCCException;
 import org.openhab.binding.honeywelltcc.internal.client.exceptions.HoneywellTCCInvalidParameterException;
 import org.openhab.binding.honeywelltcc.internal.client.exceptions.HoneywellTCCInvalidResponseException;
@@ -246,36 +248,81 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
      *
      * @throws HoneywellTCCException if login fails.
      */
+
     public CompletableFuture<@Nullable Void> login() {
         CompletableFuture<@Nullable Void> future = new CompletableFuture<>();
+
+        // Step 1: Initial GET to fetch login page and update cookies.
+        httpClient.newRequest(BASE_URL).method(HttpMethod.GET).timeout(REQUEST_TIMEOUT_SEC, TimeUnit.SECONDS)
+                .send(result -> {
+                    try {
+                        int getStatus = result.getResponse().getStatus();
+                        logger.debug("Initial GET login page response status: {}", getStatus);
+                        updateCookiesFromResponse(result.getResponse());
+                        // Proceed with POST login after GET completes.
+                        performLoginPost(future);
+                    } catch (Exception e) {
+                        future.completeExceptionally(
+                                new HoneywellTCCException("Initial GET for login failed: " + e.getMessage(), e));
+                    }
+                });
+        return future;
+    }
+
+    // New helper method for performing the POST login:
+    private void performLoginPost(CompletableFuture<@Nullable Void> future) {
         String loginUrl = BASE_URL + "/portal/Account/LogOn";
 
-        // Prepare login data as JSON (adjust keys and values as needed)
-        Map<String, String> loginData = new HashMap<>();
+        // Prepare login data as form fields.
+        Fields loginData = new Fields();
         loginData.put("UserName", username);
         loginData.put("Password", password);
+        loginData.put("RememberMe", "false");
+        loginData.put("timeOffset", "480");
 
-        Request request = httpClient.POST(loginUrl).header(HttpHeader.CONTENT_TYPE.asString(), "application/json")
-                .content(new StringContentProvider(gson.toJson(loginData)));
+        Request request = httpClient.POST(loginUrl)
+                .header(HttpHeader.CONTENT_TYPE.asString(), "application/x-www-form-urlencoded")
+                .content(new FormContentProvider(loginData));
 
         logger.debug("Attempting login at: {}", loginUrl);
 
-        request.send(result -> {
-            try {
-                int status = result.getResponse().getStatus();
-                logger.debug("Login response status: {}", status);
-                if (status == 200) {
-                    updateCookiesFromResponse(result.getResponse());
-                    logger.info("Login successful for user: {}", username);
-                    future.complete((Void) null);
+        // Replace the lambda with a BufferingResponseListener to retrieve buffered content
+        request.send(new BufferingResponseListener() {
+            @Override
+            public void onComplete(org.eclipse.jetty.client.api.Result result) {
+                if (result.isSucceeded()) {
+                    Response response = result.getResponse();
+                    int status = response.getStatus();
+                    logger.debug("Login POST response status: {}", status);
+                    // Retrieve the buffered content as a UTF-8 string
+                    String responseContent = new String(getContent(), StandardCharsets.UTF_8);
+                    try {
+                        if (status == 200) {
+                            // Check for invalid credentials in the response content.
+                            if (responseContent.contains("Invalid username or password")) {
+                                future.completeExceptionally(
+                                        new HoneywellTCCAuthException("Invalid username or password"));
+                                return;
+                            }
+                            updateCookiesFromResponse(response);
+                            logger.info("Login successful for user: {}", username);
+                            // Immediately call keepalive to validate the session.
+                            keepalive().thenRun(() -> future.complete((Void) null)).exceptionally(e -> {
+                                future.completeExceptionally(new HoneywellTCCException(
+                                        "Keepalive after login failed: " + e.getMessage(), e));
+                                return null;
+                            });
+                        } else {
+                            future.completeExceptionally(new HoneywellTCCException("Login failed: status " + status));
+                        }
+                    } catch (Exception e) {
+                        future.completeExceptionally(e);
+                    }
                 } else {
-                    future.completeExceptionally(new HoneywellTCCException("Login failed: status " + status));
+                    future.completeExceptionally(result.getFailure());
                 }
-            } catch (Exception e) {
-                future.completeExceptionally(e);
             }
         });
-        return future;
     }
 
     /**
@@ -779,7 +826,7 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
         logger.debug("Raw Form Fields: {}", formFields.toString());
     }
 
-    // Method to fetch locations
+    // Updated fetchLocations() method using BufferingResponseListener
     public CompletableFuture<@Nullable Void> fetchLocations() {
         // Define the endpoint for fetching locations
         String locationEndpoint = "https://www.mytotalconnectcomfort.com/portal/Location/GetLocationListData";
@@ -794,22 +841,30 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
 
         // Create and return the CompletableFuture
         CompletableFuture<@Nullable Void> future = new CompletableFuture<>();
-        request.send(result -> {
-            try {
-                int status = result.getResponse().getStatus();
-                logger.debug("Location fetch response status: {}", status);
-                if (status == 200) {
-                    ContentResponse response = (ContentResponse) result.getResponse();
-                    String responseBody = new String(response.getContent(), StandardCharsets.UTF_8);
-                    processLocationData(responseBody);
-                    future.complete((Void) null);
+
+        // Use BufferingResponseListener to fully buffer the response
+        BufferingResponseListener listener = new BufferingResponseListener() {
+            @Override
+            public void onComplete(org.eclipse.jetty.client.api.Result result) {
+                if (result.isSucceeded()) {
+                    Response response = result.getResponse();
+                    int status = response.getStatus();
+                    logger.debug("Location fetch response status: {}", status);
+                    if (status == 200) {
+                        String responseBody = new String(getContent(), StandardCharsets.UTF_8);
+                        processLocationData(responseBody);
+                        future.complete(null);
+                    } else {
+                        future.completeExceptionally(new HoneywellTCCException("Failed to fetch locations: " + status));
+                    }
                 } else {
-                    future.completeExceptionally(new HoneywellTCCException("Failed to fetch locations: " + status));
+                    future.completeExceptionally(result.getFailure());
                 }
-            } catch (Exception e) {
-                future.completeExceptionally(e);
             }
-        });
+        };
+
+        // Send the request using the buffering listener
+        request.send(listener);
         return future;
     }
 
