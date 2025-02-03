@@ -194,7 +194,7 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
                     throw new HoneywellTCCSessionExpiredException("Session has timed out");
                 }
 
-                updateCookies(response.getHeaders().getValuesList(HttpHeader.SET_COOKIE));
+                updateCookiesFromHeaders(response.getHeaders().getValuesList(HttpHeader.SET_COOKIE));
                 lastAuthTime = System.currentTimeMillis();
                 logger.debug("Session refreshed successfully");
             }
@@ -270,7 +270,7 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
                 throw new HoneywellTCCAuthException("Failed to fetch login page: " + getResponse.getStatus());
             }
 
-            updateCookies(getResponse.getHeaders().getValuesList(HttpHeader.SET_COOKIE));
+            updateCookiesFromHeaders(getResponse.getHeaders().getValuesList(HttpHeader.SET_COOKIE));
             updateRefererHeader(BASE_URL);
 
             // Step 2: POST login data
@@ -299,7 +299,7 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
                         "Login failed with status " + postResponse.getStatus() + ": " + responseText);
             }
 
-            updateCookies(postResponse.getHeaders().getValuesList(HttpHeader.SET_COOKIE));
+            updateCookiesFromHeaders(postResponse.getHeaders().getValuesList(HttpHeader.SET_COOKIE));
 
             synchronized (sessionLock) {
                 isAuthenticated = true;
@@ -437,46 +437,77 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
 
     /**
      * Updates the internal cookie store using cookies received from an HTTP response.
-     * This method ensures that duplicate entries are overwritten and the Cookie header is rebuilt.
+     * This method ensures that duplicate entries are overwritten and skips (or removes)
+     * any cookies with invalid name-value pairs.
+     * 
+     * This method accepts a collection of HttpCookie objects.
      */
-    private void updateCookies(Collection<String> responseCookies) {
-        // Using a map to keep one cookie per name.
+    private void updateCookies(Collection<HttpCookie> responseCookies) {
+        // Create a map to hold the unique, valid cookies by name.
         Map<String, HttpCookie> cookiesMap = new HashMap<>();
 
-        // First, add existing cookies to the map.
+        // Add any already stored cookies that are valid.
         for (HttpCookie cookie : cookieStore) {
-            cookiesMap.put(cookie.getName(), cookie);
-        }
-
-        // Then add (or update) cookies from the response.
-        for (String cookieStr : responseCookies) {
-            String[] cookieParts = cookieStr.split(";");
-            String[] nameValue = cookieParts[0].split("=", 2);
-
-            if (nameValue.length == 2) {
-                String name = nameValue[0].trim();
-                String value = nameValue[1].trim();
-
-                // Don't store empty or "deleted" cookies
-                if (!value.isEmpty() && !"deleted".equalsIgnoreCase(value)) {
-                    cookiesMap.put(name, HttpCookie.parse(value).get(0));
-                } else {
-                    cookiesMap.remove(name);
-                }
+            if (isValidCookie(cookie)) {
+                cookiesMap.put(cookie.getName(), cookie);
             }
         }
 
-        // Update the cookie store with unique cookies.
+        // Process new cookies received from the response.
+        for (HttpCookie newCookie : responseCookies) {
+            try {
+                if (isValidCookie(newCookie)) {
+                    cookiesMap.put(newCookie.getName(), newCookie);
+                } else {
+                    // If the cookie is not valid (e.g., empty value), remove any previously stored cookie.
+                    cookiesMap.remove(newCookie.getName());
+                    logger.debug("Skipping or removing invalid/empty cookie: {}", newCookie);
+                }
+            } catch (IllegalArgumentException e) {
+                // In case parsing a cookie throws an exception, skip this one.
+                logger.warn("Skipping invalid cookie {}: {}", newCookie, e.getMessage());
+            }
+        }
+
+        // Replace the current cookie store with the validated cookies.
         cookieStore.clear();
         cookieStore.addAll(cookiesMap.values());
 
-        // Reconstruct the Cookie header from the unique cookies.
+        // Reconstruct the Cookie header from the unique, valid cookies.
         String cookieHeader = cookiesMap.values().stream().map(cookie -> cookie.getName() + "=" + cookie.getValue())
                 .collect(Collectors.joining("; "));
 
-        // Update the headers used for subsequent requests.
+        // Update the request headers for subsequent requests.
         headers.put(HttpHeader.COOKIE.asString(), cookieHeader);
         logger.debug("Updated cookie header: {}", cookieHeader);
+    }
+
+    /**
+     * Updates the internal cookie store using cookie header strings.
+     * It parses each header into HttpCookie objects and delegates to the primary updateCookies method.
+     * 
+     * Note: Callers previously using updateCookies(passCollectionOfStrings) should use this method instead.
+     */
+    private void updateCookiesFromHeaders(Collection<String> cookieHeaders) {
+        List<HttpCookie> cookies = new ArrayList<>();
+        for (String header : cookieHeaders) {
+            try {
+                List<HttpCookie> parsedCookies = HttpCookie.parse(header);
+                cookies.addAll(parsedCookies);
+            } catch (IllegalArgumentException e) {
+                logger.warn("Error parsing cookie header: {} - {}", header, e.getMessage());
+            }
+        }
+        // Delegate to the HttpCookie-based update.
+        updateCookies(cookies);
+    }
+
+    /**
+     * Validates that the given HttpCookie has both a non-null and non-empty name and value.
+     */
+    private boolean isValidCookie(HttpCookie cookie) {
+        return cookie.getName() != null && !cookie.getName().isEmpty() && cookie.getValue() != null
+                && !cookie.getValue().isEmpty();
     }
 
     /**
@@ -495,7 +526,7 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
             if (contentType != null && contentType.contains("application/json")) {
                 try {
                     JsonElement result = JsonParser.parseString(content);
-                    updateCookies(response.getHeaders().getValuesList(HttpHeader.SET_COOKIE));
+                    updateCookiesFromHeaders(response.getHeaders().getValuesList(HttpHeader.SET_COOKIE));
                     return result;
                 } catch (Exception e) {
                     logger.error("Failed to parse JSON response: {}", content);
@@ -522,7 +553,8 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
     }
 
     /**
-     * Creates a new request with proper headers and cookies.
+     * Creates a new request with proper headers (without manually adding cookies).
+     * Jetty's HttpClient will automatically add stored cookies.
      */
     private Request createRequest(String url, HttpMethod method) {
         Request request = httpClient.newRequest(url).method(method).timeout(REQUEST_TIMEOUT_SEC, TimeUnit.SECONDS);
@@ -662,12 +694,21 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
     }
 
     /**
-     * Adds current headers to request
-     * Ensures all requests have up-to-date headers
+     * Adds current headers (except Cookie) to the request.
+     * Remove manual cookie handling since Jetty does that automatically.
      */
     private void addHeaders(Request request) {
-        headers.forEach(request::header);
-        logger.debug("Added headers to request: {}", headers);
+        request.header(HttpHeader.ACCEPT.asString(),
+                "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8");
+        request.header("X-Requested-With", "XMLHttpRequest");
+        request.header(HttpHeader.USER_AGENT.asString(),
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36");
+        request.header(HttpHeader.CONNECTION.asString(), "keep-alive");
+        request.header(HttpHeader.REFERER.asString(), "https://www.mytotalconnectcomfort.com/portal");
+        request.header(HttpHeader.ACCEPT_LANGUAGE.asString(), "en-US,en;q=0.9");
+
+        // Do not add any Cookie header here since HttpClient automatically adds cookies.
+        logger.debug("Added headers to request (excluding Cookie): {}", request.getHeaders());
     }
 
     /**
@@ -810,8 +851,7 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
 
     // Method to process location data
     private void processLocationData(String responseBody) {
-        // Parse the JSON response and update the internal state or notify other components
-        // Example: parse JSON and log the locations
-        logger.debug("Location data: {}", responseBody);
+        logger.info("Location data received: {}", responseBody);
+        logger.debug("Location data (detailed): {}", responseBody);
     }
 }
