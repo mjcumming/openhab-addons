@@ -18,21 +18,20 @@ import java.net.CookieManager;
 import java.net.CookiePolicy;
 import java.net.HttpCookie;
 import java.net.UnknownHostException;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.stream.Collectors;
+import java.util.function.Supplier;
 
 import javax.net.ssl.SSLHandshakeException;
 
@@ -43,6 +42,7 @@ import org.eclipse.jetty.client.HttpResponseException;
 import org.eclipse.jetty.client.api.ContentResponse;
 import org.eclipse.jetty.client.api.Request;
 import org.eclipse.jetty.client.api.Response;
+import org.eclipse.jetty.client.api.Result;
 import org.eclipse.jetty.client.util.BufferingResponseListener;
 import org.eclipse.jetty.client.util.FormContentProvider;
 import org.eclipse.jetty.client.util.StringContentProvider;
@@ -50,6 +50,7 @@ import org.eclipse.jetty.http.HttpHeader;
 import org.eclipse.jetty.http.HttpMethod;
 import org.eclipse.jetty.http.HttpStatus;
 import org.eclipse.jetty.util.Fields;
+import org.eclipse.jetty.util.ssl.SslContextFactory;
 import org.openhab.binding.honeywelltcc.internal.client.exceptions.HoneywellTCCAuthException;
 import org.openhab.binding.honeywelltcc.internal.client.exceptions.HoneywellTCCException;
 import org.openhab.binding.honeywelltcc.internal.client.exceptions.HoneywellTCCInvalidParameterException;
@@ -60,7 +61,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.google.gson.Gson;
-import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -101,23 +101,22 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
     private final List<HttpCookie> cookieStore = new ArrayList<>();
     private static final int MAX_COOKIE_COUNT = 5;
 
-    public static HoneywellTCCHttpClient create(HttpClient httpClient, String username, String password,
-            ScheduledExecutorService scheduler) throws HoneywellTCCException {
-        return new HoneywellTCCHttpClient(httpClient, username, password, scheduler);
-    }
-
-    private HoneywellTCCHttpClient(HttpClient httpClient, String username, String password,
-            ScheduledExecutorService scheduler) throws HoneywellTCCException {
-        this.httpClient = httpClient;
+    public HoneywellTCCHttpClient(String username, String password, ScheduledExecutorService scheduler)
+            throws HoneywellTCCException {
         this.username = username;
         this.password = password;
         this.scheduler = scheduler;
         this.gson = new Gson();
         this.cookieManager = new CookieManager(null, CookiePolicy.ACCEPT_ALL);
 
+        // Create HttpClient with SSL support
+        SslContextFactory.Client sslContextFactory = new SslContextFactory.Client();
+        sslContextFactory.setEndpointIdentificationAlgorithm("HTTPS");
+        this.httpClient = new HttpClient(sslContextFactory);
+
         // Configure timeouts using constants
-        httpClient.setConnectTimeout(HTTP_REQUEST_TIMEOUT_SEC * 1000L);
-        httpClient.setIdleTimeout(HTTP_REQUEST_TIMEOUT_SEC * 1000L);
+        this.httpClient.setConnectTimeout(HTTP_REQUEST_TIMEOUT_SEC * 1000L);
+        this.httpClient.setIdleTimeout(HTTP_REQUEST_TIMEOUT_SEC * 1000L);
 
         // Configure client like Python requests
         this.httpClient.setFollowRedirects(true);
@@ -128,13 +127,13 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
         startKeepalive();
 
         // Configure automatic cookie management
-        httpClient.setCookieStore(cookieManager.getCookieStore());
+        this.httpClient.setCookieStore(cookieManager.getCookieStore());
 
         try {
-            httpClient.start();
-            logger.debug("Jetty HttpClient started with automatic cookie management");
+            this.httpClient.start();
+            logger.debug("Jetty HttpClient started with SSL support and automatic cookie management");
         } catch (Exception e) {
-            throw new HoneywellTCCException("Failed to start HttpClient", e);
+            throw new HoneywellTCCException("Failed to start HttpClient: " + e.getMessage(), e);
         }
     }
 
@@ -200,7 +199,6 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
                 int status = result.getResponse().getStatus();
                 logger.debug("Keepalive response status: {}", status);
                 if (status == 200) {
-                    updateCookiesFromResponse(result.getResponse());
                     logger.debug("Session refreshed successfully");
                     future.complete((Void) null);
                 } else {
@@ -264,7 +262,7 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
                     try {
                         int getStatus = result.getResponse().getStatus();
                         logger.debug("Initial GET login page response status: {}", getStatus);
-                        updateCookiesFromResponse(result.getResponse());
+                        // Relying on Jetty's automatic cookie management; no manual cookie update needed.
                         // Proceed with POST login after GET completes.
                         performLoginPost(future);
                     } catch (Exception e) {
@@ -300,13 +298,16 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
             public void onComplete(org.eclipse.jetty.client.api.Result result) {
                 if (result.isSucceeded()) {
                     Response response = result.getResponse();
+                    String content = getContentAsString();
+                    if (content == null) {
+                        future.completeExceptionally(new HoneywellTCCInvalidResponseException("Null response content"));
+                        return;
+                    }
                     int status = response.getStatus();
                     logger.debug("Login POST response status: {}", status);
-                    // Retrieve buffered response as UTF-8 content
-                    String responseContent = new String(getContent(), StandardCharsets.UTF_8);
                     try {
                         if (status == 200) {
-                            if (responseContent.contains("Invalid username or password")) {
+                            if (content.contains("Invalid username or password")) {
                                 future.completeExceptionally(
                                         new HoneywellTCCAuthException("Invalid username or password"));
                                 return;
@@ -349,16 +350,19 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
      * @return JsonObject containing thermostat data
      * @throws HoneywellTCCException if the request fails
      */
-    public JsonObject getThermostatData(String deviceId) throws HoneywellTCCException {
-        return executeWithRetry("Get thermostat data", () -> {
-            String url = String.format("%s/Device/CheckDataSession/%s", BASE_URL, deviceId);
-            Request request = createRequest(url, HttpMethod.GET);
-            ContentResponse response = executeRequest(request, "get thermostat data");
-            JsonElement jsonResponse = handleResponse(response, "thermostat data");
-            if (!jsonResponse.isJsonObject()) {
-                throw new HoneywellTCCInvalidResponseException("Expected JSON object response");
+    public CompletableFuture<JsonObject> getThermostatData(String deviceId) {
+        String url = String.format("%s/Device/CheckDataSession/%s", BASE_URL, deviceId);
+        Request request = createRequest(url, HttpMethod.GET);
+        return executeRequestAsync(request, "Get thermostat data").thenApply(response -> {
+            try {
+                JsonElement jsonResponse = handleResponse(response, "thermostat data");
+                if (!jsonResponse.isJsonObject()) {
+                    throw new HoneywellTCCInvalidResponseException("Expected JSON object response");
+                }
+                return jsonResponse.getAsJsonObject();
+            } catch (HoneywellTCCException e) {
+                throw new CompletionException(e);
             }
-            return jsonResponse.getAsJsonObject();
         });
     }
 
@@ -370,40 +374,44 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
      * @param settings JsonObject containing the settings to update
      * @throws HoneywellTCCException if the request fails
      */
-    public void setThermostatSettings(String deviceId, JsonObject settings) throws HoneywellTCCException {
+    public CompletableFuture<Void> setThermostatSettings(String deviceId, JsonObject settings) {
         if (deviceId == null || settings == null) {
-            throw new HoneywellTCCInvalidParameterException("Device ID and settings cannot be null");
+            CompletableFuture<Void> future = new CompletableFuture<>();
+            future.completeExceptionally(
+                    new HoneywellTCCInvalidParameterException("Device ID and settings cannot be null"));
+            return future;
         }
 
-        executeWithRetry("Set thermostat settings", () -> {
-            JsonObject data = new JsonObject();
-            data.addProperty("SystemSwitch", (String) null);
-            data.addProperty("HeatSetpoint", (String) null);
-            data.addProperty("CoolSetpoint", (String) null);
-            data.addProperty("HeatNextPeriod", (String) null);
-            data.addProperty("CoolNextPeriod", (String) null);
-            data.addProperty("StatusHeat", (String) null);
-            data.addProperty("DeviceID", deviceId);
+        JsonObject data = new JsonObject();
+        data.addProperty("SystemSwitch", (String) null);
+        data.addProperty("HeatSetpoint", (String) null);
+        data.addProperty("CoolSetpoint", (String) null);
+        data.addProperty("HeatNextPeriod", (String) null);
+        data.addProperty("CoolNextPeriod", (String) null);
+        data.addProperty("StatusHeat", (String) null);
+        data.addProperty("DeviceID", deviceId);
 
-            for (Map.Entry<String, JsonElement> entry : settings.entrySet()) {
-                data.add(entry.getKey(), entry.getValue());
+        for (Map.Entry<String, JsonElement> entry : settings.entrySet()) {
+            data.add(entry.getKey(), entry.getValue());
+        }
+
+        String url = BASE_URL + "/Device/SubmitControlScreenChanges";
+        Request request = httpClient.POST(url).header(HttpHeader.CONTENT_TYPE.asString(), "application/json")
+                .content(new StringContentProvider(gson.toJson(data)));
+
+        return executeRequestAsync(request, "settings update").thenAccept(response -> {
+            try {
+                JsonElement jsonResponse = handleResponse(response, "thermostat settings");
+                if (!jsonResponse.isJsonObject()) {
+                    throw new HoneywellTCCInvalidResponseException("Expected JSON object response");
+                }
+                JsonObject result = jsonResponse.getAsJsonObject();
+                if (result.get("success").getAsInt() != 1) {
+                    throw new HoneywellTCCException("API rejected thermostat settings");
+                }
+            } catch (HoneywellTCCException e) {
+                throw new CompletionException(e);
             }
-
-            String url = BASE_URL + "/Device/SubmitControlScreenChanges";
-            Request request = createRequest(url, HttpMethod.POST)
-                    .content(new FormContentProvider(jsonToFormFields(data)));
-
-            ContentResponse response = executeRequest(request, "settings update");
-            JsonElement jsonResponse = handleResponse(response, "thermostat settings");
-            if (!jsonResponse.isJsonObject()) {
-                throw new HoneywellTCCInvalidResponseException("Expected JSON object response");
-            }
-
-            JsonObject result = jsonResponse.getAsJsonObject();
-            if (result.get("success").getAsInt() != 1) {
-                throw new HoneywellTCCException("API rejected thermostat settings");
-            }
-            return null;
         });
     }
 
@@ -420,117 +428,155 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
     }
 
     /**
-     * Gets the list of locations and their devices from TCC
-     * 
-     * @return JsonArray of locations containing devices
-     * @throws HoneywellTCCException if request fails
+     * Retrieves the list of locations from the Honeywell TCC API.
      */
-    public JsonArray getLocations() throws HoneywellTCCException {
-        return executeWithRetry("Get locations", () -> {
-            String url = BASE_URL + ENDPOINT_LOCATIONS;
+    public CompletableFuture<JsonObject> getLocations() {
+        // 1. URL Construction - exact match to Python
+        String url = BASE_URL + "/Location/GetLocationListData";
 
-            // Prepare form parameters as per Python reference.
-            Fields formFields = new Fields();
-            formFields.put(PARAM_PAGE, PARAM_PAGE_VALUE);
-            formFields.put(PARAM_FILTER, PARAM_FILTER_VALUE);
+        // 2. Parameters - exact match to Python's params
+        Request request = httpClient.POST(url).followRedirects(true) // Match Python's allow_redirects=True
+                .param("page", "1") // Match Python's params={'page': 1, 'filter': ''}
+                .param("filter", "");
 
-            // Build the POST request with the expected headers.
-            Request request = httpClient.POST(url).header(HttpHeader.CONTENT_TYPE.asString(), CONTENT_TYPE_FORM)
-                    .header(HttpHeader.REFERER.asString(), BASE_URL + "/")
-                    .header(HttpHeader.USER_AGENT.asString(), HEADER_USER_AGENT)
-                    .header("X-Requested-With", "XMLHttpRequest").header(HttpHeader.ACCEPT.asString(), HEADER_ACCEPT)
-                    .header(HttpHeader.ACCEPT_LANGUAGE.asString(), HEADER_ACCEPT_LANGUAGE)
-                    .header(HttpHeader.CONNECTION.asString(), HEADER_CONNECTION).followRedirects(true);
+        // 3. Headers - exact copy of Python's headers
+        Map<String, String> headers = new HashMap<>(this.headers); // Copy base headers like Python
+        headers.put(HttpHeader.REFERER.asString(), BASE_URL + "/");
+        headers.forEach(request::header);
 
-            // Send the request and process the response.
-            ContentResponse response = executeRequest(request, "locations");
-            JsonElement jsonResponse = handleResponse(response, "locations");
-            if (!jsonResponse.isJsonObject()) {
-                throw new HoneywellTCCInvalidResponseException("Expected JSON object response");
+        // 4. Implement Python's _retries_login pattern
+        return withRetries("get_locations", () -> {
+            CompletableFuture<JsonObject> future = new CompletableFuture<>();
+
+            // 5. Request execution with full logging like Python
+            logger.debug("Sending request to {} with headers: {}", url, headers);
+            logger.debug("Current cookies: {}", httpClient.getCookieStore().getCookies());
+
+            // 6. Response handling with BufferingResponseListener to match Python's async with
+            request.send(new BufferingResponseListener() {
+                @Override
+                public void onComplete(Result result) {
+                    try {
+                        if (result.isFailed()) {
+                            handleRequestFailure(result.getFailure(), future);
+                            return;
+                        }
+
+                        Response response = result.getResponse();
+                        String content = getContentAsString();
+                        if (content == null) {
+                            future.completeExceptionally(
+                                    new HoneywellTCCInvalidResponseException("Null response content"));
+                            return;
+                        }
+                        int status = response.getStatus();
+
+                        // 7. Match Python's exact response handling
+                        logger.debug("Response status: {} headers: {}", status, response.getHeaders());
+                        logger.debug("Response content: {}", content);
+
+                        switch (status) {
+                            case HttpStatus.OK_200:
+                                handleSuccessResponse(response, content, future);
+                                break;
+                            case HttpStatus.FOUND_302:
+                                handleRedirect(response, headers, future);
+                                break;
+                            case HttpStatus.TOO_MANY_REQUESTS_429:
+                                future.completeExceptionally(new HoneywellTCCRateLimitException());
+                                break;
+                            case HttpStatus.UNAUTHORIZED_401:
+                                handleUnauthorized(request, headers, future);
+                                break;
+                            default:
+                                handleUnexpectedStatus(status, content, future);
+                        }
+                    } catch (Exception e) {
+                        future.completeExceptionally(new HoneywellTCCException("Failed to process response", e));
+                    }
+                }
+            });
+
+            return future;
+        });
+    }
+
+    // Helper methods to match Python's response handling
+    @NonNullByDefault
+    private void handleSuccessResponse(Response response, String content, CompletableFuture<JsonObject> future) {
+        String contentType = Objects.requireNonNullElse(response.getHeaders().get(HttpHeader.CONTENT_TYPE.asString()),
+                "no content type");
+
+        // More lenient content type checking - just check if it contains application/json
+        if (contentType.toLowerCase().contains("application/json")) {
+            try {
+                JsonObject json = JsonParser.parseString(content).getAsJsonObject();
+                future.complete(json);
+            } catch (Exception e) {
+                future.completeExceptionally(new HoneywellTCCInvalidResponseException("Invalid JSON response"));
             }
-            // Extract as needed – assuming the JSON object contains an array under RESPONSE_LOCATIONS.
-            JsonObject result = jsonResponse.getAsJsonObject();
-            return result.getAsJsonArray(RESPONSE_LOCATIONS);
+        } else {
+            future.completeExceptionally(new HoneywellTCCInvalidResponseException(
+                    String.format("Expected JSON response, got: %s", contentType)));
+        }
+    }
+
+    @NonNullByDefault
+    private void handleRedirect(Response response, Map<String, String> headers, CompletableFuture<JsonObject> future) {
+        String location = getLocation(response);
+
+        if (location.isEmpty()) {
+            future.completeExceptionally(new HoneywellTCCException("Missing redirect location header"));
+            return;
+        }
+
+        logger.debug("Following redirect to: {}", location);
+
+        Request redirectRequest = httpClient.POST(location);
+        headers.forEach(redirectRequest::header);
+
+        redirectRequest.send(new BufferingResponseListener() {
+            @Override
+            public void onComplete(Result redirectResult) {
+                if (redirectResult.isSucceeded()) {
+                    String content = getContentAsString();
+                    if (content != null) {
+                        handleSuccessResponse(redirectResult.getResponse(), content, future);
+                    } else {
+                        future.completeExceptionally(new HoneywellTCCInvalidResponseException("Null response content"));
+                    }
+                } else {
+                    // OpenHAB pattern: Safe error message construction
+                    String errorMessage = redirectResult.getFailure() != null ? redirectResult.getFailure().toString()
+                            : "Unknown error";
+                    future.completeExceptionally(new HoneywellTCCException("Redirect failed: " + errorMessage));
+                }
+            }
+        });
+    }
+
+    private void handleUnauthorized(Request originalRequest, Map<String, String> headers,
+            CompletableFuture<JsonObject> future) {
+        // Handle 401 without WWW-Authenticate header
+        logger.debug("Session expired, attempting re-authentication");
+        login().thenCompose(v -> {
+            Request retryRequest = httpClient.POST(originalRequest.getURI());
+            headers.forEach(retryRequest::header);
+            return executeRequestAsync(retryRequest, "retry after auth");
+        }).thenAccept(response -> {
+            try {
+                handleSuccessResponse(response, ((ContentResponse) response).getContentAsString(), future);
+            } catch (Exception e) {
+                future.completeExceptionally(e);
+            }
+        }).exceptionally(e -> {
+            future.completeExceptionally(new HoneywellTCCException("Re-authentication failed", e));
+            return null;
         });
     }
 
     public long getLastAuthTime() {
         return lastAuthTime;
-    }
-
-    /**
-     * Updates the internal cookie store using cookies received from an HTTP response.
-     * This method ensures that duplicate entries are overwritten and skips (or removes)
-     * any cookies with invalid name-value pairs.
-     * 
-     * This method accepts a collection of HttpCookie objects.
-     */
-    private void updateCookies(Collection<HttpCookie> responseCookies) {
-        // Create a map to hold the unique, valid cookies by name.
-        Map<String, HttpCookie> cookiesMap = new HashMap<>();
-
-        // Add any already stored cookies that are valid.
-        for (HttpCookie cookie : cookieStore) {
-            if (isValidCookie(cookie)) {
-                cookiesMap.put(cookie.getName(), cookie);
-            }
-        }
-
-        // Process new cookies received from the response.
-        for (HttpCookie newCookie : responseCookies) {
-            try {
-                if (isValidCookie(newCookie)) {
-                    cookiesMap.put(newCookie.getName(), newCookie);
-                } else {
-                    // If the cookie is not valid (e.g., empty value), remove any previously stored cookie.
-                    cookiesMap.remove(newCookie.getName());
-                    logger.debug("Skipping or removing invalid/empty cookie: {}", newCookie);
-                }
-            } catch (IllegalArgumentException e) {
-                // In case parsing a cookie throws an exception, skip this one.
-                logger.warn("Skipping invalid cookie {}: {}", newCookie, e.getMessage());
-            }
-        }
-
-        // Replace the current cookie store with the validated cookies.
-        cookieStore.clear();
-        cookieStore.addAll(cookiesMap.values());
-
-        // Reconstruct the Cookie header from the unique, valid cookies.
-        String cookieHeader = cookiesMap.values().stream().map(cookie -> cookie.getName() + "=" + cookie.getValue())
-                .collect(Collectors.joining("; "));
-
-        // Update the request headers for subsequent requests.
-        headers.put(HttpHeader.COOKIE.asString(), cookieHeader);
-        logger.debug("Updated cookie header: {}", cookieHeader);
-    }
-
-    /**
-     * Updates the internal cookie store using cookie header strings.
-     * It parses each header into HttpCookie objects and delegates to the primary updateCookies method.
-     * 
-     * Note: Callers previously using updateCookies(passCollectionOfStrings) should use this method instead.
-     */
-    private void updateCookiesFromHeaders(Collection<String> cookieHeaders) {
-        List<HttpCookie> cookies = new ArrayList<>();
-        for (String header : cookieHeaders) {
-            try {
-                List<HttpCookie> parsedCookies = HttpCookie.parse(header);
-                cookies.addAll(parsedCookies);
-            } catch (IllegalArgumentException e) {
-                logger.warn("Error parsing cookie header: {} - {}", header, e.getMessage());
-            }
-        }
-        // Delegate to the HttpCookie-based update.
-        updateCookies(cookies);
-    }
-
-    /**
-     * Validates that the given HttpCookie has both a non-null and non-empty name and value.
-     */
-    private boolean isValidCookie(HttpCookie cookie) {
-        return cookie.getName() != null && !cookie.getName().isEmpty() && cookie.getValue() != null
-                && !cookie.getValue().isEmpty();
     }
 
     /**
@@ -540,16 +586,18 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
         String content = response.getContentAsString();
         int status = response.getStatus();
 
-        // Match Python's debug logging exactly
-        String requestPath = operation.replace(BASE_URL, "");
-        logger.debug("Request to {} - Status: {}, Headers: {}", requestPath, status, response.getHeaders());
+        // Log everything about the response
+        logger.debug("Response status: {}", status);
+        logger.debug("Response headers: {}", response.getHeaders());
+        logger.debug("Response content: {}", content);
+        logger.debug("Response cookies: {}", httpClient.getCookieStore().getCookies());
 
         if (status == HttpStatus.OK_200) {
-            String contentType = response.getHeaders().get(HttpHeader.CONTENT_TYPE);
-            if (contentType != null && contentType.contains("application/json")) {
+            String contentType = getContentType(response);
+            if (contentType.contains("application/json")) {
                 try {
                     JsonElement result = JsonParser.parseString(content);
-                    updateCookiesFromHeaders(response.getHeaders().getValuesList(HttpHeader.SET_COOKIE));
+                    logger.debug("Parsed JSON result: {}", result);
                     return result;
                 } catch (Exception e) {
                     logger.error("Failed to parse JSON response: {}", content);
@@ -559,8 +607,14 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
                 logger.error("Unexpected response type: {}", contentType);
                 logger.error("Response text: {}", content);
                 throw new HoneywellTCCInvalidResponseException(
-                        String.format("Unexpected response type from %s: %s", requestPath, contentType));
+                        String.format("Unexpected response type: %s, Content: %s", contentType, content));
             }
+        } else if (status == HttpStatus.FOUND_302) {
+            // Handle redirect explicitly
+            String location = getLocation(response);
+            logger.debug("Following redirect to: {}", location);
+            // Since we're using followRedirects(true), this shouldn't happen
+            throw new HoneywellTCCException("Unexpected redirect to: " + location);
         } else if (status == 429) {
             logger.error("Rate limit exceeded: {}", status);
             logger.error("Response text: {}", content);
@@ -568,7 +622,7 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
         } else if (status == HttpStatus.UNAUTHORIZED_401) {
             throw new HoneywellTCCSessionExpiredException("Session has timed out.");
         } else {
-            logger.error("API returned {} from {} request", status, requestPath);
+            logger.error("API returned {} from {} request", status, operation);
             logger.error("Response body: {}", content);
             throw new HoneywellTCCException(String.format("Unexpected %d response from API: %s...", status,
                     content.substring(0, Math.min(content.length(), 200))));
@@ -693,14 +747,32 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
         return handleResponse(response, "POST " + url);
     }
 
-    private ContentResponse executeRequest(Request request, String operation) throws HoneywellTCCException {
-        try {
-            ContentResponse response = request.send();
-            return response;
-        } catch (Exception e) {
-            logger.error("Request failed: {}", e.getMessage());
-            throw new HoneywellTCCException("Request failed: " + e.getMessage(), e);
-        }
+    /**
+     * Executes the given HTTP request asynchronously using a BufferingResponseListener,
+     * converting the callback into a CompletableFuture.
+     *
+     * @param request the HTTP request to execute
+     * @param operation a label for logging or error messages
+     * @return a CompletableFuture that will complete with the ContentResponse
+     */
+    private CompletableFuture<ContentResponse> executeRequestAsync(Request request, String operation) {
+        long startTime = System.currentTimeMillis();
+        CompletableFuture<ContentResponse> future = new CompletableFuture<>();
+
+        request.send(new BufferingResponseListener() {
+            @Override
+            public void onComplete(org.eclipse.jetty.client.api.Result result) {
+                long duration = System.currentTimeMillis() - startTime;
+                if (result.isSucceeded()) {
+                    logger.debug("{} completed in {} ms", operation, duration);
+                    future.complete((ContentResponse) this);
+                } else {
+                    logger.error("{} failed after {} ms: {}", operation, duration, result.getFailure().getMessage());
+                    future.completeExceptionally(result.getFailure());
+                }
+            }
+        });
+        return future;
     }
 
     private void updateSessionState(ContentResponse response) {
@@ -788,121 +860,88 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
     }
 
     /**
-     * Executes an HTTP request to the given URL and returns the JSON response.
+     * Executes the given HTTP request synchronously using the provided Request and returns
+     * the ContentResponse after updating session state and checking the response.
      *
-     * This method extracts the response content as a string and converts it into
-     * a JsonElement using Gson.
+     * @param request the HTTP request to execute
+     * @param operation a label for logging or error messages
+     * @return the ContentResponse from the HTTP request
+     * @throws HoneywellTCCException if the request fails or returns an unexpected response
      */
-    public JsonElement executeRequest(String url) throws HoneywellTCCException {
+    private ContentResponse executeRequest(Request request, String operation) throws HoneywellTCCException {
         try {
-            ContentResponse response = httpClient.newRequest(url).timeout(10, TimeUnit.SECONDS).send();
-            String jsonString = response.getContentAsString();
-            JsonElement jsonElement = gson.fromJson(jsonString, JsonElement.class);
-            return Objects.requireNonNull(jsonElement, "Parsed JSON element is null.");
-        } catch (Exception e) { // Catch only the exceptions that may actually be thrown.
-            throw new HoneywellTCCException("Failed to execute request: " + e.getMessage(), e);
-        }
-    }
-
-    // Method to update cookies from response headers
-    public void updateCookiesFromResponse(Response response) {
-        // Extract the Set-Cookie header values from the response headers.
-        Collection<String> cookieHeaders = response.getHeaders().getValuesList(HttpHeader.SET_COOKIE);
-        if (cookieHeaders != null && !cookieHeaders.isEmpty()) {
-            logger.debug("Received Set-Cookie headers: {}", cookieHeaders);
-            // Delegate to the helper that converts header strings to HttpCookie objects.
-            updateCookiesFromHeaders(cookieHeaders);
-        }
-    }
-
-    // Method to get cookies as a header string for a given URL,
-    // filtering cookies based on domain and path matching.
-    private String getCookieHeader(String url) {
-        try {
-            // Retrieve cookies from the CookieStore for the given URL.
-            List<HttpCookie> cookies = cookieManager.getCookieStore().get(java.net.URI.create(url));
-            // Construct the cookie header as "name=value" pairs separated by "; "
-            String cookieHeader = cookies.stream().map(cookie -> cookie.getName() + "=" + cookie.getValue())
-                    .collect(Collectors.joining("; "));
-            logger.debug("Constructed cookie header for {}: {}", url, cookieHeader);
-            return cookieHeader;
+            ContentResponse response = request.send();
+            updateSessionState(response);
+            checkStatusCodes(response);
+            return response;
         } catch (Exception e) {
-            logger.debug("Failed to get cookie header for {}: {}", url, e.getMessage());
-            return "";
+            handleException(operation, e);
+            // This line will never be reached since handleException always throws.
+            throw new HoneywellTCCException("Unreachable", e);
         }
     }
 
-    // Helper method to extract a proper value from the Fields entry; never returns null.
-    private String extractValue(Fields formFields, String param) {
-        org.eclipse.jetty.util.Fields.Field field = formFields.get(param);
-        if (field != null) {
-            String raw = field.getValue();
-            if (raw != null && raw.startsWith(param + "=[") && raw.endsWith("]")) {
-                // Remove the leading "param=[" and the trailing "]"
-                return raw.substring(param.length() + 2, raw.length() - 1);
-            }
-            return (raw != null) ? raw : "";
+    private void validateJsonResponse(ContentResponse response, String operation)
+            throws HoneywellTCCInvalidResponseException {
+        String contentType = getContentType(response);
+        if (!contentType.contains("application/json")) {
+            String responseBody = response.getContentAsString();
+            logger.error("Unexpected content type for {}: {}", operation, contentType);
+            logger.error("Response body: {}", responseBody);
+            throw new HoneywellTCCInvalidResponseException(
+                    String.format("Expected JSON response for %s, got: %s", operation, contentType));
         }
-        return "";
     }
 
-    // New helper method to log the complete POST request details
-    public void logPostRequest(Request request, Fields formFields) {
-        // Build the POST body using the extracted parameter values
-        String pageValue = extractValue(formFields, PARAM_PAGE);
-        String filterValue = extractValue(formFields, PARAM_FILTER);
-        String requestBody = "page=" + pageValue + "&filter=" + filterValue;
-        logger.debug("Post Request URL: {}", request.getURI());
-        logger.debug("Post Request Method: {}", request.getMethod());
-        logger.debug("Post Request Headers: {}", request.getHeaders());
-        logger.debug("Post Request Body: {}", requestBody);
-        // Additionally, log the raw Fields content for complete insight
-        logger.debug("Raw Form Fields: {}", formFields.toString());
-    }
-
-    // Updated fetchLocations() method using BufferingResponseListener
-    public CompletableFuture<@Nullable Void> fetchLocations() {
-        // Define the endpoint for fetching locations
-        String locationEndpoint = "https://www.mytotalconnectcomfort.com/portal/Location/GetLocationListData";
-
-        // Create a request using GET for the locations endpoint with the required headers
-        Request request = httpClient.newRequest(locationEndpoint).method(HttpMethod.GET)
-                .header(HttpHeader.REFERER.asString(), BASE_URL).header(HttpHeader.ACCEPT.asString(), HEADER_ACCEPT);
-
-        logger.debug("Fetching locations from: {}", locationEndpoint);
-
-        // Create and return the CompletableFuture
-        CompletableFuture<@Nullable Void> future = new CompletableFuture<>();
-
-        // Use BufferingResponseListener to fully buffer the response
-        BufferingResponseListener listener = new BufferingResponseListener() {
-            @Override
-            public void onComplete(org.eclipse.jetty.client.api.Result result) {
-                if (result.isSucceeded()) {
-                    Response response = result.getResponse();
-                    int status = response.getStatus();
-                    logger.debug("Location fetch response status: {}", status);
-                    if (status == 200) {
-                        String responseBody = new String(getContent(), StandardCharsets.UTF_8);
-                        processLocationData(responseBody);
-                        future.complete(null);
-                    } else {
-                        future.completeExceptionally(new HoneywellTCCException("Failed to fetch locations: " + status));
-                    }
-                } else {
-                    future.completeExceptionally(result.getFailure());
-                }
+    private boolean sessionExpired() {
+        synchronized (sessionLock) {
+            boolean expired = !isAuthenticated || (System.currentTimeMillis() - lastAuthTime > SESSION_TIMEOUT_MS);
+            if (expired) {
+                logger.debug("Session expired - authenticated: {}, last auth: {} ms ago", isAuthenticated,
+                        System.currentTimeMillis() - lastAuthTime);
             }
-        };
-
-        // Send the request using the buffering listener
-        request.send(listener);
-        return future;
+            return expired;
+        }
     }
 
-    // Method to process location data
-    private void processLocationData(String responseBody) {
-        logger.info("Location data received: {}", responseBody);
-        logger.debug("Location data (detailed): {}", responseBody);
+    // Add retries wrapper similar to Python
+    private <T> CompletableFuture<T> withRetries(String operation, Supplier<CompletableFuture<T>> action) {
+        return keepalive().thenCompose(v -> action.get()).exceptionally(ex -> {
+            if (ex instanceof HoneywellTCCSessionExpiredException) {
+                return login().thenCompose(v -> action.get()).join();
+            }
+            throw new CompletionException(ex);
+        });
+    }
+
+    private void logCookieState(String operation) {
+        httpClient.getCookieStore().getCookies().forEach(cookie -> logger.debug("{} cookie: {}={} (domain={}, path={})",
+                operation, cookie.getName(), cookie.getValue(), cookie.getDomain(), cookie.getPath()));
+    }
+
+    private void handleRequestFailure(Throwable failure, CompletableFuture<JsonObject> future) {
+        logger.error("Request failed: {}", failure.getMessage());
+        future.completeExceptionally(new HoneywellTCCException("Request failed", failure));
+    }
+
+    private void handleUnexpectedStatus(int status, @org.eclipse.jdt.annotation.NonNull String content,
+            @org.eclipse.jdt.annotation.NonNull CompletableFuture<JsonObject> future) {
+        logger.error("API returned {} from request", status);
+        logger.error("Response body: {}", content);
+        future.completeExceptionally(new HoneywellTCCException("Unexpected " + status + " response from API"));
+    }
+
+    // For handling content type headers
+    @org.eclipse.jdt.annotation.NonNull
+    private String getContentType(@org.eclipse.jdt.annotation.NonNull Response response) {
+        String contentType = response.getHeaders().get(HttpHeader.CONTENT_TYPE);
+        return contentType != null ? contentType : "application/octet-stream";
+    }
+
+    // For handling location headers
+    @org.eclipse.jdt.annotation.NonNull
+    private String getLocation(@org.eclipse.jdt.annotation.NonNull Response response) {
+        String location = response.getHeaders().get(HttpHeader.LOCATION);
+        return location != null ? location : "";
     }
 }

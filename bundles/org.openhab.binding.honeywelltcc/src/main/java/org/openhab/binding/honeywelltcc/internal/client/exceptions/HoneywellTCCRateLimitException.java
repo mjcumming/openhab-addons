@@ -23,6 +23,10 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 public class HoneywellTCCRateLimitException extends HoneywellTCCException {
     private static final long serialVersionUID = 1L;
 
+    public HoneywellTCCRateLimitException() {
+        super("API rate limit exceeded");
+    }
+
     public HoneywellTCCRateLimitException(String message) {
         super(message);
     }

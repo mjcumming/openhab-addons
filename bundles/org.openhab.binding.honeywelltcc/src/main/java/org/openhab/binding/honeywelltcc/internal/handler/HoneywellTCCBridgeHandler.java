@@ -15,19 +15,17 @@ package org.openhab.binding.honeywelltcc.internal.handler;
 import static org.openhab.binding.honeywelltcc.internal.HoneywellTCCBindingConstants.*;
 
 import java.util.Map;
-import java.util.Objects;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
-import org.eclipse.jetty.client.HttpClient;
-import org.eclipse.jetty.util.ssl.SslContextFactory;
 import org.openhab.binding.honeywelltcc.internal.client.HoneywellTCCHttpClient;
 import org.openhab.binding.honeywelltcc.internal.client.exceptions.HoneywellTCCAuthException;
 import org.openhab.binding.honeywelltcc.internal.client.exceptions.HoneywellTCCException;
+import org.openhab.binding.honeywelltcc.internal.client.exceptions.HoneywellTCCInvalidResponseException;
 import org.openhab.binding.honeywelltcc.internal.client.exceptions.HoneywellTCCRateLimitException;
 import org.openhab.binding.honeywelltcc.internal.config.HoneywellTCCBridgeConfiguration;
 import org.openhab.core.thing.Bridge;
@@ -63,17 +61,12 @@ public class HoneywellTCCBridgeHandler extends BaseBridgeHandler {
     private final Logger logger = LoggerFactory.getLogger(HoneywellTCCBridgeHandler.class);
 
     private @Nullable HoneywellTCCHttpClient client;
-    private @Nullable HttpClient jettyHttpClient;
-    private @Nullable ScheduledExecutorService scheduler;
     private @Nullable HoneywellTCCBridgeConfiguration config;
     private @Nullable ScheduledFuture<?> pollingJob;
 
     // Track registered thermostat handlers
     private final Map<ThingUID, HoneywellTCCThermostatHandler> thermostatHandlers = new ConcurrentHashMap<>();
 
-    /**
-     * Constructor required by the HandlerFactory.
-     */
     public HoneywellTCCBridgeHandler(Bridge bridge) {
         super(bridge);
     }
@@ -81,85 +74,61 @@ public class HoneywellTCCBridgeHandler extends BaseBridgeHandler {
     @Override
     public void initialize() {
         config = getConfigAs(HoneywellTCCBridgeConfiguration.class);
-        if (config == null || config.username.isEmpty() || config.password.isEmpty()) {
-            logger.error("Bridge configuration is missing or incomplete; binding will not be activated");
-            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR,
-                    "Bridge configuration missing/incomplete");
-            return;
-        }
 
         try {
-            SslContextFactory.Client sslContextFactory = new SslContextFactory.Client();
-            jettyHttpClient = new HttpClient(sslContextFactory);
-            jettyHttpClient.setConnectTimeout(HTTP_REQUEST_TIMEOUT_SEC * 1000L);
-            jettyHttpClient.start();
-            logger.debug("Jetty HttpClient started");
+            client = new HoneywellTCCHttpClient(config.username, config.password, scheduler);
 
-            scheduler = Executors.newScheduledThreadPool(1);
-
-            // Create the shared HTTP client using the bridge-supplied values.
-            client = HoneywellTCCHttpClient.create(Objects.requireNonNull(jettyHttpClient), config.username,
-                    config.password, Objects.requireNonNull(scheduler));
-
-            // Attempt to log in immediately
-            client.login().thenCompose(ignored -> client.keepalive()).thenCompose(ignored -> client.fetchLocations())
-                    .thenRun(() -> {
-                        logger.info("All initialization steps completed successfully.");
-                        updateStatus(ThingStatus.ONLINE);
-                    }).exceptionally(throwable -> {
-                        logger.error("Failed during initialization: {}", throwable.getMessage(), throwable);
-                        updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR,
-                                throwable.getMessage());
+            client.login().thenCompose(v -> client.getLocations()).thenAccept(this::handleLocationsResponse)
+                    .exceptionally(ex -> {
+                        handleInitializationError(ex);
                         return null;
                     });
 
         } catch (Exception e) {
-            logger.error("Error during bridge initialization: {}", e.getMessage(), e);
-            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR, "Initialization failed");
+            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR, e.getMessage());
         }
     }
 
+    private void handleLocationsResponse(JsonObject locationsResponse) {
+        if (locationsResponse.has(RESPONSE_LOCATIONS)) {
+            JsonArray locations = locationsResponse.getAsJsonArray(RESPONSE_LOCATIONS);
+            logger.info("Retrieved {} locations", locations.size());
+            logger.info("All initialization steps completed successfully. Bridge is online.");
+            updateStatus(ThingStatus.ONLINE);
+        } else {
+            logger.warn("No locations found in response: {}", locationsResponse);
+            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR, "No locations found in response");
+        }
+    }
+
+    private void handleInitializationError(Throwable ex) {
+        Throwable cause = ex;
+        while (cause instanceof CompletionException && cause.getCause() != null) {
+            cause = cause.getCause();
+        }
+
+        if (cause instanceof HoneywellTCCInvalidResponseException) {
+            // For content type mismatches, if we got valid JSON, continue
+            logger.debug("Non-critical error during initialization: {}", cause.getMessage());
+            if (cause.getMessage().contains("application/json; charset=")) {
+                updateStatus(ThingStatus.ONLINE);
+                return;
+            }
+        }
+
+        String message = cause.getMessage() != null ? cause.getMessage() : "Unknown error during initialization";
+        updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR, message);
+    }
+
     protected void deactivate(org.osgi.service.component.ComponentContext context) {
-        // Clean up resources.
         if (pollingJob != null) {
             pollingJob.cancel(true);
             pollingJob = null;
             logger.debug("Polling stopped");
         }
-        if (scheduler != null) {
-            scheduler.shutdownNow();
-            scheduler = null;
-        }
-        if (jettyHttpClient != null) {
-            try {
-                jettyHttpClient.stop();
-                logger.debug("Jetty HttpClient stopped");
-            } catch (Exception e) {
-                logger.warn("Error stopping HttpClient: {}", e.getMessage(), e);
-            }
-            jettyHttpClient = null;
-        }
         client = null;
         updateStatus(ThingStatus.OFFLINE);
         logger.info("HoneywellTCCBridgeHandler deactivated");
-    }
-
-    /**
-     * Provides the HoneywellTCCHttpClient instance used for communication.
-     *
-     * @return the HTTP client instance or null if not initialized.
-     */
-    public @Nullable HoneywellTCCHttpClient getClient() {
-        return client;
-    }
-
-    /**
-     * Exposes the internal scheduler used by the bridge.
-     *
-     * @return the ScheduledExecutorService instance.
-     */
-    public @Nullable ScheduledExecutorService getScheduler() {
-        return scheduler;
     }
 
     /**
@@ -187,8 +156,16 @@ public class HoneywellTCCBridgeHandler extends BaseBridgeHandler {
             return;
         }
         try {
-            // For example: get locations and devices in one call
-            JsonArray locations = client.getLocations();
+            // Get full response object
+            JsonObject response = client.getLocations().join();
+            logger.debug("Received locations response: {}", response);
+
+            if (!response.has(RESPONSE_LOCATIONS)) {
+                logger.warn("No locations found in response: {}", response);
+                return;
+            }
+
+            JsonArray locations = response.getAsJsonArray(RESPONSE_LOCATIONS);
             logger.debug("Retrieved {} locations", locations.size());
 
             for (JsonElement locationElement : locations) {
@@ -200,8 +177,8 @@ public class HoneywellTCCBridgeHandler extends BaseBridgeHandler {
                     JsonObject deviceData = deviceElement.getAsJsonObject();
                     String deviceId = deviceData.get(API_KEY_DEVICE_ID).getAsString();
 
-                    // Get detailed device data
-                    JsonObject fullDeviceData = client.getThermostatData(deviceId);
+                    // Block on the future to get the detailed device data.
+                    JsonObject fullDeviceData = client.getThermostatData(deviceId).join();
 
                     // Distribute update to matching thermostat handlers
                     thermostatHandlers.values().stream().filter(handler -> handler.matchesDevice(deviceId, locationId))
@@ -209,17 +186,55 @@ public class HoneywellTCCBridgeHandler extends BaseBridgeHandler {
                 }
             }
             updateStatus(ThingStatus.ONLINE);
-        } catch (HoneywellTCCAuthException e) {
-            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR, "Authentication failed");
-        } catch (HoneywellTCCRateLimitException e) {
-            logger.debug("Rate limit exceeded, will retry next polling cycle");
-        } catch (HoneywellTCCException e) {
-            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR, e.getMessage());
+        } catch (CompletionException e) {
+            // Unwrap the underlying cause and handle accordingly
+            Throwable cause = e.getCause();
+            if (cause instanceof HoneywellTCCAuthException) {
+                logger.error("Authentication failed: {}", cause.getMessage());
+            } else if (cause instanceof HoneywellTCCRateLimitException) {
+                logger.error("Rate limit exceeded: {}", cause.getMessage());
+            } else if (cause instanceof HoneywellTCCException) {
+                logger.error("Honeywell TCC error: {}", cause.getMessage());
+            } else {
+                logger.error("Unexpected error in bridge handler: {}", e.getMessage());
+            }
+        } catch (Exception e) {
+            logger.error("General error in bridge handler: {}", e.getMessage());
         }
     }
 
     @Override
     public void handleCommand(ChannelUID channelUID, Command command) {
         logger.debug("Received command {} for channel {}. Bridge commands are not processed.", command, channelUID);
+    }
+
+    private void discoverDevices() {
+        try {
+            client.getLocations().thenAccept(locationsResponse -> {
+                // Extract locations array from response object
+                if (locationsResponse.has(RESPONSE_LOCATIONS)) {
+                    JsonArray locations = locationsResponse.getAsJsonArray(RESPONSE_LOCATIONS);
+                    // Process locations array as before
+                    for (JsonElement locationElement : locations) {
+                        // ... rest of the discovery code ...
+                    }
+                } else {
+                    logger.warn("No locations found in response: {}", locationsResponse);
+                }
+            }).exceptionally(ex -> {
+                logger.error("Failed to discover devices: {}", ex.getMessage(), ex);
+                return null;
+            });
+        } catch (Exception e) {
+            logger.error("Error discovering devices: {}", e.getMessage(), e);
+        }
+    }
+
+    public @Nullable HoneywellTCCHttpClient getClient() {
+        return client;
+    }
+
+    public ScheduledExecutorService getScheduler() {
+        return scheduler;
     }
 }

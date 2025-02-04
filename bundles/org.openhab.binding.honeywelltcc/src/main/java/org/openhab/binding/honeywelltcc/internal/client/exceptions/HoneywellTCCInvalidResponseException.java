@@ -26,4 +26,8 @@ public class HoneywellTCCInvalidResponseException extends HoneywellTCCException 
     public HoneywellTCCInvalidResponseException(String message) {
         super(message);
     }
+
+    public HoneywellTCCInvalidResponseException(String message, Exception cause) {
+        super(message, cause);
+    }
 }
