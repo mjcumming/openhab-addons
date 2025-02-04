@@ -32,6 +32,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import javax.net.ssl.SSLHandshakeException;
@@ -269,24 +270,26 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
         return future;
     }
 
-    // New helper method for performing the POST login:
+    // Updated performLoginPost() method to include additional headers and use the login endpoint constant.
     private void performLoginPost(CompletableFuture<@Nullable Void> future) {
-        String loginUrl = BASE_URL + "/portal/Account/LogOn";
+        // Use the base URL as in the Python reference to post the login credentials.
+        String loginUrl = BASE_URL;
 
-        // Prepare login data as form fields.
+        // Prepare login data as form fields (mimicking the Python payload)
         Fields loginData = new Fields();
-        loginData.put("UserName", username);
-        loginData.put("Password", password);
-        loginData.put("RememberMe", "false");
-        loginData.put("timeOffset", "480");
+        loginData.put(FORM_USERNAME, username);
+        loginData.put(FORM_PASSWORD, password);
+        loginData.put(FORM_REMEMBER_ME, "false");
+        loginData.put(FORM_TIME_OFFSET, FORM_TIME_OFFSET_VALUE); // "480"
 
-        Request request = httpClient.POST(loginUrl)
-                .header(HttpHeader.CONTENT_TYPE.asString(), "application/x-www-form-urlencoded")
-                .content(new FormContentProvider(loginData));
+        Request request = httpClient.POST(loginUrl).header(HttpHeader.CONTENT_TYPE.asString(), CONTENT_TYPE_FORM)
+                // Mimic Python client headers.
+                .header(HttpHeader.USER_AGENT.asString(), HEADER_USER_AGENT)
+                .header("X-Requested-With", "XMLHttpRequest").header(HttpHeader.REFERER.asString(), BASE_URL + "/")
+                .followRedirects(true).content(new FormContentProvider(loginData));
 
         logger.debug("Attempting login at: {}", loginUrl);
 
-        // Replace the lambda with a BufferingResponseListener to retrieve buffered content
         request.send(new BufferingResponseListener() {
             @Override
             public void onComplete(org.eclipse.jetty.client.api.Result result) {
@@ -294,11 +297,10 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
                     Response response = result.getResponse();
                     int status = response.getStatus();
                     logger.debug("Login POST response status: {}", status);
-                    // Retrieve the buffered content as a UTF-8 string
+                    // Retrieve buffered response as UTF-8 content
                     String responseContent = new String(getContent(), StandardCharsets.UTF_8);
                     try {
                         if (status == 200) {
-                            // Check for invalid credentials in the response content.
                             if (responseContent.contains("Invalid username or password")) {
                                 future.completeExceptionally(
                                         new HoneywellTCCAuthException("Invalid username or password"));
@@ -306,7 +308,7 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
                             }
                             updateCookiesFromResponse(response);
                             logger.info("Login successful for user: {}", username);
-                            // Immediately call keepalive to validate the session.
+                            // Call keepalive to validate the session immediately
                             keepalive().thenRun(() -> future.complete((Void) null)).exceptionally(e -> {
                                 future.completeExceptionally(new HoneywellTCCException(
                                         "Keepalive after login failed: " + e.getMessage(), e));
@@ -420,20 +422,37 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
      */
     public JsonArray getLocations() throws HoneywellTCCException {
         return executeWithRetry("Get locations", () -> {
-            String url = String.format("%s/Location/GetLocationListData", BASE_URL);
+            String url = BASE_URL + ENDPOINT_LOCATIONS;
 
+            // Prepare form parameters as per Python reference.
             Fields formFields = new Fields();
-            formFields.put("page", "1");
-            formFields.put("filter", "");
+            formFields.put(PARAM_PAGE, PARAM_PAGE_VALUE);
+            formFields.put(PARAM_FILTER, PARAM_FILTER_VALUE);
 
-            Request request = createRequest(url, HttpMethod.POST).content(new FormContentProvider(formFields));
+            // Build the POST request with the expected headers.
+            Request request = httpClient.POST(url).header(HttpHeader.CONTENT_TYPE.asString(), CONTENT_TYPE_FORM)
+                    .header(HttpHeader.REFERER.asString(), BASE_URL + "/")
+                    .header(HttpHeader.USER_AGENT.asString(), HEADER_USER_AGENT)
+                    .header("X-Requested-With", "XMLHttpRequest");
 
+            // Convert cookieStore (List<HttpCookie>) to a Map<String, HttpCookie> and get the Cookie header.
+            String cookieHeader = cookieHelper.buildCookieHeader(
+                    cookieStore.stream().collect(Collectors.toMap(HttpCookie::getName, Function.identity())));
+            if (!cookieHeader.isEmpty()) {
+                request = request.header("Cookie", cookieHeader);
+            } else {
+                logger.warn("Cookie header is empty; request may be unauthenticated");
+            }
+
+            // Send the request and process the response.
             ContentResponse response = executeRequest(request, "locations");
             JsonElement jsonResponse = handleResponse(response, "locations");
-            if (!jsonResponse.isJsonArray()) {
-                throw new HoneywellTCCInvalidResponseException("Expected JSON array response");
+            if (!jsonResponse.isJsonObject()) {
+                throw new HoneywellTCCInvalidResponseException("Expected JSON object response");
             }
-            return jsonResponse.getAsJsonArray();
+            // Extract as needed – assuming the JSON object contains an array under RESPONSE_LOCATIONS.
+            JsonObject result = jsonResponse.getAsJsonObject();
+            return result.getAsJsonArray(RESPONSE_LOCATIONS);
         });
     }
 
