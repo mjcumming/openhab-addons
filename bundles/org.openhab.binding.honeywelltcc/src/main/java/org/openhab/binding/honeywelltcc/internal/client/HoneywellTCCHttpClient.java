@@ -32,7 +32,6 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import javax.net.ssl.SSLHandshakeException;
@@ -102,16 +101,13 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
     private final List<HttpCookie> cookieStore = new ArrayList<>();
     private static final int MAX_COOKIE_COUNT = 5;
 
-    // Instantiate the dedicated CookieHelper.
-    private final CookieHelper cookieHelper = new CookieHelper();
-
     public static HoneywellTCCHttpClient create(HttpClient httpClient, String username, String password,
             ScheduledExecutorService scheduler) throws HoneywellTCCException {
         return new HoneywellTCCHttpClient(httpClient, username, password, scheduler);
     }
 
     private HoneywellTCCHttpClient(HttpClient httpClient, String username, String password,
-            ScheduledExecutorService scheduler) {
+            ScheduledExecutorService scheduler) throws HoneywellTCCException {
         this.httpClient = httpClient;
         this.username = username;
         this.password = password;
@@ -130,6 +126,16 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
         // Initialize headers exactly like Python
         initializeHeaders();
         startKeepalive();
+
+        // Configure automatic cookie management
+        httpClient.setCookieStore(cookieManager.getCookieStore());
+
+        try {
+            httpClient.start();
+            logger.debug("Jetty HttpClient started with automatic cookie management");
+        } catch (Exception e) {
+            throw new HoneywellTCCException("Failed to start HttpClient", e);
+        }
     }
 
     /**
@@ -185,7 +191,6 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
         String keepaliveUrl = BASE_URL + "/portal/KeepAlive"; // Adjust endpoint if different
 
         Request request = httpClient.newRequest(keepaliveUrl).method(HttpMethod.GET)
-                .header(HttpHeader.COOKIE.asString(), getCookieHeader(keepaliveUrl))
                 .header(HttpHeader.REFERER.asString(), BASE_URL);
 
         logger.debug("Performing keepalive request");
@@ -306,8 +311,8 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
                                         new HoneywellTCCAuthException("Invalid username or password"));
                                 return;
                             }
-                            updateCookiesFromResponse(response);
-                            logger.info("Login successful for user: {}", username);
+                            // Rely on Jetty's automatic cookie management.
+                            logger.debug("Login complete; Jetty cookie store should now contain session cookies.");
                             // Call keepalive to validate the session immediately
                             keepalive().thenRun(() -> future.complete((Void) null)).exceptionally(e -> {
                                 future.completeExceptionally(new HoneywellTCCException(
@@ -433,16 +438,9 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
             Request request = httpClient.POST(url).header(HttpHeader.CONTENT_TYPE.asString(), CONTENT_TYPE_FORM)
                     .header(HttpHeader.REFERER.asString(), BASE_URL + "/")
                     .header(HttpHeader.USER_AGENT.asString(), HEADER_USER_AGENT)
-                    .header("X-Requested-With", "XMLHttpRequest");
-
-            // Convert cookieStore (List<HttpCookie>) to a Map<String, HttpCookie> and get the Cookie header.
-            String cookieHeader = cookieHelper.buildCookieHeader(
-                    cookieStore.stream().collect(Collectors.toMap(HttpCookie::getName, Function.identity())));
-            if (!cookieHeader.isEmpty()) {
-                request = request.header("Cookie", cookieHeader);
-            } else {
-                logger.warn("Cookie header is empty; request may be unauthenticated");
-            }
+                    .header("X-Requested-With", "XMLHttpRequest").header(HttpHeader.ACCEPT.asString(), HEADER_ACCEPT)
+                    .header(HttpHeader.ACCEPT_LANGUAGE.asString(), HEADER_ACCEPT_LANGUAGE)
+                    .header(HttpHeader.CONNECTION.asString(), HEADER_CONNECTION).followRedirects(true);
 
             // Send the request and process the response.
             ContentResponse response = executeRequest(request, "locations");
@@ -808,13 +806,30 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
 
     // Method to update cookies from response headers
     public void updateCookiesFromResponse(Response response) {
-        cookieHelper.updateCookiesFromResponse(response);
+        // Extract the Set-Cookie header values from the response headers.
+        Collection<String> cookieHeaders = response.getHeaders().getValuesList(HttpHeader.SET_COOKIE);
+        if (cookieHeaders != null && !cookieHeaders.isEmpty()) {
+            logger.debug("Received Set-Cookie headers: {}", cookieHeaders);
+            // Delegate to the helper that converts header strings to HttpCookie objects.
+            updateCookiesFromHeaders(cookieHeaders);
+        }
     }
 
     // Method to get cookies as a header string for a given URL,
     // filtering cookies based on domain and path matching.
     private String getCookieHeader(String url) {
-        return cookieHelper.getCookieHeader(url);
+        try {
+            // Retrieve cookies from the CookieStore for the given URL.
+            List<HttpCookie> cookies = cookieManager.getCookieStore().get(java.net.URI.create(url));
+            // Construct the cookie header as "name=value" pairs separated by "; "
+            String cookieHeader = cookies.stream().map(cookie -> cookie.getName() + "=" + cookie.getValue())
+                    .collect(Collectors.joining("; "));
+            logger.debug("Constructed cookie header for {}: {}", url, cookieHeader);
+            return cookieHeader;
+        } catch (Exception e) {
+            logger.debug("Failed to get cookie header for {}: {}", url, e.getMessage());
+            return "";
+        }
     }
 
     // Helper method to extract a proper value from the Fields entry; never returns null.
@@ -852,11 +867,9 @@ public class HoneywellTCCHttpClient implements AutoCloseable {
 
         // Create a request using GET for the locations endpoint with the required headers
         Request request = httpClient.newRequest(locationEndpoint).method(HttpMethod.GET)
-                .header(HttpHeader.COOKIE.asString(), getCookieHeader(locationEndpoint))
                 .header(HttpHeader.REFERER.asString(), BASE_URL).header(HttpHeader.ACCEPT.asString(), HEADER_ACCEPT);
 
-        logger.debug("Fetching locations from: {} with Cookie header: {}", locationEndpoint,
-                getCookieHeader(locationEndpoint));
+        logger.debug("Fetching locations from: {}", locationEndpoint);
 
         // Create and return the CompletableFuture
         CompletableFuture<@Nullable Void> future = new CompletableFuture<>();
