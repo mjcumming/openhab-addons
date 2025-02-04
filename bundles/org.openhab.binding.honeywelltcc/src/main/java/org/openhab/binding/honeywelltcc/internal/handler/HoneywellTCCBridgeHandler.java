@@ -41,6 +41,7 @@ import org.slf4j.LoggerFactory;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 /**
  * The HoneywellTCCBridgeHandler is responsible for:
@@ -90,14 +91,48 @@ public class HoneywellTCCBridgeHandler extends BaseBridgeHandler {
     }
 
     private void handleLocationsResponse(JsonObject locationsResponse) {
-        if (locationsResponse.has(RESPONSE_LOCATIONS)) {
-            JsonArray locations = locationsResponse.getAsJsonArray(RESPONSE_LOCATIONS);
-            logger.info("Retrieved {} locations", locations.size());
-            logger.info("All initialization steps completed successfully. Bridge is online.");
+        // The response is actually a JsonArray, not an object
+        try {
+            JsonArray locations = JsonParser.parseString(locationsResponse.toString()).getAsJsonArray();
+            logger.debug("Retrieved {} locations", locations.size());
+            
+            // Process each location and its devices
+            for (JsonElement locationElement : locations) {
+                JsonObject location = locationElement.getAsJsonObject();
+                String locationId = location.get("LocationID").getAsString();
+                JsonArray devices = location.getAsJsonArray("Devices");
+                
+                logger.debug("Processing location {} with {} devices", locationId, devices.size());
+                
+                // Process each device
+                for (JsonElement deviceElement : devices) {
+                    JsonObject device = deviceElement.getAsJsonObject();
+                    processDevice(locationId, device);
+                }
+            }
+            
             updateStatus(ThingStatus.ONLINE);
-        } else {
-            logger.warn("No locations found in response: {}", locationsResponse);
-            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR, "No locations found in response");
+            logger.info("Bridge initialization complete - found {} locations", locations.size());
+            
+        } catch (Exception e) {
+            logger.debug("Error processing locations response: {}", e.getMessage());
+            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR, 
+                "Failed to process locations: " + e.getMessage());
+        }
+    }
+
+    private void processDevice(String locationId, JsonObject device) {
+        try {
+            String deviceId = device.get("DeviceID").getAsString();
+            String name = device.get("Name").getAsString();
+            
+            logger.debug("Found device: {} ({}) in location {}", name, deviceId, locationId);
+            
+            // Store device info for discovery
+            // We'll implement device discovery in the next step
+            
+        } catch (Exception e) {
+            logger.debug("Error processing device in location {}: {}", locationId, e.getMessage());
         }
     }
 
